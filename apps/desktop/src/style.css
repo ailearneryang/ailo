@@ -1328,9 +1328,22 @@ select:focus-visible {
   margin-top: 0;
   margin-left: 4px;
 }
+/* Keep the message viewport separate from the composer so replies cannot
+   scroll behind the input, including when its height changes. */
+.conversation:has(> .thread):has(> .chat-compose) {
+  overflow: hidden;
+  min-height: 0;
+}
+.conversation:has(> .chat-compose) > .thread {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  padding-bottom: 12px;
+}
 .chat-compose {
-  position: sticky;
-  bottom: -28px;
+  position: relative;
   margin-top: auto;
   padding-top: 18px;
   background: #faf9f5;
@@ -1360,16 +1373,6 @@ select:focus-visible {
 }
 .conversation:has(.thread) .compose-area {
   padding-bottom: 4px;
-}
-@media (max-width: 1000px) {
-  .chat-compose {
-    bottom: -24px;
-  }
-}
-@media (max-height: 700px) {
-  .chat-compose {
-    bottom: -16px;
-  }
 }
 
 /* Context usage sits beside the model selector; the portal avoids clipping. */
@@ -1595,3 +1598,17 @@ select:focus-visible {
 .project-path { display:block; font-size:11px; opacity:.65; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 .project-list{max-height:35vh}.sidebar-project-threads{margin:2px 0 6px 23px;padding-left:8px;border-left:1px solid #dbe2d5}.sidebar-project-threads button span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sidebar-project-threads button{font-size:11px;padding:7px 8px}.project-overview{max-width:800px;width:100%;margin:36px auto;padding:0 24px;box-sizing:border-box}.project-overview-heading{display:flex;align-items:center;gap:12px}.project-overview h1{font-size:25px;overflow-wrap:anywhere}.project-overview h2{font-size:15px;margin-top:32px}.project-overview>p{font-size:13px;overflow-wrap:anywhere}.project-overview-actions{display:flex;flex-wrap:wrap;gap:12px;margin:24px 0}.project-overview-actions button{font-size:13px}.project-conversations button{display:flex;align-items:center;gap:16px;width:100%;padding:16px 8px;border-bottom:1px solid #e0e5db;border-radius:0;text-align:left;font-size:14px}.project-conversations button>span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.project-conversations small{font-size:11px;color:#798572}
+
+/* About uses the same restrained typography as settings and extensions. */
+.about-page { width: 100%; max-width: 670px; margin: auto; padding: 20px 0; color: #293b31; }
+.about-intro { display: flex; align-items: center; gap: 18px; }
+.about-intro .ailo-pet { width: 64px; height: 64px; flex: 0 0 64px; margin: 0; }
+.about-intro h1 { margin: 0; font-size: 24px; line-height: 1.35; font-weight: 600; }
+.about-page .about-version { margin: 6px 0 0; font-size: 12px; color: #7a8276; line-height: 1.5; }
+.about-description { margin: 20px 0 24px; font-size: 14px; line-height: 1.75; color: #667363; }
+.about-sections { padding: 4px 24px; border: 1px solid #dfe4da; border-radius: 16px; background: #fff; }
+.about-sections section { padding: 18px 0; }
+.about-sections section + section { border-top: 1px solid #edf0e9; }
+.about-sections h2 { margin: 0 0 8px; font-size: 14px; line-height: 1.5; font-weight: 500; }
+.about-sections p { margin: 6px 0 0; font-size: 13px; line-height: 1.8; color: #778175; }
+@media (max-height: 700px) { .about-page { margin: 0 auto; padding: 4px 0; } }

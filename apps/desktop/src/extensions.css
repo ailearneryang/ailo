@@ -41,3 +41,5 @@
 .composer-add-row > .ui-icon { width: 20px; height: 20px; flex: 0 0 20px; color: #526b59; }
 .composer-add-chevron { display: inline-flex; align-items: center; justify-content: center; }
 .composer-add-chevron .ui-icon { width: 14px; height: 14px; }
+
+.extension-symbol .ui-icon { width: 20px; height: 20px; }

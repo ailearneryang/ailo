@@ -567,24 +567,28 @@ function App() {
                 />
               </>
             ) : view === "about" ? (
-              <div className="welcome compact">
-                <Pet interactive />
-                <h1>Ailo，陪你把想法做出来。</h1>
-                <p>macOS 桌面开发预览 · 0.1.0</p>
-                <article className="result">
-                  <h3>这一版可以做什么</h3>
-                  <p>
-                    选择模型并进行多轮对话、导入文本材料。对话记录保存在当前电脑。
-                  </p>
-                  <p>
-                    支持 OpenAI
-                    兼容的聊天接口、项目选择和本机账号登录。尚未接入执行工具、自动开发、云端同步和自动更新。
-                  </p>
-                  <p>
-                    支持 DOCX 正文、表格、文本和 Markdown，以及 ZIP、7z、TAR、TAR.GZ/TGZ
-                    压缩包中的 DOCX、文本、代码和配置文件。PDF 与图片尚未解析。
-                  </p>
-                </article>
+              <div className="about-page">
+                <div className="about-intro">
+                  <Pet interactive />
+                  <div><h1>关于 Ailo</h1><p className="about-version">macOS 预览版 · {__AILO_VERSION__}</p></div>
+                </div>
+                <p className="about-description">你的个人 AI 助手。从一个问题、一份材料，开始推进手头的事。</p>
+                <div className="about-sections">
+                  <section>
+                    <h2>对话，也能行动</h2>
+                    <p>整理材料、分析需求、规划项目。按任务需要调用工具，查看执行进度与成果。</p>
+                    <p>用「+」添加文件，输入 @ 引用对话文件，输入 / 选择专家和技能。</p>
+                  </section>
+                  <section>
+                    <h2>选择适合你的模型</h2>
+                    <p>支持 OpenAI 兼容接口，需配置自己的模型服务。飞书与联网搜索可在「扩展」中按需连接。</p>
+                  </section>
+                  <section>
+                    <h2>数据与使用范围</h2>
+                    <p>记录保存在本机；对话和相关材料会发送给你选择的模型服务商。当前不支持云端同步或自动更新。</p>
+                    <p>支持文本、Markdown、DOCX 及压缩包中的可读文件。PDF 与图片内容暂不解析；开发任务可能需要额外工具链。</p>
+                  </section>
+                </div>
               </div>
             ) : !task ? (
               <div className="welcome home-welcome">

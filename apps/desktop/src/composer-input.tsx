@@ -67,7 +67,7 @@ export function ComposerInput(props: Props) {
         {options.map((option, index) => <button key={option.id} id={`${listId}-${index}`} type="button" role="option"
           aria-selected={current === index} aria-disabled={option.disabled || undefined} data-active={current === index}
           onMouseDown={event => event.preventDefault()} onMouseMove={() => setActive(index)} onClick={() => choose(option)}>
-          <span className="composer-shortcut-icon"><Icon name={option.kind === 'file' ? 'file' : option.kind === 'expert' ? 'user' : 'grid'}/></span>
+          <span className="composer-shortcut-icon"><Icon name={option.kind === 'file' ? 'file' : option.kind === 'expert' ? 'user' : 'sparkles'}/></span>
           <span className="composer-shortcut-copy"><strong>{option.name}</strong><small>{option.detail}</small></span>
           <span className="composer-shortcut-kind">{option.selected ? '已添加' : option.kind === 'expert' ? '专家' : option.kind === 'skill' ? '技能' : '文件'}</span>
         </button>)}

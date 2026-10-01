@@ -3,6 +3,7 @@ import { FeishuCliConnection } from './feishu-cli-connection';
 import { FeishuConnection } from './feishu-connection';
 import type { Material, Extension } from './types';
 import './extensions.css';
+import { Icon } from './icon';
 export function ExtensionCenter({ initialTab='expert', items, busy, onSave, onUse, onMaterial, onImporting, onTryConnection }: { initialTab?:'expert'|'skill'|'connector'; onTryConnection:(text:string)=>void; onImporting:(busy:boolean)=>void; onMaterial:(material:Material)=>void; items: Extension[]; busy: boolean; onSave: (items: Extension[]) => Promise<boolean>; onUse: (item: Extension) => void }) {
   const [tab, setTab] = useState<'expert' | 'skill' | 'connector'>(initialTab);
   const [query, setQuery] = useState('');
@@ -40,7 +41,7 @@ export function ExtensionCenter({ initialTab='expert', items, busy, onSave, onUs
       </form>}
       {error && <p className="error" role="alert">{error}</p>}
       <div className="extension-grid">{items.filter(i => i.kind === tab && (i.name + i.description).toLowerCase().includes(query.toLowerCase())).map(item => <article className={'extension-card ' + (!item.enabled ? 'extension-disabled' : '')} key={item.id}>
-        <div className="extension-card-top"><span className="extension-symbol">{item.kind === 'expert' ? '✧' : '▤'}</span><small>{item.enabled ? '已启用' : '已停用'}</small></div><h2>{item.name}</h2><p>{item.description || '自定义工作指令'}</p><div className="extension-actions"><button className="primary" disabled={busy || !item.enabled} onClick={() => onUse(item)}>在对话中使用</button><button disabled={busy} onClick={() => setDraft({...item})}>编辑</button><button disabled={busy} onClick={() => void onSave(items.map(i => i.id === item.id ? {...i,enabled:!i.enabled} : i))}>{item.enabled ? '停用' : '启用'}</button></div>
+        <div className="extension-card-top"><span className="extension-symbol"><Icon name={item.kind === 'expert' ? 'user' : 'sparkles'}/></span><small>{item.enabled ? '已启用' : '已停用'}</small></div><h2>{item.name}</h2><p>{item.description || '自定义工作指令'}</p><div className="extension-actions"><button className="primary" disabled={busy || !item.enabled} onClick={() => onUse(item)}>在对话中使用</button><button disabled={busy} onClick={() => setDraft({...item})}>编辑</button><button disabled={busy} onClick={() => void onSave(items.map(i => i.id === item.id ? {...i,enabled:!i.enabled} : i))}>{item.enabled ? '停用' : '启用'}</button></div>
       </article>)}</div>
       {!items.some(i => i.kind === tab && (i.name+i.description).toLowerCase().includes(query.toLowerCase())) && <p className="extension-empty">没有匹配的扩展，试试其他关键词或创建一个。</p>}
     </>}
