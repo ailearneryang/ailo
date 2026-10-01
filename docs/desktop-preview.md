@@ -35,7 +35,7 @@
 
 当前已通过上述构建、服务单元测试和两个桌面回归脚本。模型兼容性测试由本地模拟服务完成，未用用户的外部服务商账号进行调用。界面截图保存在 `.local/real-chat-preview.png` 与 `.local/real-chat-compact.png`。
 
-安装包仍为未签名/未公证的开发预览。此前 DMG 生成在 hdiutil 阶段失败，当前交付 ZIP 与 `.app`。
+安装包仍为未签名/未公证的开发预览。DMG 已通过在沙箱外运行 `npm run make:dmg` 成功生成，输出位于 `apps/desktop/out/make/Ailo.dmg`（Apple Silicon）。发布步骤见 `docs/macos-release.md`。
 
 DOCX 不提取页眉页脚、图片、扫描内容或排版；直接导入时显示读取摘要。旧版 `.doc` 暂不支持。
 

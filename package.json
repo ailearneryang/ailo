@@ -7,6 +7,7 @@
     "build": "npm --prefix apps/desktop run build",
     "package": "npm --prefix apps/desktop run package",
     "make": "npm --prefix apps/desktop run make",
-    "make:zip": "npm --prefix apps/desktop run make:zip"
+    "make:zip": "npm --prefix apps/desktop run make:zip",
+    "make:dmg": "npm --prefix apps/desktop run make:dmg"
   }
 }

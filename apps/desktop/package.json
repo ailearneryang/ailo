@@ -9,7 +9,8 @@
     "package": "npm run build && electron-forge package",
     "make": "npm run build && electron-forge make",
     "make:zip": "npm run build && electron-forge make --targets=@electron-forge/maker-zip",
-    "start:dev": "npm run build && electron ."
+    "start:dev": "npm run build && electron .",
+    "make:dmg": "npm run build && electron-forge make --targets=@electron-forge/maker-dmg"
   },
   "keywords": [],
   "author": "ailearneryang",

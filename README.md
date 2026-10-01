@@ -1,43 +1,120 @@
-# Ailo
+<p align="center">
+  <img src="apps/desktop/assets/ailo.png" width="112" alt="Ailo 图标" />
+</p>
 
-面向个人的 Agent 助手：理解需求和材料、澄清关键问题、动态规划、调用工具执行，并交付可检查的成果。
+<h1 align="center">Ailo</h1>
 
-## 当前状态
+<p align="center">你的个人 Agent 助手，把问题、材料和想法变成下一步行动。</p>
 
-已初始化 Electron + React + TypeScript 桌面工程，并实现项目与对话管理、自定义模型配置、本机账号注册登录、材料登记和 OpenAI 兼容接口的多轮文字对话。界面、类型检查、接口单元测试及桌面交互回归测试已通过。已接入第一版项目隔离 Agent 执行循环：意图分流、澄清、动态计划、材料按需读取、文件与隔离命令工具、恢复和成果预览。尚未接入云端账号。详见 `docs/agent-runtime.md` 与 `docs/desktop-preview.md`。
+<p align="center">
+  <a href="https://github.com/ailearneryang/ailo/releases">下载安装</a> ·
+  <a href="#界面预览">界面预览</a> ·
+  <a href="#本地开发">本地开发</a> ·
+  <a href="docs/macos-release.md">打包与发布</a>
+</p>
 
-安卓应用开发是第一个能力验证场景，不是 Ailo 的产品定位。桌面客户端首发 macOS，后续支持同账号手机端查看、回答问题和接续任务。
+Ailo 是一个以对话为入口的桌面 AI 助手。你可以让它整理材料、分析需求、规划项目，也可以选择专家和技能，按任务需要调用工具执行并查看成果。暖白与鼠尾草绿的界面，加上一只陪伴工作的柴犬，让日常工作更轻松。
 
-## 开发方向
+**当前阶段：macOS 开发预览版。** 已实现本地项目与对话管理、材料读取、专家与技能、模型配置，以及第一版 Agent 执行循环。尚未实现云端账号同步；当前打包配置未启用 Apple 签名和公证。
 
-- 桌面端优先 Electron + React + TypeScript，打包工具优先 Electron Forge；工程初始化时核验并锁定兼容的稳定依赖版本。
-- 通用 Agent 核心：意图识别、材料理解、聊天内澄清、动态计划、工具执行、状态恢复和成果验证。
-- 之前讨论的 Mastra 等运行框架尚未在项目中安装；以持久化、暂停恢复和桌面集成验证结果确定实现。
-- UI 保留暖白、鼠尾草绿、聊天中心和按需展开的任务/成果区。
-- 安装体验：下载 Ailo.dmg → 拖到“应用程序” → 启动与首次设置。普通使用者无需源码、Node.js、Rust 或终端命令。
-- 正式分发需要签名、公证、版本管理和下载渠道。账号服务、模型费用与凭据供应方式待落实，不能只靠打包解决。
+![Ailo 首页：项目导航、工作建议和对话输入框](docs/images/home.png)
 
-## 目录
+## 你可以用 Ailo 做什么
 
+| 能力 | 使用方式 |
+| --- | --- |
+| 对话与项目 | 按项目组织工作，保存对话记录，继续讨论已有任务。 |
+| 材料理解 | 通过「+」添加本地文件，让 Ailo 读取材料、提炼需求并整理内容。 |
+| 文件引用 | 输入 `@` 选择当前对话里的文件，快速带入后续讨论。 |
+| 专家与技能 | 输入 `/` 搜索专家和技能；也可以在「扩展」中创建专家、编辑指令或导入 Markdown 技能。 |
+| 任务执行 | 根据用户意图澄清问题、制定和调整计划，调用文件与命令工具，展示进度和成果。 |
+| 自选模型 | 配置兼容 OpenAI Chat Completions 的服务地址、模型与自己的 API Key。 |
+| 应用连接 | 按需配置飞书与联网搜索，在对话中启用对应连接。 |
+
+可以从这些需求开始：
+
+- 「把这些材料整理成一份研究报告，区分事实、推断和待确认的问题。」
+- 「帮我梳理这个产品想法，列出需求范围和验收清单。」
+- 「检查这个项目，先给出修改计划，再逐步执行和验证。」
+
+执行效果取决于所选模型、材料内容、工具权限和本机环境。Android 开发是能力验证场景之一，目前不代表已完成通用 APK 交付验收。
+
+## 界面预览
+
+以下为真实应用界面，使用独立的演示项目与内置扩展截图，不含个人账号、真实对话或模型凭据。
+
+### 在输入框中选择专家和技能
+
+输入 `/` 弹出快捷菜单，支持名称与说明搜索、方向键选择、Enter / Tab 确认和 Esc 关闭。选中的专家、技能会显示为可移除标签；可同时使用 1 位专家与最多 5 个技能。
+
+![输入斜杠后选择产品经理、写作编辑、研究助手等专家与技能](docs/images/shortcuts.png)
+
+`@` 只引用当前对话中的文件；添加新的本地文件请使用「+」。没有文件时会显示「当前对话中暂无文件」。
+
+### 管理你的专家与工作方法
+
+在「扩展」中管理专家、技能和应用连接。内置产品经理、写作编辑、研究助手等角色，也支持自定义指令。当前技能导入以 Markdown 文字指令为主，不会自动执行技能包中的脚本。
+
+![Ailo 扩展中心：产品经理、写作编辑与研究助手](docs/images/extensions.png)
+
+## 下载与开始使用
+
+1. 打开 [GitHub Releases](https://github.com/ailearneryang/ailo/releases)，查看已发布版本及其附件。
+2. 如有 DMG 附件，下载后打开，将 Ailo 拖入「应用程序」。GitHub 自动生成的 **Source code** 压缩包是源码，不是安装包。
+3. 启动 Ailo，在模型设置中填写自己的服务地址、模型名称和 API Key。
+4. 新建对话，输入需求；需要材料时点「+」，需要专家或技能时输入 `/`。
+
+本地已验证生成 Apple Silicon（M 系列 Mac）的 DMG；安装包需由维护者单独上传 Releases，推送源码不会自动发布安装包。Intel Mac、Windows 和 Linux 暂未完成安装验证。
+
+当前安装包未完成 Developer ID 签名与 Apple 公证，macOS 可能阻止打开，适合先小范围内测。面向普通用户推广前需完成签名、公证与干净机器安装验证。基础桌面聊天不要求用户安装 Node.js 或 Rust；开发执行任务可能需要额外工具链。
+
+## 数据与隐私
+
+- 注册信息、对话记录、模型设置和连接凭据保存在本机应用数据目录中，不随源码或正常构建的安装包分发。
+- 模型 API Key 使用 Electron `safeStorage` 加密保存；本机账号密码使用随机盐与 scrypt 哈希。
+- 使用模型时，对话及相关材料内容会发送给你配置的模型服务商；启用搜索、飞书等连接后，相应请求也会发送给对应服务。**本地保存不代表所有处理都在本地完成。**
+- 当前账号仅用于本机，不包含云端同步或邮箱验证；同一电脑的项目、对话和模型目前属于共享工作空间，不是按账号隔离的数据空间。
+- `.local/`、运行时配置、环境变量文件、构建产物及私人参考材料已加入忽略规则。不要将个人数据、密钥或带令牌的链接提交到仓库。
+
+## 本地开发
+
+技术栈：**Electron · React · TypeScript · Vite · Electron Forge**。
+
+在 macOS 上安装 Node.js/npm 后：
+
+```bash
+git clone https://github.com/ailearneryang/ailo.git
+cd ailo
+npm ci --prefix apps/desktop
+npm start
 ```
-apps/desktop/          macOS 桌面客户端
-apps/desktop/agent/   Agent 状态机、模型动作协议、项目工作区和工具
-packages/contracts/   消息、问题、计划、成果的数据协议（待实现）
-services/api/         账号与跨设备同步服务（待实现）
-design/               界面参考
-docs/                 产品、交付与验证要求
-docs/reference/       本地参考材料（不提交仓库）
-scripts/              后续开发和发布脚本
+
+| 命令 | 用途 |
+| --- | --- |
+| `npm start` | 构建、打包并启动本机桌面应用。 |
+| `npm run build` | 运行 TypeScript 检查与 Vite 生产构建。 |
+| `npm run make:dmg` | 生成 macOS DMG，默认架构与构建机器相同。 |
+| `npm run make:zip` | 生成应用 ZIP 备用包。 |
+
+安装包输出在 `apps/desktop/out/make/`，版本来自 `apps/desktop/package.json`。签名、公证和上传 Releases 的步骤见 [macOS 发布说明](docs/macos-release.md)。
+
+单元测试位于 `scripts/*.test.cjs` 与 `scripts/*.test.mjs`。桌面交互脚本使用 Playwright 和独立测试数据目录，可通过 `PLAYWRIGHT_MODULE` 指定模块路径。README 截图可通过 `node scripts/readme-screenshots.cjs` 重新生成（macOS，需要先构建并安装 Playwright）。
+
+## 项目结构与文档
+
+```text
+apps/desktop/        桌面界面、主进程与本地存储
+apps/desktop/agent/  Agent 执行循环、项目工作区与工具
+scripts/             测试、构建及界面截图脚本
+docs/                产品、能力边界与发布文档
+docs/images/         README 界面截图
+design/              早期界面草案
 ```
 
-从 `docs/product-brief.md` 和 `docs/macos-delivery.md` 开始阅读。`docs/android-validation-draft.md` 是此前安卓验证场景的详细草案，应结合最新通用助手定位理解。
+- [产品定位](docs/product-brief.md)
+- [Agent 执行机制与限制](docs/agent-runtime.md)
+- [桌面功能与验证记录](docs/desktop-preview.md)
+- [飞书连接](docs/feishu-connection.md) / [联网搜索](docs/web-search.md)
+- [macOS 打包与发布](docs/macos-release.md)
 
-`design/conversation-concept.fragment.html` 是之前对话中使用的交互草案源码，依赖宿主图标/调整功能，不是独立应用或已完成页面。
-
-## 下一个里程碑
-
-用真实模型和完整 Android 环境验证天气应用交付；补充设计稿视觉解析与原生运行预览。当前执行闭环已通过本地模拟模型、实际隔离命令和 Electron 交互测试，不代表已完成真实 APK 验收。
-
-## 隐私与本地配置
-
-仓库仅保存源码、测试和项目文档。账号注册数据、对话记录、模型配置及密钥、应用连接凭据保存在本机应用数据目录；请勿复制到仓库。`.local/`、运行时 JSON 数据、环境变量文件、构建产物及个人参考材料已加入忽略规则。测试中的示例账号和密钥仅为虚构测试数据。
+后续重点：真实模型下的完整任务验证、开发环境检测、签名与公证，以及云端账号与跨设备接续。路线规划不代表当前已提供这些能力。
