@@ -1,0 +1,38 @@
+{
+  "name": "ailo-desktop",
+  "version": "0.1.61",
+  "description": "Ailo personal agent assistant — desktop development preview",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "npm run package && node ../../scripts/start-desktop.cjs",
+    "build": "tsc --noEmit && vite build",
+    "package": "npm run build && electron-forge package",
+    "make": "npm run build && electron-forge make",
+    "make:zip": "npm run build && electron-forge make --targets=@electron-forge/maker-zip",
+    "start:dev": "npm run build && electron ."
+  },
+  "keywords": [],
+  "author": "ailearneryang",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "@xmldom/xmldom": "0.9.12"
+  },
+  "productName": "Ailo",
+  "config": {
+    "forge": "./forge.config.cjs"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.11.2",
+    "@electron-forge/maker-dmg": "^7.11.2",
+    "@electron-forge/maker-zip": "^7.11.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "appdmg": "^0.6.6",
+    "electron": "^44.4.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1"
+  }
+}

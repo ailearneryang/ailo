@@ -1,0 +1,34 @@
+.ailo-pet { display:inline-flex; position:relative; flex-shrink:0; vertical-align:middle; align-items:center; justify-content:center; padding:0; line-height:0; letter-spacing:normal; background:transparent; border:0; border-radius:28%; -webkit-app-region:no-drag; isolation:isolate; }
+button.ailo-pet:hover { background:transparent; }
+button.ailo-pet:focus-visible { outline:2px solid #729262; outline-offset:3px; }
+.pet-hero { width:104px; height:98px; margin-left:-5px; }
+.pet-brand { width:40px; height:38px; margin-inline:-5px; }
+.pet-mini { width:32px; height:30px; }
+.pet-art { display:block; width:100%; height:100%; overflow:visible; }
+.pet-body { transform-origin:78px 132px; animation:pet-breathe 3.8s ease-in-out infinite; }
+.pet-tail { transform-origin:110px 115px; animation:pet-tail 3.2s ease-in-out infinite; }
+.pet-head { transform-origin:78px 92px; animation:pet-look 9s ease-in-out infinite; }
+.pet-eyes { transform-origin:78px 68px; animation:pet-blink 5.8s linear infinite; }
+.pet-smile-eyes,.pet-thoughts,.pet-heart { opacity:0; }
+.pet-mini:not(.is-thinking) .pet-body,.pet-mini:not(.is-thinking) .pet-tail,.pet-mini:not(.is-thinking) .pet-head,.pet-mini:not(.is-thinking) .pet-eyes { animation:none; }
+.ailo-pet.is-happy .pet-body { animation:pet-hop .6s ease-in-out 3; }
+.ailo-pet.is-happy .pet-head { animation:none; transform:rotate(-5deg); }
+.ailo-pet.is-happy .pet-eyes { opacity:0; animation:none; }
+.ailo-pet.is-happy .pet-smile-eyes { opacity:1; }
+.ailo-pet.is-happy .pet-heart { animation:pet-heart 1.8s ease-out; }
+.ailo-pet.is-happy .pet-tail { animation:pet-tail .45s ease-in-out infinite; }
+.ailo-pet.is-thinking:not(.is-happy) .pet-head { animation:pet-think 2.4s ease-in-out infinite; }
+.ailo-pet.is-thinking .pet-thoughts { opacity:1; }
+.ailo-pet.is-thinking .pet-thoughts circle { animation:pet-dot 1.5s ease-in-out infinite; }
+.pet-thoughts circle:nth-child(2) { animation-delay:.2s; }
+.pet-thoughts circle:nth-child(3) { animation-delay:.4s; }
+@keyframes pet-breathe { 0%,100% { transform:translateY(0) scale(1); } 50% { transform:translateY(-2px) scale(1.018,1.025); } }
+@keyframes pet-tail { 0%,100% { transform:rotate(-7deg); } 50% { transform:rotate(10deg); } }
+@keyframes pet-look { 0%,35%,65%,100% { transform:rotate(0); } 42%,54% { transform:rotate(-5deg); } }
+@keyframes pet-blink { 0%,40%,44%,73%,77%,100% { transform:scaleY(1); } 42%,75% { transform:scaleY(.09); } }
+@keyframes pet-hop { 0%,100% { transform:translateY(0); } 45% { transform:translateY(-7px) rotate(-2deg); } 70% { transform:translateY(0) scale(1.025,.98); } }
+@keyframes pet-heart { 0% { opacity:0; transform:translateY(8px); } 20%,65% { opacity:1; } 100% { opacity:0; transform:translateY(-12px); } }
+@keyframes pet-think { 0%,100% { transform:rotate(4deg); } 50% { transform:rotate(-5deg); } }
+@keyframes pet-dot { 0%,100% { opacity:.25; } 50% { opacity:1; } }
+@media (max-height:700px) { .pet-hero { width:80px; height:75px; } .pet-brand { width:38px; height:36px; } }
+@media (prefers-reduced-motion:reduce) { .ailo-pet * { animation:none !important; } .ailo-pet.is-happy .pet-heart { opacity:1; } }

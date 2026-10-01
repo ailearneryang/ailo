@@ -1,0 +1,12 @@
+{
+  "name": "ailo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "npm --prefix apps/desktop start",
+    "build": "npm --prefix apps/desktop run build",
+    "package": "npm --prefix apps/desktop run package",
+    "make": "npm --prefix apps/desktop run make",
+    "make:zip": "npm --prefix apps/desktop run make:zip"
+  }
+}

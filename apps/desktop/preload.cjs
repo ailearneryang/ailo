@@ -1,0 +1,42 @@
+const { contextBridge, ipcRenderer } = require("electron");
+contextBridge.exposeInMainWorld("ailo", {
+  openWeb:url=>ipcRenderer.invoke('web:open',url),
+  searchStatus:()=>ipcRenderer.invoke('web-search:status'),
+  searchSave:input=>ipcRenderer.invoke('web-search:save',input),
+  searchTest:()=>ipcRenderer.invoke('web-search:test'),
+  searchDisconnect:()=>ipcRenderer.invoke('web-search:disconnect'),
+  openProjectFolder:id=>ipcRenderer.invoke('project:openFolder',id),
+  openLocalProject:()=>ipcRenderer.invoke('project:openLocal'),
+  feishuCliPermissions:()=>ipcRenderer.invoke('feishu-cli:openPermissions'),
+  feishuCliStatus:()=>ipcRenderer.invoke('feishu-cli:status'),
+  feishuCliConnect:input=>ipcRenderer.invoke('feishu-cli:begin',input),
+  feishuCliDisconnect:()=>ipcRenderer.invoke('feishu-cli:disconnect'),
+  feishuCliAuthorize:()=>ipcRenderer.invoke('feishu-cli:openAuthorization'),
+  feishuCliInstallGuide:()=>ipcRenderer.invoke('feishu-cli:installGuide'),
+  feishuStatus:()=>ipcRenderer.invoke('feishu:status'),
+  feishuSave:input=>ipcRenderer.invoke('feishu:save',input),
+  feishuTest:()=>ipcRenderer.invoke('feishu:test'),
+  feishuDisconnect:()=>ipcRenderer.invoke('feishu:disconnect'),
+  feishuRead:url=>ipcRenderer.invoke('feishu:readDocument',url),
+  feishuGuide:()=>ipcRenderer.invoke('feishu:guide'),
+  complete: (input) => ipcRenderer.invoke("chat:complete", input),
+  onChatStatus: (callback) => {
+    const listener = (_event, status) => callback(status);
+    ipcRenderer.on("chat:status", listener);
+    return () => ipcRenderer.removeListener("chat:status", listener);
+  },
+  sessions: () => ipcRenderer.invoke("chat:sessions"),
+  patchTask: (id,patch,append) => ipcRenderer.invoke("task:patch", {id,patch,append}),
+  steer: input => ipcRenderer.invoke("chat:steer", input),
+  cancel: (id) => ipcRenderer.invoke("chat:cancel", id),
+  projectFiles: taskId => ipcRenderer.invoke("agent:files", taskId),
+  reveal: (taskId, artifactPath, projectFile = false) => ipcRenderer.invoke("agent:reveal", {taskId, artifactPath, projectFile}),
+  preview: (taskId, artifactPath, projectFile = false) => ipcRenderer.invoke("agent:preview", {taskId, artifactPath, projectFile}),
+  read: () => ipcRenderer.invoke("state:read"),
+  save: (state) => ipcRenderer.invoke("state:write", state),
+  pick: () => ipcRenderer.invoke("materials:pick"),
+  account: () => ipcRenderer.invoke("account:account"),
+  register: (input) => ipcRenderer.invoke("account:register", input),
+  login: (input) => ipcRenderer.invoke("account:login", input),
+  logout: () => ipcRenderer.invoke("account:logout"),
+});

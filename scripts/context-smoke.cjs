@@ -1,0 +1,50 @@
+const { _electron } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const fs = require('node:fs/promises'), path = require('node:path'), http = require('node:http'), assert = require('node:assert/strict');
+(async () => {
+ const root=process.cwd();let summaries=0, replies=0;
+ const server=http.createServer(async(req,res)=>{
+  let raw='';for await(const c of req)raw+=c;
+  const body=JSON.parse(raw), compact=body.messages[0].content.startsWith('请整理历史');
+  compact?summaries++:replies++;
+  res.setHeader('Content-Type','application/json');
+  res.end(JSON.stringify({choices:[{message:{content:compact?'用户要求保留蓝色；项目预算为一万元。':'已保留蓝色，继续处理。'}}],usage:{prompt_tokens:678}}));
+ });
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const dir=await fs.mkdtemp(path.join(root,'.local/context-ui-'));
+ const messages=Array.from({length:8},(_,i)=>({id:`msg${i}`,role:i%2?'assistant':'user',content:`历史 ${i}：`+'项目需求与重要事实。'.repeat(70)}));
+ await fs.writeFile(path.join(dir,'workspace.json'),JSON.stringify({tasks:[{id:'t',title:'上下文测试',request:'保留蓝色',materials:[],messages,projectId:'p',modelId:'m'}],projects:[{id:'p',name:'测试项目'}],models:[{id:'m',name:'本地测试',model:'mock',contextWindow:4096,baseUrl:`http://127.0.0.1:${server.address().port}/v1`}],defaultModelId:'m'}));
+ let app;
+ const launch=()=>_electron.launch({executablePath:path.join(root,'apps/desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'),args:[path.join(root,'apps/desktop')],env:{...process.env,ELECTRON_RUN_AS_NODE:undefined,AILO_DATA_DIR:dir}});
+ try {
+  app=await launch(); let page=await app.firstWindow();
+  await page.getByText('本地记录已就绪').waitFor();
+  await page.getByRole('button',{name:'上下文测试',exact:true}).click();
+  const meter=page.getByRole('button',{name:/上下文用量.*估算/});
+  await meter.click();
+  const dialog=page.getByRole('dialog',{name:'上下文用量',exact:true});
+  await dialog.getByText('附件材料',{exact:true}).waitFor();
+  assert.ok((await dialog.innerText()).includes('发送时将尝试自动整理历史'));
+  await page.screenshot({path:'.local/context-before.png'});
+  await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});
+  await page.getByRole('textbox',{name:'任务需求'}).fill('请继续，保持蓝色');
+  await page.getByRole('button',{name:'发送需求',exact:true}).click();
+  await page.getByText('已保留蓝色，继续处理。',{exact:true}).waitFor();
+  assert.ok(summaries>0);assert.equal(replies,1);
+  await meter.click();await dialog.getByText(/上次回复的输入用量：678/).waitFor();
+  await dialog.locator('summary').click();await dialog.getByText('用户要求保留蓝色；项目预算为一万元。',{exact:true}).waitFor();
+  await page.screenshot({path:'.local/context-after.png'});
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(760,600));
+  await page.waitForTimeout(200);
+  const box=await dialog.boundingBox();const size=await page.evaluate(()=>({w:innerWidth,h:innerHeight}));
+  assert.ok(box.x>=0&&box.y>=0&&box.x+box.width<=size.w&&box.y+box.height<=size.h);
+  await page.screenshot({path:'.local/context-compact.png'});
+  await page.locator('.brand').click();await dialog.waitFor({state:'hidden'});
+  await app.close();app=await launch();page=await app.firstWindow();await page.getByText('本地记录已就绪').waitFor();
+  await page.getByRole('button',{name:'上下文测试',exact:true}).click();
+  await page.getByRole('button',{name:/上下文用量.*估算/}).click();
+  await page.getByText(/查看历史摘要/).waitFor();
+  const saved=JSON.parse(await fs.readFile(path.join(dir,'workspace.json'),'utf8'));
+  assert.equal(saved.tasks[0].messages.length,10);assert.ok(saved.tasks[0].contextCheckpoint);
+  console.log('PASS: usage popover, automatic compaction, original history, provider usage, restart, keyboard/outside close and 760x600 layout.');
+ } finally { if(app)await app.close();server.closeAllConnections();await new Promise(r=>server.close(r)); }
+})().catch(e=>{console.error(e);process.exitCode=1;});

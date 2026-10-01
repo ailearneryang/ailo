@@ -1,0 +1,13 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {stripTypeScriptTypes} from 'node:module';
+const source=fs.readFileSync(new URL('../apps/desktop/src/progress-placement.ts',import.meta.url),'utf8');
+const js=stripTypeScriptTypes(source,{mode:'strip'});
+const {progressAnchor,visiblePlanItems}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+const messages=[{id:'u1',role:'user'},{id:'a1',role:'assistant'},{id:'u2',role:'user'},{id:'a2',role:'assistant'}];
+test('progress stays after original reply when later chat arrives',()=>assert.equal(progressAnchor({progressInputId:'u1'},messages),'a1'));
+test('new execution anchors to its own turn',()=>assert.equal(progressAnchor({progressInputId:'u2'},messages),'a2'));
+test('in flight execution stays with its user input',()=>assert.equal(progressAnchor({progressInputId:'u2'},messages.slice(0,3)),'u2'));
+test('legacy and missing anchors are not attached to latest reply',()=>{assert.equal(progressAnchor({},messages),undefined);assert.equal(progressAnchor({progressInputId:'deleted'},messages),undefined)});
+test('empty legacy decisions do not render blank bullets',()=>assert.deepEqual(visiblePlanItems(['',' ','-','**','•',null,'Kotlin']),['Kotlin']));
