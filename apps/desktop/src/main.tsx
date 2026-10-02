@@ -1,8 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
+import { Schedules } from "./schedules";
+import { MyAilo } from "./my-ailo";
 import { AccountPage, ModelSettings } from "./settings";
 import { AssistantText } from "./assistant-text";
+import { ProjectNavigation } from "./project-navigation";
 import { ProjectOverview } from "./project-overview";
 import { ProjectPicker } from "./project-picker";
 import { ModelPicker } from "./model-picker";
@@ -29,11 +32,12 @@ import {
   type User,
   type Message,
 } from "./types";
+const ASSISTANT_ID = "my-ailo-assistant";
 function App() {
   const [data, setData] = useState<Workspace>(emptyWorkspace);
   const [ready, setReady] = useState(false);
-  const [active, setActive] = useState<string | null>(null);
-  const [view, setView] = useState("chat");
+  const [active, setActive] = useState<string | null>(ASSISTANT_ID);
+  const [view, setView] = useState("assistant");
   const [expandedProjects,setExpandedProjects]=useState<Record<string,boolean>>({});
   const [input, setInput] = useState("");
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -47,6 +51,7 @@ function App() {
   const [projectId, setProjectId] = useState("");
   const [projectMenuAnchor,setProjectMenuAnchor]=useState<HTMLButtonElement|null>(null);
   const [modelId, setModelId] = useState("demo");
+  const [scheduleTarget,setScheduleTarget]=useState<string|null>(null);
   const [extensionTab,setExtensionTab]=useState<'expert'|'skill'|'connector'>('expert');
   const [searchChoices,setSearchChoices]=useState<Record<string,boolean>>({});
   const [connectionChoices,setConnectionChoices]=useState<Record<string,boolean>>({});
@@ -169,6 +174,8 @@ function App() {
       })
       .catch((e) => setError("无法加载本地记录：" + String(e)));
   }, []);
+  const recentTasks = data.tasks.filter(t=>t.id !== ASSISTANT_ID).sort((a,b)=>Date.parse(b.scheduledAt||b.created)-Date.parse(a.scheduledAt||a.created)).filter((t,index,items)=>!t.scheduledTaskId || t.scheduledArchived || items.findIndex(other=>other.scheduledTaskId===t.scheduledTaskId)===index);
+  const isConversation = view === "chat" || view === "assistant";
   const task = data.tasks.find((t) => t.id === active);
   const connectionKey=task?.id || projectId || "new";
   const useSearch=searchChoices[connectionKey] ?? task?.searchEnabled ?? false;
@@ -203,7 +210,7 @@ function App() {
     setError("");
     setInput(draft.input);
     setMaterials(draft.materials);
-    setView("chat");
+    setView(id === ASSISTANT_ID ? "assistant" : "chat");
     if (id === null) {
       setModelId(data.defaultModelId);
     }
@@ -309,8 +316,8 @@ function App() {
           materials: [...task.materials, ...materials],
         }
       : {
-          id: crypto.randomUUID(),
-          title: input.trim().slice(0, 26),
+          id: view === "assistant" ? ASSISTANT_ID : crypto.randomUUID(),
+          title: view === "assistant" ? "我的 Ailo" : input.trim().slice(0, 26),
           request: input.trim(),
           materials,
           projectId,
@@ -407,12 +414,8 @@ function App() {
           <Icon name="compose" /><span>新的对话</span>
         </button>
         <nav>
-          <button
-            className={view === "chat" ? "selected" : ""}
-            onClick={() => setView("chat")}
-          >
-            <Icon name="chat" /><span>对话</span>
-          </button>
+          <button aria-label="我的 Ailo" className={view === "assistant" ? "selected" : ""} onClick={() => select(ASSISTANT_ID)}><Pet size="mini" /><span>我的 Ailo</span></button>
+          <button className={view === "schedules" ? "selected" : ""} onClick={()=>{setScheduleTarget(null);setView("schedules");}}><Icon name="clock"/><span>定时任务</span></button>
           <button
             className={view === "extensions" ? "selected" : ""}
             onClick={() => setView("extensions")}
@@ -427,43 +430,25 @@ function App() {
           {data.projects.length === 0 ? (
             <p className="muted">在新对话中创建项目</p>
           ) : (
-            data.projects.map((p) => (
-              <div key={p.id}>
-              <button
-                aria-expanded={!!expandedProjects[p.id]}
-                aria-controls={'project-threads-'+p.id}
-                disabled={saving || importing}
-                className={projectId === p.id ? "selected" : ""}
-                onClick={() => {
-                  select(null);
-                  selectProject(p.id);
-                  setView("project");
-                  setExpandedProjects(v=>({...v,[p.id]:!v[p.id]}));
-                }}
-              >
-                <span aria-hidden="true">{expandedProjects[p.id]?'⌄':'›'}</span><Icon name="folder" /><span className="sidebar-project-name">{p.name}</span>
-                <small>
-                  {data.tasks.filter((t) => t.projectId === p.id).length}
-                </small>
-              </button>
-              {expandedProjects[p.id]&&<div id={'project-threads-'+p.id} className="sidebar-project-threads">{data.tasks.filter(t=>t.projectId===p.id).map(t=><button type="button" key={t.id} disabled={saving||importing} className={active===t.id&&view==='chat'?'selected':''} onClick={()=>select(t.id)} title={t.title}><span>{t.title}</span>{sessions[t.id]&&<small>执行中</small>}</button>)}<button type="button" disabled={saving||importing} onClick={()=>{select(null);selectProject(p.id);}}>＋ 新建对话</button></div>}
-              </div>
-            ))
+            [...data.projects].sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned)).map(p=><ProjectNavigation key={p.id} project={p} expanded={!!expandedProjects[p.id]} selected={projectId===p.id} tasks={data.tasks.filter(t=>t.projectId===p.id)} active={view==='chat'?active:null} runningIds={Object.keys(sessions)} extensions={availableExtensions} busy={saving||importing} onExpand={()=>setExpandedProjects(v=>({...v,[p.id]:!v[p.id]}))} onOpen={()=>{select(null);selectProject(p.id);setView('project');}} onNew={()=>{select(null);selectProject(p.id);}} onSelect={select} onSave={async project=>{
+              if(data.projects.some(other=>other.id!==project.id&&other.name.toLowerCase()===project.name.toLowerCase())){setError('项目名称已存在，请换个名称。');return false;}
+              return commit({...data,projects:data.projects.map(old=>old.id===project.id?project:old)});
+            }} onDelete={async()=>{try{if(await window.ailo.removeProject(p.id)){const latest=await window.ailo.read();setData(latest);if(projectId===p.id){select(null);setProjectId('');}}}catch(e){setError((e as Error).message);}}} onError={setError}/>)
           )}
         </div>
         <div className="label">最近的对话</div>
         <div className="history">
-          {data.tasks.length === 0 ? (
+          {recentTasks.length === 0 ? (
             <p className="muted">从一件想完成的事开始</p>
           ) : (
-            data.tasks.map((t) => (
+            recentTasks.map((t) => (
               <button
                 key={t.id}
                 disabled={saving || importing}
-                className={active === t.id ? "selected" : ""}
+                className={(active === t.id ? "selected" : "") + (t.scheduledTaskId ? " scheduled-recent" : "")}
                 onClick={() => select(t.id)}
               >
-                <span>{t.title}</span>{sessions[t.id]&&<small className="session-status">{sessions[t.id].status.startsWith('等待执行')?'排队中':'执行中'}</small>}
+                <span>{t.title}</span>{t.scheduledTaskId ? <small className="scheduled-recent-date">{new Date(t.scheduledAt||t.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})} · {sessions[t.id] ? (sessions[t.id].status.startsWith('等待执行')?'排队中':'执行中') : t.lastError || ['failed','blocked','paused','waiting_user'].includes(t.agentRun?.status||'') || t.messages?.at(-1)?.clarification ? '待处理' : t.messages?.at(-1)?.role==='assistant' || t.answer ? '已有结果' : '等待结果'}</small> : sessions[t.id]&&<small className="session-status">{sessions[t.id].status.startsWith('等待执行')?'排队中':'执行中'}</small>}
               </button>
             ))
           )}
@@ -489,7 +474,7 @@ function App() {
         <header>
           <div>
             <strong>
-              {view === "extensions" ? "扩展" : view === "about"
+              {view === "assistant" ? "我的 Ailo" : view === "schedules" ? "定时任务" : view === "extensions" ? "扩展" : view === "about"
                 ? "关于 Ailo"
                 : view === "models"
                   ? "偏好设置"
@@ -497,16 +482,17 @@ function App() {
                     ? "我的账号"
                     : view === "project" ? data.projects.find(p=>p.id===projectId)?.name || "项目" : task?.title || "你的个人助手"}
             </strong>
-            <small>
+            {(view !== "assistant" || !ready || saving) && <small>
               <span className="dot" />
               {saving
                 ? "正在保存…"
                 : ready
                   ? "本地记录已就绪"
                   : "正在读取工作空间"}
-            </small>
+            </small>}
           </div>
           <div className="header-controls">
+            {view === "chat" && task?.scheduledTaskId && !task.scheduledArchived && <button onClick={()=>{setScheduleTarget(task.scheduledTaskId!);setView("schedules");}}><Icon name="clock"/><span>历史记录</span></button>}
             {view === "chat" && task && (
               <span className="header-model">
                 {task.modelName && task.modelId !== "demo"
@@ -514,42 +500,43 @@ function App() {
                   : "尚未回复"}
               </span>
             )}
-            {task && view === "chat" && (
+            {task && isConversation && (view !== "assistant" || task.materials.length > 0) && (
               <button onClick={() => setRightPanel(showPanel?null:'materials')}>
                 {showPanel ? "收起材料" : "查看材料"}
               </button>
             )}
-            {task && view === "chat" && <button className="artifact-toggle" aria-label={rightPanel==='artifacts'?'收起产物':'查看产物'} aria-expanded={rightPanel==='artifacts'} aria-controls="artifact-panel" onClick={()=>setRightPanel(rightPanel==='artifacts'?null:'artifacts')}><Icon name="panel"/><span>产物{task.agentRun?.artifacts.length?` (${task.agentRun.artifacts.length})`:''}</span></button>}
+            {task && isConversation && (view !== "assistant" || !!task.agentRun?.artifacts.length) && <button className="artifact-toggle" aria-label={rightPanel==='artifacts'?'收起产物':'查看产物'} aria-expanded={rightPanel==='artifacts'} aria-controls="artifact-panel" onClick={()=>setRightPanel(rightPanel==='artifacts'?null:'artifacts')}><Icon name="panel"/><span>产物{task.agentRun?.artifacts.length?` (${task.agentRun.artifacts.length})`:''}</span></button>}
           </div>
         </header>
         <div
           className={
-            "workspace " + (task && view === "chat" && rightPanel ? "split" : "")
+            "workspace " + (task && isConversation && rightPanel ? "split" : "")
           }
         >
-          <section className="conversation">
-            {view === "project" && data.projects.some(p=>p.id===projectId) ? <ProjectOverview key={projectId} project={data.projects.find(p=>p.id===projectId)!} tasks={data.tasks.filter(t=>t.projectId===projectId)} onSelect={select} onNew={()=>{const id=projectId;select(null);selectProject(id);}}/> : view === "extensions" ? (
+          <section className={"conversation" + (view === "assistant" ? " assistant-conversation" : "")}>
+            {view === "assistant" && <MyAilo compact={!!task} data={data} runningIds={Object.keys(sessions)} onOpen={select} onSchedules={()=>setView("schedules")} onModels={()=>setView("models")} />}
+            {view === "schedules" ? <Schedules key={scheduleTarget||"all"} initialId={scheduleTarget||undefined} focusHistory={!!scheduleTarget} onChanged={async()=>setData(await window.ailo.read())} tasks={data.tasks} models={models} defaultModelId={data.defaultModelId} onFeishu={()=>{setExtensionTab("connector");setView("extensions");}} onModels={()=>setView("models")} onOpen={async id=>{const latest=await window.ailo.read();if(!latest.tasks.some(t=>t.id===id))throw Error('对话已删除或尚未创建');setData(latest);select(id);const opened=latest.tasks.find(t=>t.id===id)!;setModelId(opened.modelId||latest.defaultModelId);setProjectId(opened.projectId||"");setExtensionIds(opened.extensionIds||[]);}}/> : view === "project" && data.projects.some(p=>p.id===projectId) ? <ProjectOverview key={projectId} project={data.projects.find(p=>p.id===projectId)!} tasks={data.tasks.filter(t=>t.projectId===projectId)} onSelect={select} onNew={()=>{const id=projectId;select(null);selectProject(id);}}/> : view === "extensions" ? (
               <ExtensionCenter initialTab={extensionTab} items={availableExtensions} busy={busy || !ready}
-                onTryConnection={text=>{setConnectionChoices(v=>({...v,[connectionKey]:true}));setView("chat");setInput(text);setError("");}}
+                onTryConnection={text=>{setConnectionChoices(v=>({...v,[connectionKey]:true}));setView(active === ASSISTANT_ID ? "assistant" : "chat");setInput(text);setError("");}}
                 onImporting={setImporting}
-                onMaterial={material=>{setMaterials(items=>[...items,material]);setView("chat");setError("");}}
+                onMaterial={material=>{setMaterials(items=>[...items,material]);setView(active === ASSISTANT_ID ? "assistant" : "chat");setError("");}}
                 onSave={async items => { const ok = await commit({...data, extensions:items}); if (ok) setExtensionIds(ids => ids.filter(id => items.some(i => i.id === id && i.enabled))); return ok; }}
                 onUse={item => {
                   const ids = item.kind === "expert" ? selectedIds.filter(id => availableExtensions.find(e => e.id === id)?.kind !== "expert") : selectedIds;
                   if (!ids.includes(item.id) && item.kind === "skill" && ids.filter(id => availableExtensions.find(e => e.id === id)?.kind === "skill").length >= 5) { setError("最多选择 5 个技能，请先在聊天框移除一个。"); return; }
-                  setExtensionIds([...new Set([...ids,item.id])]); setView("chat"); setError("");
+                  setExtensionIds([...new Set([...ids,item.id])]); setView(active === ASSISTANT_ID ? "assistant" : "chat"); setError("");
                 }} />
             ) : view === "account" ? (
               <AccountPage
                 user={user}
                 onUser={setUser}
-                onBack={() => setView("chat")}
+                onBack={() => setView(active === ASSISTANT_ID ? "assistant" : "chat")}
               />
             ) : view === "models" ? (
               <>
                 <button
                   className="back-link settings-back"
-                  onClick={() => setView("chat")}
+                  onClick={() => setView(active === ASSISTANT_ID ? "assistant" : "chat")}
                 >
                   ← 返回对话
                 </button>
@@ -590,7 +577,7 @@ function App() {
                   </section>
                 </div>
               </div>
-            ) : !task ? (
+            ) : !task ? (view === "assistant" ? null :
               <div className="welcome home-welcome">
                 <Pet interactive />
                 <div className="eyebrow">YOUR EVERYDAY COMPANION</div>
@@ -649,6 +636,8 @@ function App() {
                         ))}
                       </div>
                     )}
+                    {view === "assistant" && data.tasks.filter(t=>(t.parentAssistantId === ASSISTANT_ID && t.parentMessageId === message.id) || task.assistantReferences?.[message.id]?.includes(t.id)).map(linked=><button key={linked.id} className="assistant-linked-task" onClick={()=>select(linked.id)}><Icon name="folder"/><span><strong>{linked.title}</strong><small>{sessions[linked.id] ? sessions[linked.id].status : linked.assistantPaused ? "已暂停" : linked.lastError ? "需要处理" : linked.agentRun?.status === "completed" ? "成果已准备好" : linked.messages?.at(-1)?.clarification ? "需要补充信息" : linked.messages?.at(-1)?.role === "assistant" ? "已有结果" : "查看任务进度"}{linked.agentRun?.artifacts.length ? ` · ${linked.agentRun.artifacts.length} 项成果` : ""}</small></span><span>查看任务 ↗</span></button>)}
+                    {view === "assistant" && task.assistantScheduleLinks?.filter(link=>link.messageId===message.id).map(link=><button key={link.id} className="assistant-linked-task" onClick={()=>setView("schedules")}><Icon name="clock"/><span><strong>{link.title}</strong><small>已保存到定时任务</small></span><span>查看安排 ↗</span></button>)}
                     {progressAt===message.id && currentProgress}
                     {task.agentRun?.history?.filter(r=>r.afterMessageId===message.id).map((r,i)=><ExecutionHistory key={r.executionId||i} task={task} run={r} onOpenArtifacts={()=>setRightPanel('artifacts')}/>)}
                   </div>
@@ -690,7 +679,7 @@ function App() {
                 <div ref={threadEnd} />
               </div>
             )}
-            {view === "chat" && (
+            {isConversation && (
               <div className={"compose-area " + (task ? "chat-compose" : "")}>
                 {task && pending===task.id && <TaskActivity task={task} status={chatStatus}/>}
                 {task && queued.some(m=>m.taskId===task.id) && <div className="message-queue" aria-label="待发送消息">
@@ -722,7 +711,7 @@ function App() {
                   <ComposerInput
                     key={connectionKey}
                     value={input} onChange={setInput}
-                    placeholder={pending ? "补充指令…" : "告诉 Ailo 你想做什么… @ 引用对话文件，/ 调用专家和技能"}
+                    placeholder={view === "assistant" ? "" : pending ? "补充指令…" : "告诉 Ailo 你想做什么… @ 引用对话文件，/ 调用专家和技能"}
                     disabled={!ready || busy}
                     files={[...(task?.materials || []), ...materials]}
                     materials={materials} extensions={availableExtensions} selectedIds={selectedIds}
@@ -731,7 +720,7 @@ function App() {
                     onSubmit={event => { void submit(event); }}
                   />
                   <div className="composerbar">
-                  <ComposerAdd searchEnabled={useSearch} setSearchEnabled={enabled=>{setSearchChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{searchEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,searchEnabled:enabled}:t)})));}} onProject={!task?setProjectMenuAnchor:undefined} feishu={useFeishu} setFeishu={enabled=>{setConnectionChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{feishuEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,feishuEnabled:enabled}:t)})));}} key={task?.id || projectId || "new"} items={availableExtensions} value={selectedIds} disabled={!ready || busy} onChange={ids => { setExtensionIds(ids); setNotice(""); }} onManage={tab => {setExtensionTab(tab);setView("extensions");}} onAttach={attach} importing={importing}
+                  <ComposerAdd searchEnabled={useSearch} setSearchEnabled={enabled=>{setSearchChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{searchEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,searchEnabled:enabled}:t)})));}} onProject={!task && view !== "assistant"?setProjectMenuAnchor:undefined} feishu={useFeishu} setFeishu={enabled=>{setConnectionChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{feishuEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,feishuEnabled:enabled}:t)})));}} key={task?.id || projectId || "new"} items={availableExtensions} value={selectedIds} disabled={!ready || busy} onChange={ids => { setExtensionIds(ids); setNotice(""); }} onManage={tab => {setExtensionTab(tab);setView("extensions");}} onAttach={attach} importing={importing}
                     onDefault={(task?.projectId || projectId) ? () => { const id = task?.projectId || projectId; void commit({...data, projects:data.projects.map(p => p.id === id ? {...p,extensionIds:selectedIds} : p)}).then(ok => { if(ok) setNotice("已保存为项目默认扩展，将用于该项目的新对话。"); }); } : undefined} />
                     <ContextMeter
                       messages={[...(task ? messagesFor(task) : []), ...(input || materials.length ? [{ role: "user" as const, content: input, materials }] : [])]}
@@ -776,7 +765,7 @@ function App() {
                   </div>
                 </form>
                 <div className="composer-context">
-                  {!task ? (
+                  {!task && view !== "assistant" ? (
                     <ProjectPicker
                       menuAnchor={projectMenuAnchor}
                       onMenuClose={()=>setProjectMenuAnchor(null)}
@@ -788,7 +777,7 @@ function App() {
                       onCreate={addProject}
                       onOpenLocal={async()=>{const project=await window.ailo.openLocalProject();if(project){setData(d=>({...d,projects:d.projects.some(p=>p.id===project.id)?d.projects:[...d.projects,project]}));setProjectId(project.id);setExtensionIds(project.extensionIds||[]);}}}
                     />
-                  ) : task.projectId ? (
+                  ) : task?.projectId ? (
                     <span className="thread-project">
                       ▱{" "}
                       {data.projects.find((p) => p.id === task.projectId)
@@ -815,8 +804,8 @@ function App() {
               </p>
             )}
           </section>
-          {task && view === "chat" && rightPanel==='artifacts' && <ArtifactPanel key={task.id} task={task} onClose={()=>setRightPanel(null)}/>}
-          {task && view === "chat" && showPanel && (
+          {task && isConversation && rightPanel==='artifacts' && <ArtifactPanel key={task.id} task={task} onClose={()=>setRightPanel(null)}/>}
+          {task && isConversation && showPanel && (
             <aside className="inspector">
               <h2>对话材料</h2>
               {!task.materials.length ? (

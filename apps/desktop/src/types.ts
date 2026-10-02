@@ -1,3 +1,5 @@
+export type ScheduleInput={id?:string;title:string;prompt:string;modelId:string;frequency:'once'|'daily'|'weekly';at?:string;time?:string;weekday?:number;searchEnabled?:boolean;feishuEnabled?:boolean};
+export type Schedule=ScheduleInput & {id:string;enabled:boolean;nextAt:string|null;runs:{id:string;taskId:string;at:string;startedAt?:string;status:'queued'|'running'|'completed'|'failed';error?:string}[]};
 export type SearchState={configured:boolean;connected:boolean;provider:"baidu"|"tavily";limit:number;used:number;verifiedAt:string|null};
 export type FeishuConnectionState = {installed:boolean;enabled:boolean;connected:boolean;configured?:boolean;name?:string;phase:string;url?:string;message:string};
 export type ClarificationOption = { id: string; label: string; description?: string; recommended: boolean };
@@ -24,7 +26,7 @@ export type Model = {
   hasKey?: boolean;
   apiKey?: string;
 };
-export type Project = { localPath?:string; source?:'local'; id: string; name: string; extensionIds?: string[] };
+export type Project = { description?:string; pinned?:boolean; localPath?:string; source?:'local'; id: string; name: string; extensionIds?: string[] };
 export type Message = {
   clarification?: Clarification;
   clarificationReplyTo?: string;
@@ -36,6 +38,15 @@ export type Message = {
   modelName?: string;
 };
 export type Task = {
+  scheduledTaskId?: string;
+  scheduledRunId?: string;
+  scheduledAt?: string;
+  scheduledArchived?: boolean;
+  parentAssistantId?: string;
+  parentMessageId?: string;
+  assistantPaused?: boolean;
+  assistantReferences?: Record<string, string[]>;
+  assistantScheduleLinks?: {messageId: string; id: string; title: string}[];
   agentRun?: AgentRun;
   contextCheckpoint?: ContextCheckpoint;
   promptTokens?: number;
@@ -100,8 +111,14 @@ export const emptyWorkspace: Workspace = {
 declare global {
   interface Window {
     ailo: {
+      schedulesList:()=>Promise<Schedule[]>;
+      schedulesSave:(input:ScheduleInput)=>Promise<Schedule>;
+      schedulesToggle:(input:{id:string;enabled:boolean})=>Promise<void>;
+      schedulesRemove:(id:string)=>Promise<void>;
+      schedulesRun:(id:string)=>Promise<void>;
       openLocalProject:()=>Promise<Project|null>;
       feishuCliPermissions:()=>Promise<void>;
+      removeProject:(id:string)=>Promise<boolean>;
       openProjectFolder:(id:string)=>Promise<void>;
       openWeb:(url:string)=>Promise<void>;
       searchStatus:()=>Promise<SearchState>;
@@ -131,7 +148,7 @@ declare global {
       }) => Promise<{ content: string; clarification?: Clarification; modelName: string; contextCheckpoint?: ContextCheckpoint; promptTokens?: number }>;
       onChatStatus: (callback: (status: { id: string; message?: string; content?: string; taskId?:string; finished?:boolean; run?:AgentRun }) => void) => () => void;
       cancel: (id: string) => Promise<void>;
-      sessions: () => Promise<{id:string;taskId:string;status:string;content:string}[]>;
+      sessions: () => Promise<{id:string;taskId:string;status:string;content:string;updatedAt?:string}[]>;
       patchTask: (id:string,patch:Partial<Task>,append?:Message[]) => Promise<Task>;
       steer: (input:{id:string;taskId:string;content:string}) => Promise<Message>;
       projectFiles: (taskId:string) => Promise<{files:{path:string;label:string;size:number;sha256:string}[];truncated:boolean}>;

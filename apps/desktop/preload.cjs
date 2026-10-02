@@ -1,10 +1,16 @@
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("ailo", {
+  schedulesList:()=>ipcRenderer.invoke('schedules:list'),
+  schedulesSave:input=>ipcRenderer.invoke('schedules:save',input),
+  schedulesToggle:input=>ipcRenderer.invoke('schedules:toggle',input),
+  schedulesRemove:id=>ipcRenderer.invoke('schedules:remove',id),
+  schedulesRun:id=>ipcRenderer.invoke('schedules:run',id),
   openWeb:url=>ipcRenderer.invoke('web:open',url),
   searchStatus:()=>ipcRenderer.invoke('web-search:status'),
   searchSave:input=>ipcRenderer.invoke('web-search:save',input),
   searchTest:()=>ipcRenderer.invoke('web-search:test'),
   searchDisconnect:()=>ipcRenderer.invoke('web-search:disconnect'),
+  removeProject:id=>ipcRenderer.invoke('project:remove',id),
   openProjectFolder:id=>ipcRenderer.invoke('project:openFolder',id),
   openLocalProject:()=>ipcRenderer.invoke('project:openLocal'),
   feishuCliPermissions:()=>ipcRenderer.invoke('feishu-cli:openPermissions'),

@@ -14,7 +14,10 @@ const { pathToFileURL } = require("node:url");
 if (process.env.AILO_DATA_DIR)
   app.setPath("userData", process.env.AILO_DATA_DIR);
 console.info(`[Ailo ${app.getVersion()}] 主进程启动；任务决策等待上限 600 秒`);
+const primaryInstance=app.requestSingleInstanceLock();
+if(!primaryInstance)app.quit();
 let win;
+app.on('second-instance',()=>{if(win&&!win.isDestroyed()){if(win.isMinimized())win.restore();win.show();win.focus();}});
 const storage = require("./storage.cjs").createStorage(
   app.getPath("userData"),
   safeStorage,
@@ -90,6 +93,25 @@ ipcMain.handle("chat:cancel", (e, id) => {
   trusted(e);
   chat.cancel(id);
 });
+const schedules=require('./scheduled-tasks.cjs').createScheduledTasks({
+  directory:app.getPath('userData'),cancel:id=>chat.cancel(id),
+  execute:async(task,run)=>{
+    const prompt=task.prompt+'\n\n[定时执行时间：'+new Date().toLocaleString('zh-CN')+'。请直接完成任务并报告结果；缺少信息或权限时请说明，不要假装已经完成。]';
+    await storage.patchTask(run.taskId,{scheduledTaskId:task.id,scheduledRunId:run.id,scheduledAt:run.at,title:'定时 · '+task.title,request:prompt,materials:[],created:new Date().toISOString(),modelId:task.modelId,feishuEnabled:task.feishuEnabled===true,searchEnabled:task.searchEnabled},[{id:run.id+'-user',role:'user',content:prompt}]);
+    try{
+      const result=await chat.complete({id:run.id,taskId:run.taskId,modelId:task.modelId,feishuEnabled:task.feishuEnabled===true,searchEnabled:task.searchEnabled,messages:[{role:'user',content:prompt}]});
+      await storage.patchTask(run.taskId,{modelName:result.modelName,contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens},[{id:run.id+'-assistant',role:'assistant',content:result.content,modelName:result.modelName,clarification:result.clarification}]);
+      if(result.clarification||['blocked','paused','running','understanding'].includes(result.agentRun?.status))throw Error('任务需要人工处理，请查看对话继续。');
+    }catch(error){await storage.patchTask(run.taskId,{lastError:error.message});throw error;}
+  },
+  notify:(task,result)=>{
+    if(win&&!win.isDestroyed())win.webContents.send('chat:status',{finished:true});
+    const {Notification}=require('electron');
+    if(Notification.isSupported())new Notification({title:result.status==='completed'?'定时任务已完成':'定时任务未完成',body:task.title}).show();
+  },
+});
+storage.personalAssistant=require('./personal-assistant.cjs').createPersonalAssistant({storage,chat,schedules,notify:value=>{if(win&&!win.isDestroyed())win.webContents.send('chat:status',value);}});
+for(const method of ['list','save','toggle','remove','run'])ipcMain.handle('schedules:'+method,(e,input)=>{trusted(e);return schedules[method](input);});
 const page = pathToFileURL(path.join(__dirname, "dist/index.html")).href;
 function trusted(e) {
   if (e.sender !== win?.webContents || e.senderFrame?.url !== page)
@@ -103,6 +125,7 @@ ipcMain.handle("state:read", async (e) => {
     const run = await json(path.join(require('./agent/workspace-path.cjs').workspacePath(storage.agentDirectory,task),"runs",key(task.id)+".json"),null);
     if (run) {task.agentRun = publicRun(run);if(!chat.sessions().some(s=>s.taskId===task.id)&&['running','understanding'].includes(task.agentRun.status))task.agentRun.status='paused';}
   }
+  state.tasks=require('./scheduled-records.cjs').associateScheduledRecords(state.tasks,await schedules.list());
   return state;
 });
 ipcMain.handle('project:openFolder',async(e,id)=>{
@@ -111,7 +134,15 @@ ipcMain.handle('project:openFolder',async(e,id)=>{
  if(!project.localPath)await require('node:fs/promises').mkdir(root,{recursive:true,mode:0o700});
  const error=await shell.openPath(root);if(error)throw Error('无法打开项目文件夹：'+error);
 });
-ipcMain.handle('project:openLocal',async e=>{
+ipcMain.handle('project:remove',async(e,id)=>{
+ trusted(e);const state=await storage.readWorkspace();const project=state.projects.find(p=>p.id===id);if(!project)throw Error('项目不存在');
+ const canRemove=tasks=>!chat.sessions().some(s=>tasks.some(t=>t.id===s.taskId));
+ if(!canRemove(state.tasks.filter(t=>t.projectId===id)))throw Error('项目有任务正在执行或排队，请先停止后再删除。');
+ const answer=await dialog.showMessageBox(win,{type:'question',title:'删除项目',message:`删除“${project.name}”？`,detail:'项目及所属对话将从 Ailo 中删除，本地文件夹和文件保留。',buttons:['取消','删除项目'],defaultId:0,cancelId:0});
+ if(answer.response!==1)return false;
+ await storage.removeProject(id,canRemove);return true;
+});
+ipcMain.handle('project:openLocal' ,async e=>{
  trusted(e);
  const choice=await dialog.showOpenDialog(win,{title:'打开本地文件夹作为项目',buttonLabel:'打开项目',properties:['openDirectory']});
  if(choice.canceled||!choice.filePaths[0])return null;
@@ -254,6 +285,7 @@ function create() {
   win.loadURL(page);
 }
 app.whenReady().then(async () => {
+  if(!primaryInstance)return;
   app.setAboutPanelOptions({applicationName:"Ailo",applicationVersion:app.getVersion(),iconPath:path.join(__dirname,"assets/ailo.png")});
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(process.platform === "darwin" ? [{label:"Ailo",submenu:[
@@ -279,6 +311,7 @@ app.whenReady().then(async () => {
     }
   }
   create();
+  await schedules.start();
   app.on("activate", () => {
     if (!BrowserWindow.getAllWindows().length) create();
   });
@@ -286,7 +319,7 @@ app.whenReady().then(async () => {
 let quitting=false;
 app.on("before-quit", e => {
   if(quitting)return;
-  e.preventDefault();chat.cancelAll();
+  e.preventDefault();schedules.stop();chat.cancelAll();
   Promise.allSettled([storage.androidManager.dispose(),feishuCli.dispose()]).finally(()=>{quitting=true;app.quit();});
 });
 app.on("window-all-closed", () => {

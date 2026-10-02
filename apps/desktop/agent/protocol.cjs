@@ -1,11 +1,11 @@
 const {fields:planFields}=require('./plan.cjs');
-const names=['web_search','feishu','route','checkpoint','reply','clarify','plan','list_files','read_file','write_file','read_material','read_source','inspect_source','search_materials','read_history','read_execution','run_command','build_android','android_device','artifact','finish','blocked','pause'];
+const names=['assistant','web_search','feishu','route','checkpoint','reply','clarify','plan','list_files','read_file','write_file','read_material','read_source','inspect_source','search_materials','read_history','read_execution','run_command','build_android','android_device','artifact','finish','blocked','pause'];
 const text={type:'string'};
 const strings={type:'array',items:text};
 const tool={type:'function',function:{name:'ailo_action',description:'提交一个 Ailo 动作。遵循系统中的阶段、工具参数和项目权限要求，每次只调用一次。',parameters:{type:'object',additionalProperties:false,required:['action'],properties:{
  action:{type:'string',enum:names},kind:{type:'string',enum:['chat','task']},text,...planFields,
  clarification:{type:'object',required:['title','questions'],properties:{title:text,defaults:strings,questions:{type:'array',items:{type:'object',required:['id','kind','title'],properties:{id:text,kind:{type:'string',enum:['choice','attachment']},title:text,description:text,options:{type:'array',items:{type:'object',required:['id','label'],properties:{id:text,label:text,description:text,recommended:{type:'boolean'}}}}}}}}},
- operation:{type:'string',enum:['status','start','install','launch','logs','screenshot','stop','schema','api','help','shortcut']},tasks:{type:'array',minItems:1,maxItems:8,items:text},
+ operation:{type:'string',enum:['status','start','install','launch','logs','screenshot','stop','schema','api','help','shortcut','list','read','delegate','continue','update','pause','schedule','schedule_toggle']},tasks:{type:'array',minItems:1,maxItems:8,items:text},
  method:{type:'string',enum:['GET','POST','PUT','PATCH','DELETE']},params:{type:'object',additionalProperties:true},data:{type:'object',additionalProperties:true},
  path:text,content:{type:'string',maxLength:200000},id:text,offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:12000},entry:text,pointer:text,query:text,command:{type:'string',maxLength:8000},purpose:text,label:text,evidence:strings,
 }}}};
@@ -51,6 +51,6 @@ function decodeAction(result) {
  return object(result.content);
 }
 function allowedActions(state) {
- return state.phase==='route'?['route']:state.requiredAction==='checkpoint'?['checkpoint','pause','blocked','clarify']:state.requiredAction==='plan_update'?['plan','clarify','blocked','pause']:state.requiredAction==='plan_or_clarify'?['plan','clarify','blocked','pause','checkpoint']:names.filter(name=>name!=='route'&&(state.phase!=='chat'||!['plan','write_file','run_command','build_android','android_device','artifact','finish'].includes(name)));
+ return state.phase==='route'?['route']:state.requiredAction==='checkpoint'?['checkpoint','pause','blocked','clarify']:state.requiredAction==='plan_update'?['plan','clarify','blocked','pause']:state.requiredAction==='plan_or_clarify'?['plan','clarify','blocked','pause','checkpoint']:names.filter(name=>name!=='route'&&(name!=='assistant'||state.personalAssistant===true)&&(state.phase!=='chat'||!['plan','write_file','run_command','build_android','android_device','artifact','finish'].includes(name)));
 }
 module.exports={tool,decodeAction,protocolError,parseAction:object,allowedActions};

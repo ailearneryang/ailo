@@ -7,7 +7,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
   const scheduler=require('./chat-scheduler.cjs').createScheduler(3);
   const steering = new Map();
   return {
-    sessions(){return [...steering.entries()].map(([id,s])=>({id,taskId:s.taskId,status:s.status||'等待执行…',content:s.content||''}));},
+    sessions(){return [...steering.entries()].map(([id,s])=>({id,taskId:s.taskId,status:s.status||'等待执行…',content:s.content||'',updatedAt:s.updatedAt}));},
     async steer({id, taskId, content}) {
       const session=steering.get(id);
       if(!session || session.taskId!==taskId || !session.accepting || pending.get(id)?.signal.aborted)throw Error('当前任务已停止，请作为新消息发送。');
@@ -53,7 +53,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
       const session={taskId:input.taskId,queue:[],saving:Promise.resolve(),accepting:false};
       steering.set(input.id,session);
       const callbacks=input;
-      input={...input,onStatus:message=>{session.status=message;callbacks.onStatus?.(message);},onText:content=>{session.content=content;callbacks.onText?.(content);}};
+      input={...input,onStatus:message=>{session.status=message;session.updatedAt=new Date().toISOString();callbacks.onStatus?.(message);},onText:content=>{session.content=content;session.updatedAt=new Date().toISOString();callbacks.onText?.(content);}};
       let timeoutMessage = "";
       let timer, totalTimer, textTimer;
       let replyStartedAt;
@@ -228,7 +228,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
             }
           }
           session.accepting=true;
-          const result = await runAgent({ getSteering:async()=>{await session.saving;return session.queue.splice(0);}, base: storage.agentDirectory, task, model, webSearch:input.searchEnabled===true?storage.webSearch:undefined, android:storage.androidManager, authorizeBuild:storage.authorizeBuild,feishuCli:input.feishuEnabled===false?{execute:async()=>{throw Object.assign(Error('当前对话已关闭飞书，请在输入框 ＋ → 应用连接中开启后再试。'),{code:'FEISHU_DECLINED'});}}:storage.feishuCli,
+          const result = await runAgent({ getSteering:async()=>{await session.saving;return session.queue.splice(0);}, base: storage.agentDirectory, task, model, projectContext:state.projects?.find(p=>p.id===task.projectId)?.description, personalAssistant:task.id===require('./personal-assistant.cjs').ASSISTANT_ID?storage.personalAssistant:undefined, webSearch:input.searchEnabled===true?storage.webSearch:undefined, android:storage.androidManager, authorizeBuild:storage.authorizeBuild,feishuCli:input.feishuEnabled===false?{execute:async()=>{throw Object.assign(Error('当前对话已关闭飞书，请在输入框 ＋ → 应用连接中开启后再试。'),{code:'FEISHU_DECLINED'});}}:storage.feishuCli,
             signal: controller.signal, ask: askAgent, extensions: selected,
             onStatus: input.onStatus, onRun: input.onRun });
           return { ...result, modelName: model.name };

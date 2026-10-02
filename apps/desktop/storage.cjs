@@ -116,6 +116,13 @@ function createStorage(directory, safeStorage) {
         await write('workspace',state);return task;
       });
     },
+    removeProject(id,canRemove=()=>true){return queue(async()=>{
+      const state=await read('workspace',{tasks:[],projects:[],models:[]});
+      if(!state.projects.some(p=>p.id===id))throw Error('项目不存在');
+      if(!canRemove(state.tasks.filter(t=>t.projectId===id)))throw Error('项目有任务正在执行或排队，请先停止后再删除。');
+      state.projects=state.projects.filter(p=>p.id!==id);state.tasks=state.tasks.filter(t=>t.projectId!==id);
+      await write('workspace',state);
+    });},
     saveWorkspace(state, preserveTasks=false) {
       return queue(async () => {
         if (
@@ -195,7 +202,7 @@ function createStorage(directory, safeStorage) {
             throw Error("项目配置无效。");
           projectIds.add(project.id);
           const registered=previous.projects?.find(p=>p.id===project.id);
-          return { id: project.id, name: project.name.trim(), ...(registered?.localPath?{localPath:registered.localPath,source:'local'}:{}), extensionIds: Array.isArray(project.extensionIds) ? project.extensionIds.filter(id => extensions.some(e => e.id === id)).slice(0,6) : [] };
+          return { id: project.id, name: project.name.trim(), description:typeof project.description==='string'?project.description.trim().slice(0,4000):'',pinned:project.pinned===true, ...(registered?.localPath?{localPath:registered.localPath,source:'local'}:{}), extensionIds: Array.isArray(project.extensionIds) ? project.extensionIds.filter(id => extensions.some(e => e.id === id)).slice(0,6) : [] };
         });
         if (
           state.tasks.some(
