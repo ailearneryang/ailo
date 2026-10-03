@@ -1,3 +1,4 @@
+import { canSendMaterial, isImageMaterial } from "../attachments.mjs";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
@@ -297,9 +298,9 @@ function App() {
       !modelReady()
     )
       return;
-    if (materials.some((m) => m.text === null)) {
+    if (materials.some((m) => !canSendMaterial(m))) {
       setError(
-        "有材料尚未解析，请移除 PDF、图片或不支持的文件后重试；压缩包中已读取的文本可以发送。",
+        "有材料无法读取，请移除 PDF 或不支持的文件后重试；图片支持 PNG、JPEG、WebP、GIF，需使用支持图片的模型。",
       );
       return;
     }
@@ -329,7 +330,7 @@ function App() {
   async function answerQuestions(source: Message, answers: ClarificationAnswer[], attached: Material[]) {
     if (!task || busy || requestRef.current || !source.clarification || messagesFor(task).at(-1)?.id !== source.id) return;
     if (!modelReady()) return;
-    if (attached.some(f => f.text === null)) throw Error("材料尚未解析，请移除后重试。");
+    if (attached.some(f => !canSendMaterial(f))) throw Error("材料尚未解析，请移除后重试。");
     const message: Message = {
       id: crypto.randomUUID(), role: "user", content: formatAnswers(source.clarification, answers),
       materials: attached, clarificationReplyTo: source.id, clarificationAnswers: answers,
@@ -379,6 +380,22 @@ function App() {
       } catch {
         setError("停止失败，请重试。");
       }
+  }
+  async function pasteFiles(files: File[]) {
+    if (busy || !ready) return;
+    setImporting(true);
+    try {
+      if (files.length > 10) throw Error("一次最多添加 10 个材料文件。");
+      if (files.some(file => file.size > 20 * 1024 * 1024)) throw Error("单个材料文件请小于 20 MB。");
+      const entries = await Promise.all(files.map(async file => ({ name: file.name || '粘贴图片.png', bytes: new Uint8Array(await file.arrayBuffer()) })));
+      const imported = await window.ailo.pasteFiles(entries);
+      setMaterials(previous => [...previous, ...imported]);
+      setError("");
+    } catch (error) {
+      setError(String(error).replace(/^.*Error: /, ""));
+    } finally {
+      setImporting(false);
+    }
   }
   async function attach() {
     if (busy) return;
@@ -715,6 +732,7 @@ function App() {
                     disabled={!ready || busy}
                     files={[...(task?.materials || []), ...materials]}
                     materials={materials} extensions={availableExtensions} selectedIds={selectedIds}
+                    onPasteFiles={files => { void pasteFiles(files); }}
                     onFile={file => setMaterials(previous => [...previous, file])}
                     onExtensions={ids => { setExtensionIds(ids); setNotice(""); }}
                     onSubmit={event => { void submit(event); }}
@@ -815,7 +833,7 @@ function App() {
                   <details key={i}>
                     <summary>{m.name}</summary>
                     <small>
-                      {m.summary || (m.text !== null ? "文本材料" : "尚未解析")}
+                      {m.summary || (m.text !== null ? "文本材料" : isImageMaterial(m) ? "图片材料（由模型识别）" : "尚未解析")}
                     </small>
                     {m.text !== null && <pre>{m.text}</pre>}
                   </details>

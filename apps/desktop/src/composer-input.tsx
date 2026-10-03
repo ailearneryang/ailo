@@ -1,3 +1,4 @@
+import { canSendMaterial, isImageMaterial } from "../attachments.mjs";
 import React, { useEffect, useLayoutEffect, useId, useRef, useState } from 'react';
 import { Icon } from './icon';
 import type { Extension, Material } from './types';
@@ -8,6 +9,7 @@ type Props = {
   disabled: boolean; files: Material[]; materials: Material[];
   extensions: Extension[]; selectedIds: string[];
   onFile: (file: Material) => void;
+  onPasteFiles: (files: File[]) => void;
   onExtensions: (ids: string[]) => void; onSubmit: (event: React.FormEvent) => void;
 };
 type Option = { id: string; name: string; detail: string; kind: 'file' | 'expert' | 'skill'; selected?: boolean; disabled?: boolean; choose: () => void };
@@ -39,8 +41,8 @@ export function ComposerInput(props: Props) {
     ...files.filter((file, index) => files.findIndex(other => sameFile(file, other)) === index)
       .filter(file => file.name.toLocaleLowerCase().includes(query))
       .map((file, index): Option => ({ id: `file-${index}`, name: file.name, kind: 'file',
-        detail: file.text === null ? '文件尚未解析' : '引用对话文件',
-        selected: materials.some(other => sameFile(file, other)), disabled: file.text === null,
+        detail: isImageMaterial(file) ? '引用图片材料' : canSendMaterial(file) ? '引用对话文件' : '文件尚未解析',
+        selected: materials.some(other => sameFile(file, other)), disabled: !canSendMaterial(file),
         choose: () => { if (!materials.some(other => sameFile(file, other))) props.onFile(file); } })),
   ] : extensions.filter(extension => extension.enabled && `${extension.name} ${extension.description}`.toLocaleLowerCase().includes(query))
     .map((extension): Option => {
@@ -78,6 +80,12 @@ export function ComposerInput(props: Props) {
     <textarea ref={textarea} value={value} placeholder={props.placeholder} aria-label="任务需求"
       aria-autocomplete="list" aria-controls={open ? listId : undefined} aria-expanded={open}
       aria-activedescendant={open && options.length ? `${listId}-${current}` : undefined}
+      onPaste={event => {
+        const files = Array.from(event.clipboardData.files);
+        if (!files.length) return;
+        event.preventDefault();
+        if (!disabled) props.onPasteFiles(files);
+      }}
       onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
       onChange={event => { onChange(event.target.value); setCaret(event.target.selectionStart); setDismissed(false); }}
       onSelect={event => setCaret(event.currentTarget.selectionStart)}

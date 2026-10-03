@@ -1,3 +1,4 @@
+import { canSendMaterial } from "../attachments.mjs";
 import React, { useRef, useState } from 'react';
 import type { Clarification, ClarificationAnswer, Material } from './types';
 import { Icon } from './icon';
@@ -25,7 +26,7 @@ export function ClarificationCard({ value, messageId, disabled, completed, activ
     lock.current = true;setLoading(true);setError('');
     try {
       const picked = await window.ailo.pick();
-      if (picked.some(f => f.text === null)) throw Error('有文件无法读取，请选择受支持的文字文档或源文件。');
+      if (picked.some(f => !canSendMaterial(f))) throw Error('有文件无法读取，请选择受支持的图片、文字文档或源文件。');
       if (picked.length) { setFiles(prev => ({...prev,[id]:[...(prev[id] || []),...picked]})); setChoices(prev => ({...prev,[id]:'__files'})); }
     } catch(e) {setError(String(e).replace(/^.*Error: /,''));}
     finally {lock.current=false;setLoading(false);}

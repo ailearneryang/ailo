@@ -156,6 +156,7 @@ declare global {
       preview: (taskId:string, artifactPath:string, projectFile?:boolean) => Promise<{kind:'image'|'text';content:string;truncated?:boolean}>;
       read: () => Promise<Workspace>;
       save: (state: Workspace) => Promise<void>;
+      pasteFiles: (entries: { name: string; bytes: Uint8Array }[]) => Promise<Material[]>;
       pick: () => Promise<Material[]>;
       account: () => Promise<User | null>;
       register: (credentials: {

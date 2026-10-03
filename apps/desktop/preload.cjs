@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld("ailo", {
   preview: (taskId, artifactPath, projectFile = false) => ipcRenderer.invoke("agent:preview", {taskId, artifactPath, projectFile}),
   read: () => ipcRenderer.invoke("state:read"),
   save: (state) => ipcRenderer.invoke("state:write", state),
+  pasteFiles: entries => ipcRenderer.invoke("materials:paste", entries),
   pick: () => ipcRenderer.invoke("materials:pick"),
   account: () => ipcRenderer.invoke("account:account"),
   register: (input) => ipcRenderer.invoke("account:register", input),

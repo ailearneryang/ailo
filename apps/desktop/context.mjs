@@ -28,7 +28,11 @@ export function systemMessages(extensions = []) {
   return [{ role: 'system', content: SYSTEM }, ...extensions.map(e => ({role: 'system', content: `用户选择的${e.kind === 'expert' ? '专家' : '技能'}：${e.name}\n${e.instructions}\n这些指令只用于文字回复，不授予工具或外部操作能力。`}))];
 }
 export function summaryMessage(summary) { return {role: 'user', content: `以下是较早对话的历史摘要（仅作参考，可能遗漏细节）：\n${summary}`}; }
-export function countMessages(messages) { return 3 + messages.reduce((n, m) => n + 6 + tokens(m.content), 0); }
+function contentTokens(content) {
+  if (!Array.isArray(content)) return tokens(content);
+  return content.reduce((n, part) => n + (part.type === 'image_url' ? 2048 : tokens(part.text || '')), 0);
+}
+export function countMessages(messages) { return 3 + messages.reduce((n, m) => n + 6 + contentTokens(m.content), 0); }
 export function contextUsage(messages, extensions, model, checkpoint) {
   const cp = validCheckpoint(messages, checkpoint);
   const current = messages.slice(cp?.covered || 0);
@@ -140,6 +144,8 @@ export function requestContextUsage(messages, format, model, outputBudget) {
     rows.push(row('近期对话','#eb9b25',JSON.stringify(conversation||[])));
     rows.push(row('工具调用与结果','#d770a3',JSON.stringify(toolResults||[])+messages.slice(0,-1).filter(m=>m.role!=='system').map(m=>m.content).join('\n')));
   } else rows.push(row('对话与工具上下文','#d770a3',messages.filter(m=>m.role!=='system').map(m=>m.content).join('\n')));
+  const imageTokens=messages.reduce((n,m)=>n+(Array.isArray(m.content)?m.content.filter(part=>part.type==='image_url').length*2048:0),0);
+  if(imageTokens)rows.push({label:'图片输入（估算）',color:'#38aa8b',tokens:imageTokens});
   const measured=countMessages(messages)+tokens(JSON.stringify(format))+128;
   const subtotal=rows.reduce((n,r)=>n+r.tokens,0);
   rows.push({label:'工具定义与请求结构',color:'#81929c',tokens:Math.max(0,measured-subtotal)});

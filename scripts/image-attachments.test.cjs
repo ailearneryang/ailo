@@ -1,0 +1,46 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises'), path = require('node:path'), os = require('node:os');
+const { randomUUID } = require('node:crypto');
+const { createChat } = require('../apps/desktop/chat.cjs');
+const { imageContent } = require('../apps/desktop/materials.cjs');
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
+test('image attachments reach model requests and survive retry after source migration', async t => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'ailo-image-'));
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.mkdir(path.join(base, 'imports'));
+  const sourceId = randomUUID();
+  await fs.writeFile(path.join(base, 'imports', sourceId), png);
+  const task = { id: 'image-task', request: '描述图片', materials: [], messages: [{ role: 'user', content: '描述图片', materials: [{ name: '截图.png', size: png.length, text: null, sourceId }] }] };
+  const storage = { agentDirectory: base, readWorkspace: async () => ({ tasks: [task] }), modelCredentials: async () => ({ baseUrl: 'https://example.com/v1', model: 'vision', contextWindow: 32768 }) };
+  let calls = 0;
+  const chat = createChat(storage, async (_, options) => {
+    const request = JSON.parse(options.body);
+    const images = request.messages.filter(message => Array.isArray(message.content));
+    assert.equal(images.length, 1);
+    const image = images[0].content.find(part => part.type === 'image_url');
+    assert.equal(image.image_url.url, `data:image/png;base64,${png.toString('base64')}`);
+    const state = JSON.parse(request.messages.at(-1).content);
+    const action = state.phase === 'route' ? { action: 'route', kind: 'chat' } : { action: 'reply', text: '已收到图片' };
+    calls++;
+    return new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ id: 'a', type: 'function', function: { name: 'ailo_action', arguments: JSON.stringify(action) } }] } }] }));
+  });
+  for (const id of ['first', 'retry']) assert.equal((await chat.complete({ id, taskId: task.id, modelId: 'vision', messages: task.messages })).content, '已收到图片');
+  assert.equal(calls, 4);
+});
+test('attachment availability, image validation and token estimates', async t => {
+  const { canSendMaterial } = await import('../apps/desktop/attachments.mjs');
+  assert.ok(canSendMaterial({ name: 'a.png', text: null, sourceId: randomUUID() }));
+  assert.ok(canSendMaterial({ name: 'a.txt', text: 'text' }));
+  assert.ok(!canSendMaterial({ name: 'a.pdf', text: null, sourceId: randomUUID() }));
+  assert.ok(!canSendMaterial({ name: 'a.png', text: null }));
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'ailo-image-'));
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const filename = path.join(base, 'fake.png');
+  await fs.writeFile(filename, 'not an image');
+  await assert.rejects(imageContent(filename), /有效的/);
+  const { countMessages, requestContextUsage } = await import('../apps/desktop/context.mjs');
+  const messages = [{ role: 'user', content: [{ type: 'text', text: '图片' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,' + 'x'.repeat(100000) } }] }];
+  assert.ok(countMessages(messages) > 2048 && countMessages(messages) < 2100);
+  assert.equal(requestContextUsage(messages, {}, {}, 1024).rows.find(row => row.label === '图片输入（估算）').tokens, 2048);
+});

@@ -8,7 +8,7 @@ const {
   shell,
 } = require("electron");
 app.setName("Ailo");
-const { readMaterial, extensions } = require("./materials.cjs");
+const { readMaterial, extensions, importPastedMaterials } = require("./materials.cjs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 if (process.env.AILO_DATA_DIR)
@@ -231,6 +231,10 @@ for(const method of ['status','save','test','disconnect','readDocument'])ipcMain
   return result;
 });
 ipcMain.handle('feishu:guide',e=>{trusted(e);return shell.openExternal('https://open.feishu.cn/app');});
+ipcMain.handle("materials:paste", async (e, entries) => {
+  trusted(e);
+  return importPastedMaterials(entries, path.join(storage.agentDirectory, 'imports'));
+});
 ipcMain.handle("materials:pick", async (e) => {
   trusted(e);
   const result = await dialog.showOpenDialog(win, {

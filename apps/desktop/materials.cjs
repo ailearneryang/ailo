@@ -20,6 +20,8 @@ const extensions = [
   "png",
   "jpg",
   "jpeg",
+  "webp",
+  "gif",
   "zip",
   "7z",
   "tar",
@@ -261,4 +263,51 @@ async function readSource(filename, name, entry) {
   const text=decode(await fs.readFile(filename));if(text===null)throw Error('文件不是 UTF-8 文本');
   return {text,kind:'text'};
 }
-module.exports = { readMaterial, readSource, extensions };
+async function importPastedMaterials(entries, directory) {
+  if (!Array.isArray(entries) || !entries.length || entries.length > 10)
+    throw Error('一次最多添加 10 个材料文件。');
+  for (const entry of entries) {
+    if (!entry || typeof entry.name !== 'string' || !entry.name || !(entry.bytes instanceof Uint8Array))
+      throw Error('无效的粘贴文件。');
+    if (entry.bytes.byteLength > MAX_FILE) throw Error('单个材料文件请小于 20 MB。');
+  }
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'ailo-paste-'));
+  const saved = [];
+  try {
+    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+    const materials = [];
+    for (const [index, entry] of entries.entries()) {
+      const name = path.basename(entry.name);
+      const folder = path.join(temporary, String(index));
+      await fs.mkdir(folder);
+      const filename = path.join(folder, name);
+      await fs.writeFile(filename, entry.bytes, { mode: 0o600 });
+      const material = await readMaterial(filename);
+      const sourceId = require('node:crypto').randomUUID();
+      const destination = path.join(directory, sourceId);
+      await fs.copyFile(filename, destination);
+      saved.push(destination);
+      await fs.chmod(destination, 0o600);
+      materials.push({ ...material, sourceId });
+    }
+    return materials;
+  } catch (error) {
+    await Promise.all(saved.map(filename => fs.rm(filename, { force: true })));
+    throw error;
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true });
+  }
+}
+async function imageContent(filename) {
+  const info = await fs.stat(filename);
+  if (!info.isFile() || info.size > MAX_FILE) throw Error('图片文件无效或超过 20 MB。');
+  const bytes = await fs.readFile(filename);
+  let mime;
+  if (bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) mime = 'image/png';
+  else if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) mime = 'image/jpeg';
+  else if (/^GIF8[79]a$/.test(bytes.subarray(0,6).toString('ascii'))) mime = 'image/gif';
+  else if (bytes.subarray(0,4).toString('ascii') === 'RIFF' && bytes.subarray(8,12).toString('ascii') === 'WEBP') mime = 'image/webp';
+  else throw Error('无法读取图片，请使用有效的 PNG、JPEG、WebP 或 GIF 文件。');
+  return { type: 'image_url', image_url: { url: `data:${mime};base64,${bytes.toString('base64')}` } };
+}
+module.exports = { readMaterial, readSource, extensions, importPastedMaterials, imageContent };
