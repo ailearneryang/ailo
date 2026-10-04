@@ -13,12 +13,12 @@ npm ci --prefix apps/desktop
 npm run make:dmg
 ```
 
-输出目录：`apps/desktop/out/make/`。应用版本取自 `apps/desktop/package.json`；当前为 `0.1.62`。默认按当前机器架构生成，Apple Silicon 构建为 arm64，仅针对 M 系列 Mac。ZIP 备用包用 `npm run make:zip` 生成。若 DMG 失败，保留错误日志并检查 macOS 的 hdiutil/磁盘映像权限，不能把失败的输出作为安装包发布。
+输出目录：`apps/desktop/out/make/`。应用版本取自 `apps/desktop/package.json`；当前为 `0.1.63`。默认按当前机器架构生成，Apple Silicon 构建为 arm64，仅针对 M 系列 Mac。ZIP 备用包用 `npm run make:zip` 生成。若 DMG 失败，保留错误日志并检查 macOS 的 hdiutil/磁盘映像权限，不能把失败的输出作为安装包发布。
 
-建议上传前将最终 DMG 命名为 `Ailo-0.1.62-mac-arm64.dmg`，并记录 SHA-256：
+建议上传前将最终 DMG 命名为 `Ailo-0.1.63-mac-arm64.dmg`，并记录 SHA-256：
 
 ```bash
-shasum -a 256 /path/to/Ailo-0.1.62-mac-arm64.dmg
+shasum -a 256 /path/to/Ailo-0.1.63-mac-arm64.dmg
 ```
 
 ## 发布前验证
@@ -33,8 +33,8 @@ shasum -a 256 /path/to/Ailo-0.1.62-mac-arm64.dmg
 
 1. 确保本次打包对应的源码已提交并推送，核对应用版本。
 2. 打开 https://github.com/ailearneryang/ailo/releases ，选择 Draft a new release。
-3. 选择对应源码提交，创建版本标签（例如 `v0.1.62`）。不要重复使用已有版本标签发布不同代码。
-4. 标题可用 `Ailo 0.1.62 — macOS Apple Silicon 预览版`。说明支持的架构、安装方式、模型配置要求、已知限制以及签名/公证状态。
+3. 选择对应源码提交，创建版本标签（例如 `v0.1.63`）。不要重复使用已有版本标签发布不同代码。
+4. 标题可用 `Ailo 0.1.63 — macOS Apple Silicon 预览版`。说明支持的架构、安装方式、模型配置要求、已知限制以及签名/公证状态。
 5. 上传最终 DMG，可附 ZIP 和 SHA-256 校验值。GitHub 自动附带的 Source code ZIP 不属于桌面安装包。
 6. 未签名/未公证版本勾选 Pre-release，先小范围内测；附件和说明检查完成后发布。
 7. 发布后将实际 Release 下载链接加入 README，再用于推广。

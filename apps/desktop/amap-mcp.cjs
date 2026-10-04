@@ -30,7 +30,7 @@ function createAMap({directory,safeStorage,fetchImpl=fetch,confirmWrite=async()=
    function unwrap(obj){if(obj.jsonrpc!=='2.0'||obj.id!==requestId)throw fail('高德 MCP 响应格式异常。');if(obj.error)throw fail('高德 MCP 拒绝请求，请检查 Key、权限及工具参数。');if(!Object.hasOwn(obj,'result'))throw fail('高德 MCP 响应缺少结果。');return redact(obj.result,key);}
   }
   try {
-   const init=await rpc('initialize',{protocolVersion:version,capabilities:{},clientInfo:{name:'ailo',version:'0.1.62'}});
+   const init=await rpc('initialize',{protocolVersion:version,capabilities:{},clientInfo:{name:'ailo',version:require('./package.json').version}});
    if(!['2024-11-05','2025-03-26','2025-06-18','2025-11-25'].includes(init.protocolVersion))throw fail('高德 MCP 协议版本暂不支持。');version=init.protocolVersion;
    await rpc('notifications/initialized',undefined,true);
    const tools=[];let cursor;
