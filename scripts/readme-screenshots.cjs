@@ -20,6 +20,12 @@ const path = require('node:path');
       { id: 'demo-learning', title: '每天学一点 AI', prompt: '每天整理一个 AI 架构知识点，说明原理、应用场景和实践建议。', frequency: 'daily', time: '09:00', modelId: 'demo', enabled: true, nextAt: '2099-10-03T01:00:00.000Z', searchEnabled: true, runs: [2,1].map(day=>({id:'run-'+day, taskId:'demo-run-'+day, at:`2026-10-0${day}T01:00:00.000Z`, status:'completed'})) },
       { id: 'demo-review', title: '晚间复盘提醒', prompt: '用三个问题帮助我回顾今天的收获和明天的重点。', frequency: 'daily', time: '21:00', modelId: 'demo', enabled: true, nextAt: '2099-10-02T13:00:00.000Z', runs: [] }
     ]));
+    const { createKnowledge } = require('../apps/desktop/knowledge.cjs');
+    const knowledge = createKnowledge(directory);
+    const library = await knowledge.save({ name: '产品资料', description: '产品需求、团队规范与常见问题，方便在对话中检索和引用。' });
+    const source = path.join(directory, '产品协作规范.md');
+    await fs.writeFile(source, '# 产品协作规范\n\n每个需求应包含用户场景、预期行为和验收标准。\n项目周会每周五举行，会上确认本周进度与下一步行动。\n发布前检查关键流程，并记录验证结果。');
+    await knowledge.import(library.id, [source]);
     const installed = path.join(root, 'apps/desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron');
     const executable = await fs.access(installed).then(()=>installed).catch(()=>path.join(root,'.local/my-ailo-electron/Electron.app/Contents/MacOS/Electron'));
     app = await _electron.launch({
@@ -40,6 +46,23 @@ const path = require('node:path');
     await page.getByRole('button', { name: '扩展', exact: true }).click();
     await page.getByRole('heading', { name: '产品经理', exact: true }).waitFor();
     await page.screenshot({ path: path.join(output, 'extensions.png'), animations: 'disabled', scale: 'css' });
+    await page.getByRole('tab', { name: '应用连接', exact: true }).click();
+    await page.getByRole('button', { name: '配置高德地图', exact: true }).waitFor();
+    await page.waitForFunction(() => !document.querySelector('.connection-tile-status')?.textContent.includes('检测中'));
+    await page.screenshot({ path: path.join(output, 'connections.png'), animations: 'disabled', scale: 'css' });
+    await page.getByRole('button', { name: '知识库', exact: true }).click();
+    await page.locator('.knowledge-title h2').filter({ hasText: '产品资料' }).waitFor();
+    await page.getByLabel('搜索知识库资料').fill('验收');
+    await page.locator('.knowledge-search button').click();
+    await page.locator('.knowledge-results button').waitFor();
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1200, 1040));
+    await page.screenshot({ path: path.join(output, 'knowledge.png'), animations: 'disabled', scale: 'css' });
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1200, 820));
+    await page.getByRole('button', { name: '在对话中使用 ↗', exact: true }).click();
+    await page.getByRole('button', { name: '选择知识库', exact: true }).click();
+    await page.getByRole('dialog', { name: '选择对话知识库', exact: true }).waitFor();
+    await page.screenshot({ path: path.join(output, 'knowledge-picker.png'), animations: 'disabled', scale: 'css' });
+    await page.getByRole('button', { name: '关闭知识库选择', exact: true }).click();
     await page.getByRole('button', { name: '定时任务', exact: true }).click();
     await page.locator('.schedule-list-item').filter({hasText:'每天学一点 AI'}).click();
     await page.locator('.schedule-latest .assistant-text').waitFor();
@@ -59,7 +82,7 @@ const path = require('node:path');
     await page.getByRole('button', { name: '产品想法 项目操作', exact: true }).click();
     await page.getByRole('button', { name: '取消置顶', exact: true }).waitFor();
     await page.screenshot({ path: path.join(output, 'project-menu.png'), animations: 'disabled', scale: 'css' });
-    console.log('Saved 7 README screenshots from an isolated demo workspace.');
+    console.log('Saved 10 README screenshots from an isolated demo workspace.');
   } finally {
     if (app) await app.close();
     await fs.rm(directory, { recursive: true, force: true });
