@@ -1,7 +1,7 @@
 import React from 'react';
 import {visiblePlanItems} from './progress-placement';
 import type {Task,AgentRun} from './types';
-const statuses:Record<string,string>={understanding:'理解需求',running:'执行中',waiting_user:'等待回答',paused:'已暂停',blocked:'需要处理阻塞',failed:'执行中断',completed:'已完成',idle:'对话'};
+const statuses:Record<string,string>={understanding:'理解需求',running:'执行中',waiting_permission:'等待目录授权',waiting_user:'等待回答',paused:'已暂停',blocked:'需要处理阻塞',failed:'执行中断',completed:'已完成',idle:'对话'};
 const steps:Record<string,string>={pending:'待执行',running:'进行中',done:'已完成',blocked:'阻塞'};
 function StatusBadge({status,label}:{status:string;label:string}) {
   const tone = status==='done'||status==='completed'||status==='archived' ? 'done' : status==='running'||status==='understanding' ? 'running' : status==='blocked'||status==='failed' ? 'blocked' : 'pending';
@@ -14,7 +14,7 @@ function StatusBadge({status,label}:{status:string;label:string}) {
 export function TaskProgress({task,busy,onContinue,showRecovery=true,onOpenArtifacts}:{onOpenArtifacts:()=>void;task:Task;busy:boolean;onContinue:()=>void;showRecovery?:boolean}) {
   const run=task.agentRun!;
   const decisions=visiblePlanItems(run.decisions),acceptance=visiblePlanItems(run.acceptance);
-  const recoverable=['paused','failed','blocked'].includes(run.status);
+  const recoverable=['paused','failed','blocked','waiting_permission'].includes(run.status);
   if (!showRecovery && recoverable && !run.steps.length && !run.artifacts.length) return null;
   if(run.mode==='chat' && !recoverable)return null;
   const finishing=run.status==='running' && !!run.steps.length && run.steps.every(s=>s.status==='done');

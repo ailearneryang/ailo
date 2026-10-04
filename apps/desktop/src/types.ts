@@ -1,3 +1,8 @@
+export type KnowledgeDocument={id:string;name:string;chars:number;chunks:number;createdAt:string};
+export type KnowledgeLibrary={id:string;name:string;description:string;createdAt:string;documents:KnowledgeDocument[]};
+export type KnowledgeHit={libraryId:string;libraryName:string;documentId:string;name:string;chunk:number;offset:number;end:number;text:string;citation:string};
+export type KnowledgePage={libraryId:string;documentId:string;name:string;text:string;offset:number;total:number;next:number|null;citation:string};
+export type AMapState={configured:boolean;connected:boolean;verifiedAt:string|null;tools:string[];endpoint:string};
 export type ScheduleInput={id?:string;title:string;prompt:string;modelId:string;frequency:'once'|'daily'|'weekly';at?:string;time?:string;weekday?:number;searchEnabled?:boolean;feishuEnabled?:boolean};
 export type Schedule=ScheduleInput & {id:string;enabled:boolean;nextAt:string|null;runs:{id:string;taskId:string;at:string;startedAt?:string;status:'queued'|'running'|'completed'|'failed';error?:string}[]};
 export type SearchState={configured:boolean;connected:boolean;provider:"baidu"|"tavily";limit:number;used:number;verifiedAt:string|null};
@@ -38,6 +43,7 @@ export type Message = {
   modelName?: string;
 };
 export type Task = {
+  knowledgeIds?:string[];
   scheduledTaskId?: string;
   scheduledRunId?: string;
   scheduledAt?: string;
@@ -121,6 +127,17 @@ declare global {
       removeProject:(id:string)=>Promise<boolean>;
       openProjectFolder:(id:string)=>Promise<void>;
       openWeb:(url:string)=>Promise<void>;
+      knowledgeList:()=>Promise<KnowledgeLibrary[]>;
+      knowledgeSave:(input:{id?:string;name:string;description:string})=>Promise<KnowledgeLibrary>;
+      knowledgeImport:(id:string)=>Promise<{name:string;status:string;error?:string}[]>;
+      knowledgeRemove:(id:string)=>Promise<boolean>;
+      knowledgeRemoveDocument:(input:{libraryId:string;documentId:string})=>Promise<void>;
+      knowledgeSearch:(input:{libraryIds:string[];query:string})=>Promise<{hits:KnowledgeHit[];notice:string}>;
+      knowledgeRead:(input:{libraryId:string;documentId:string;offset?:number})=>Promise<KnowledgePage>;
+      amapStatus:()=>Promise<AMapState>;
+      amapSave:(input:{key:string})=>Promise<AMapState>;
+      amapTest:()=>Promise<AMapState>;
+      amapDisconnect:()=>Promise<AMapState>;
       searchStatus:()=>Promise<SearchState>;
       searchSave:(input:{provider:string;key:string;limit:number})=>Promise<SearchState>;
       searchTest:()=>Promise<SearchState>;
@@ -137,6 +154,7 @@ declare global {
       feishuRead:(url:string)=>Promise<Material>;
       feishuGuide:()=>Promise<void>;
       complete: (input: {
+        knowledgeIds?:string[];
         id: string;
         modelId: string;
         taskId?: string;

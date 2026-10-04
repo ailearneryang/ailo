@@ -1,20 +1,31 @@
 const {fields:planFields}=require('./plan.cjs');
-const names=['assistant','web_search','feishu','route','checkpoint','reply','clarify','plan','list_files','read_file','write_file','read_material','read_source','inspect_source','search_materials','read_history','read_execution','run_command','build_android','android_device','artifact','finish','blocked','pause'];
+const names=['assistant','knowledge','web_search','amap','feishu','route','checkpoint','reply','clarify','plan','list_files','read_file','write_file','read_material','read_source','inspect_source','search_materials','read_history','read_execution','request_directory','run_command','build_android','android_device','artifact','finish','blocked','pause'];
 const text={type:'string'};
 const strings={type:'array',items:text};
 const tool={type:'function',function:{name:'ailo_action',description:'提交一个 Ailo 动作。遵循系统中的阶段、工具参数和项目权限要求，每次只调用一次。',parameters:{type:'object',additionalProperties:false,required:['action'],properties:{
  action:{type:'string',enum:names},kind:{type:'string',enum:['chat','task']},text,...planFields,
  clarification:{type:'object',required:['title','questions'],properties:{title:text,defaults:strings,questions:{type:'array',items:{type:'object',required:['id','kind','title'],properties:{id:text,kind:{type:'string',enum:['choice','attachment']},title:text,description:text,options:{type:'array',items:{type:'object',required:['id','label'],properties:{id:text,label:text,description:text,recommended:{type:'boolean'}}}}}}}}},
- operation:{type:'string',enum:['status','start','install','launch','logs','screenshot','stop','schema','api','help','shortcut','list','read','delegate','continue','update','pause','schedule','schedule_toggle']},tasks:{type:'array',minItems:1,maxItems:8,items:text},
+ operation:{type:'string',enum:['status','start','install','launch','logs','screenshot','stop','search','call','schema','api','help','shortcut','list','read','delegate','continue','update','pause','schedule','schedule_toggle']},tasks:{type:'array',minItems:1,maxItems:8,items:text},
  method:{type:'string',enum:['GET','POST','PUT','PATCH','DELETE']},params:{type:'object',additionalProperties:true},data:{type:'object',additionalProperties:true},
  path:text,content:{type:'string',maxLength:200000},id:text,offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:12000},entry:text,pointer:text,query:text,command:{type:'string',maxLength:8000},purpose:text,label:text,evidence:strings,
 }}}};
+// Named tools remove the redundant action discriminator for providers that omit it.
+// The decoder still passes every action through normal phase and permission checks.
+function actionTools(state) {
+ return allowedActions(state).map(name=>{
+  const schema=structuredClone(tool.function.parameters);
+  const fields={route:['kind'],plan:['goal','decisions','acceptance','steps'],run_command:['command','purpose'],request_directory:['path','purpose'],write_file:['path','content'],read_file:['path','offset'],list_files:['path'],reply:['text'],pause:['text'],blocked:['text'],checkpoint:['text'],finish:['text','evidence'],clarify:['text','clarification'],artifact:['path','label'],web_search:['query'],read_material:['id','offset','limit'],read_source:['id','entry','offset'],inspect_source:['id','entry','pointer','offset','query'],search_materials:['query'],read_history:['offset'],read_execution:['offset'],build_android:['tasks','purpose'],android_device:['operation','path','purpose'],knowledge:['operation','query','id','entry','offset'],amap:['operation','query','params','purpose'],feishu:['operation','query','method','path','params','data','purpose'],assistant:['operation','id','data','purpose']};
+  schema.properties=Object.fromEntries((fields[name]||[]).map(field=>[field,schema.properties[field]]));
+  schema.required=({route:['kind'],plan:['goal','decisions','acceptance','steps'],run_command:['command','purpose'],request_directory:['path','purpose'],write_file:['path','content'],read_file:['path'],reply:['text'],pause:['text'],blocked:['text'],checkpoint:['text'],finish:['text','evidence'],clarify:['text','clarification']})[name]||[];
+  return {type:'function',function:{name,description:`提交 ${name} 动作。遵循 Ailo 阶段和权限要求，每次只调用一次。`,parameters:schema}};
+ });
+}
 function protocolError(reason='invalid_action',diagnostics={}){return Object.assign(Error('模型暂时未能给出可执行的下一步，任务和材料已保留。请重试；若持续失败，请更换支持工具调用的模型。'),{code:'AGENT_PROTOCOL',reason,diagnostics});}
 const identifier=v=>typeof v==='string'&&/^[a-zA-Z_][a-zA-Z0-9_.-]{0,63}$/.test(v)?v:'<非标准标识>';
 function parse(text) {
  if(typeof text!=='string')throw protocolError('missing_text');
  const cleaned=text.trim().replace(/^```(?:json)?\s*\r?\n/i,'').replace(/\r?\n```\s*$/,'');
- try{return JSON.parse(cleaned);}catch{throw protocolError('invalid_json',{responseChars:text.length});}
+ try{return JSON.parse(cleaned);}catch{throw protocolError('invalid_json',{responseChars:text.length,responseShape:cleaned.startsWith('{')?'object_like':cleaned.startsWith('[')?'array_like':cleaned.startsWith('```')?'fenced':'prose'});}
 }
 function normalize(value,depth=0) {
  const diagnostics={shape:Array.isArray(value)?'array':value===null?'null':typeof value,keys:value&&typeof value==='object'?Object.keys(value).slice(0,12).map(identifier):[]};
@@ -51,6 +62,6 @@ function decodeAction(result) {
  return object(result.content);
 }
 function allowedActions(state) {
- return state.phase==='route'?['route']:state.requiredAction==='checkpoint'?['checkpoint','pause','blocked','clarify']:state.requiredAction==='plan_update'?['plan','clarify','blocked','pause']:state.requiredAction==='plan_or_clarify'?['plan','clarify','blocked','pause','checkpoint']:names.filter(name=>name!=='route'&&(name!=='assistant'||state.personalAssistant===true)&&(state.phase!=='chat'||!['plan','write_file','run_command','build_android','android_device','artifact','finish'].includes(name)));
+ return state.phase==='route'?['route']:state.requiredAction==='checkpoint'?['checkpoint','pause','blocked','clarify']:state.requiredAction==='plan_update'?['plan','clarify','blocked','pause']:state.requiredAction==='plan_or_clarify'?['plan','clarify','blocked','pause','checkpoint']:names.filter(name=>name!=='route'&&(name!=='assistant'||state.personalAssistant===true)&&(state.phase!=='chat'||!['plan','write_file','request_directory','run_command','build_android','android_device','artifact','finish'].includes(name)));
 }
-module.exports={tool,decodeAction,protocolError,parseAction:object,allowedActions};
+module.exports={tool,decodeAction,protocolError,parseAction:object,allowedActions,actionTools};

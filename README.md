@@ -165,3 +165,27 @@ design/              早期界面草案
 - [macOS 打包与发布](docs/macos-release.md)
 
 后续重点：真实模型下的完整任务验证、开发环境检测、签名与公证，以及云端账号与跨设备接续。路线规划不代表当前已提供这些能力。
+
+### 外部目录只读授权
+
+Agent 分析工作区外目录时，使用 `request_directory` 提交绝对路径与用途。Ailo 展示原生确认框并打开文件夹选择器；仅用户实际选中的目录获批，主进程验证可枚举后，将真实路径加入当前任务的命令沙箱读取规则。工作区外写入规则不变。授权仅在本次应用会话内有效，不跨重启保存。
+
+等待时任务显示“等待目录授权”，成功后自动继续；取消或系统拒绝时保留计划，点击“继续任务”可重新申请。不提供授权入口的环境明确标记阻塞。`Operation not permitted` 本身不用于断定 TCC；已授权仍拒绝时引导检查对应系统权限和管理员策略。当前 Electron 分发未启用 macOS App Sandbox；未来启用或拆分执行 helper 时，需要实现 security-scoped bookmark 的生命周期与跨进程传递，不能只传路径字符串。
+
+验证：`node --test scripts/directory-access.test.cjs scripts/agent.test.cjs scripts/execution-rounds.test.cjs`（实际隔离测试需允许启动 macOS `sandbox-exec`）。
+
+### 高德地图 AMap MCP
+
+扩展 → 应用连接 → 高德地图 AMap，填写高德开放平台 Key，点击“保存并测试”。通过官方 `https://mcp.amap.com/mcp` 的 Streamable HTTP 接入，支持初始化、会话头、工具发现与分页、JSON/SSE 响应、工具调用和取消；无需本地 Node.js 服务。Key 通过系统 safeStorage 加密保存在本机，不返回渲染进程或提供给模型。断开连接删除本机凭证并停止进行中的请求。
+
+Agent 使用 `amap` 的 `list` 查看真实工具及参数，使用 `call` 查询地点、地址、天气、距离和路线，结果作为外部资料处理。已知只读地图查询无需额外确认，其他工具展示名称和完整参数供用户确认。工具名称不能凭空构造。连接测试只发现工具，不执行地图写入。
+
+参考：[高德官方快速接入](https://lbs.amap.com/api/mcp-server/gettingstarted)、[创建应用和 Key](https://lbs.amap.com/api/mcp-server/create-project-and-key)。本版支持官方远程服务，不提供任意 MCP URL 或 stdio 配置。验证：`node --test scripts/amap-mcp.test.cjs` 使用模拟 MCP 服务；真实连接需用户在界面填写 Key 后测试。
+
+### 本地知识库
+
+侧栏“知识库”支持创建、编辑、导入、删除、关键词检索和分页原文预览。支持 DOCX 正文与表格、Markdown 和 UTF-8 文本，单文件最多 20 MB、解析正文最多 200 万字符；每库最多 100 份资料，最多 30 个库。PDF、扫描件和图片暂不支持。导入读取完整正文并建立中文双字/英文词索引，按 1200 字符切片、200 字符重叠；返回最多 6 个相关片段，使用内容哈希去重。导入失败逐文件报告。导入的是本地文本快照，原文件后续更改不会自动同步。
+
+输入框工具栏“知识库”选择当前对话使用的库（最多 5 个），选择随对话保存。“在对话中使用”会打开新对话并选择该库。Agent 通过 `knowledge list/search/read` 在所选范围内按需读取，以文件名、片段或字符位置标注引用；不把全库正文塞入上下文。检索为本地关键词检索，未接入向量模型；没有命中不等于资料不存在。资料仅在本机存储，读到的片段会发送到用户配置的模型服务。删除操作请求确认并仅移除 Ailo 副本，已有回答和上下文中的历史引用仍保留。
+
+参考：[ChatGPT 项目与资料复用](https://learn.chatgpt.com/docs/projects)。验证：`node --test scripts/knowledge.test.cjs`，`node scripts/knowledge-smoke.cjs`（独立临时资料及桌面 UI，需允许启动 Electron 和本机调试端口）。

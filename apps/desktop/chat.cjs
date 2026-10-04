@@ -195,19 +195,30 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           const task = state.tasks.find(t => t.id === input.taskId);
           if (!task) throw Error("任务不存在。");
           const { runAgent } = require("./agent/runner.cjs");
-          const { tool,allowedActions } = require("./agent/protocol.cjs");
-          let formatMode = 'tools', parallelControl = true;
+          const { tool,allowedActions,actionTools } = require("./agent/protocol.cjs");
+          let formatMode = 'tools', parallelControl = true, namedActions = false;
           async function askAgent(messages,budget,onContext) {
             const state=JSON.parse(messages.at(-1).content);
+            if(state.protocolRecovery && formatMode==='tools') {
+              if(!namedActions){namedActions=true;input.onStatus?.('正在适配模型动作格式，改用具名工具…');}
+              else {formatMode='json';input.onStatus?.('模型未遵循工具格式，正在切换 JSON 动作模式…');}
+            }
             const currentTool=structuredClone(tool);
             currentTool.function.parameters.properties.action.enum=allowedActions(state);
             for (;;) {
-              const format = formatMode === 'tools' ? {tools:[currentTool],tool_choice:{type:'function',function:{name:'ailo_action'}},...(parallelControl?{parallel_tool_calls:false}:{})}
+              const format = formatMode === 'tools' ? {tools:namedActions?actionTools(state):[currentTool],tool_choice:namedActions?'required':{type:'function',function:{name:'ailo_action'}},...(parallelControl?{parallel_tool_calls:false}:{})}
                 : formatMode === 'json' ? {response_format:{type:'json_object'}} : {};
               const instructions = formatMode === 'tools'
-                ? '\n本次通过 ailo_action 原生工具调用提交动作，参数对应上述 action 协议，不要在 content 中输出动作或代码。'
+                ? namedActions ? '\n本次使用具名原生工具（例如 run_command、plan）。直接调用当前提供的一个工具，工具名就是动作，参数无需填写 action；不要调用 ailo_action，不要在 content 中输出动作或代码。' : '\n本次通过 ailo_action 原生工具调用提交动作，参数对应上述 action 协议，不要在 content 中输出动作或代码。'
                 : '\n本次接口采用兼容模式，只返回一个合法 JSON 动作对象。';
-              const wireMessages=[{...messages[0],content:messages[0].content+instructions},...messages.slice(1)];
+              const wireState=structuredClone(state);
+              if(wireState.protocolRecovery)wireState.protocolRecovery.instruction=formatMode==='tools'
+                ? '上次返回未执行。只调用当前提供的一个具名工具，工具名表示动作，参数无需 action。禁止解释文字、工具定义和动作数组。'
+                : '上次返回未执行。只返回一个完整 JSON 对象，必须包含字符串 action，取值来自 allowedActions。禁止解释文字、工具定义和动作数组。';
+              wireState.responseContract=formatMode==='tools'
+                ? {mode:namedActions?'named_tools':'ailo_action',allowedActions:allowedActions(state),instruction:namedActions?'工具名就是动作；只调用一个工具，参数不需要 action。':'只调用 ailo_action，参数必须包含 action。'}
+                : {mode:'json',allowedActions:allowedActions(state),instruction:'完整响应必须是一个 JSON 动作对象，必填 action。不要 Markdown 或解释文字。',example:{action:allowedActions(state).includes('route')?'route':'pause',...(allowedActions(state).includes('route')?{kind:'task'}:{text:'任务进度已保留'})}};
+              const wireMessages=[{...messages[0],content:messages[0].content+instructions},...messages.slice(1,-1),{...messages.at(-1),content:JSON.stringify(wireState)}];
               const {requestContextUsage}=await import('./context.mjs');
               const stats={...requestContextUsage(wireMessages,format,model,Math.min(budget,model.maxOutputTokens||budget)),requestId:require('node:crypto').randomUUID()};
               await onContext?.(stats);
@@ -228,7 +239,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
             }
           }
           session.accepting=true;
-          const result = await runAgent({ getSteering:async()=>{await session.saving;return session.queue.splice(0);}, base: storage.agentDirectory, task, model, projectContext:state.projects?.find(p=>p.id===task.projectId)?.description, personalAssistant:task.id===require('./personal-assistant.cjs').ASSISTANT_ID?storage.personalAssistant:undefined, webSearch:input.searchEnabled===true?storage.webSearch:undefined, android:storage.androidManager, authorizeBuild:storage.authorizeBuild,feishuCli:input.feishuEnabled===false?{execute:async()=>{throw Object.assign(Error('当前对话已关闭飞书，请在输入框 ＋ → 应用连接中开启后再试。'),{code:'FEISHU_DECLINED'});}}:storage.feishuCli,
+          const result = await runAgent({ getSteering:async()=>{await session.saving;return session.queue.splice(0);}, base: storage.agentDirectory, task, model, projectContext:state.projects?.find(p=>p.id===task.projectId)?.description, personalAssistant:task.id===require('./personal-assistant.cjs').ASSISTANT_ID?storage.personalAssistant:undefined, knowledge:storage.knowledge?.scope(task.knowledgeIds||[]),amap:storage.amap, webSearch:input.searchEnabled===true?storage.webSearch:undefined, android:storage.androidManager, authorizeBuild:storage.authorizeBuild,directoryAccess:storage.directoryAccess,feishuCli:input.feishuEnabled===false?{execute:async()=>{throw Object.assign(Error('当前对话已关闭飞书，请在输入框 ＋ → 应用连接中开启后再试。'),{code:'FEISHU_DECLINED'});}}:storage.feishuCli,
             signal: controller.signal, ask: askAgent, extensions: selected,
             onStatus: input.onStatus, onRun: input.onRun });
           return { ...result, modelName: model.name };

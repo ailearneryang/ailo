@@ -166,3 +166,39 @@ test('empty agent responses stop after two retries while filtering is never retr
  calls=0;const filtered=createChat(storage,async()=>{calls++;return new Response(JSON.stringify({choices:[{message:{content:''},finish_reason:'content_filter'}]}));});
  await assert.rejects(filtered.complete(input),e=>e.code==='MODEL_CONTENT_FILTER');assert.equal(calls,1);
 });
+
+test('missing discriminator switches to named tools and recovers without guessing command action',async t=>{
+ const storage=await fixture(t);let calls=0;
+ const chat=createChat(storage,async(url,options)=>{
+  const body=JSON.parse(options.body);calls++;
+  if(calls===1)return native({kind:'chat'});
+  assert.equal(body.tool_choice,'required');assert.ok(body.tools.every(t=>t.function.name!=='ailo_action'));
+  if(calls===2){assert.deepEqual(body.tools.map(t=>t.function.name),['route']);assert.equal(body.tools[0].function.parameters.properties.action,undefined);}
+  else {assert.ok(!body.tools.some(t=>t.function.name==='run_command'));}
+  return new Response(JSON.stringify({choices:[{message:{tool_calls:[{function:{name:calls===2?'route':'reply',arguments:JSON.stringify(calls===2?{kind:'chat'}:{text:'恢复成功'})}}]},finish_reason:'tool_calls'}]}));
+ });
+ assert.equal((await chat.complete(input)).content,'恢复成功');assert.equal(calls,3);
+});
+test('named tools still reject conflicts and cannot infer unnamed actions from command fields',()=>{
+ assert.deepEqual(decodeAction({toolCalls:[{function:{name:'run_command',arguments:'{"command":"pwd","purpose":"检查"}'}}]}),{action:'run_command',command:'pwd',purpose:'检查'});
+ assert.throws(()=>decodeAction({toolCalls:[{function:{name:'run_command',arguments:'{"action":"write_file","path":"x"}'}}]}),e=>e.reason==='conflicting_action');
+ assert.throws(()=>decodeAction({content:'{"command":"pwd","purpose":"检查"}'}),e=>e.diagnostics.issue==='missing_action');
+});
+
+test('accepted tools with prose responses switch to named tools then JSON, with consistent recovery instructions',async t=>{
+ const storage=await fixture(t);let calls=0;
+ const chat=createChat(storage,async(url,options)=>{
+  const body=JSON.parse(options.body);calls++;
+  const state=JSON.parse(body.messages.at(-1).content);
+  if(calls===1)return native({action:'route',kind:'chat'});
+  if(calls===2)return new Response(JSON.stringify({choices:[{message:{content:'我正在准备下一步，请稍候'}}]}));
+  if(calls===3){
+   assert.equal(body.tool_choice,'required');assert.equal(state.responseContract.mode,'named_tools');
+   assert.match(state.protocolRecovery.instruction,/具名工具/);assert.ok(!state.protocolRecovery.instruction.includes('ailo_action'));
+   return new Response(JSON.stringify({choices:[{message:{content:'下一步是回复用户'}}]}));
+  }
+  assert.equal(body.tools,undefined);assert.equal(body.response_format.type,'json_object');assert.equal(state.responseContract.mode,'json');
+  assert.match(state.protocolRecovery.instruction,/包含字符串 action/);
+  return new Response(JSON.stringify({choices:[{message:{content:'{"action":"reply","text":"已恢复"}'}}]}));
+ });assert.equal((await chat.complete(input)).content,'已恢复');assert.equal(calls,4);
+});

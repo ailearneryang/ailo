@@ -14,7 +14,7 @@ export function MyAilo({ data, runningIds, onOpen, compact, onSchedules, onModel
   const tasks = data.tasks.filter(t => t.id !== 'my-ailo-assistant' && (!t.scheduledTaskId || t.scheduledArchived));
   const running = tasks.filter(t => runningIds.includes(t.id));
   const attention = tasks.filter(t => !runningIds.includes(t.id) && (
-    !!t.lastError || t.assistantPaused || ['blocked', 'failed', 'paused', 'waiting_user'].includes(t.agentRun?.status || '') ||
+    !!t.lastError || t.assistantPaused || ['blocked', 'waiting_permission', 'failed', 'paused', 'waiting_user'].includes(t.agentRun?.status || '') ||
     t.messages?.at(-1)?.clarification || t.messages?.at(-1)?.role === 'user'
   ));
   const results = tasks.filter(t => !runningIds.includes(t.id) && !attention.some(a => a.id === t.id) && (

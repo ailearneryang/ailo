@@ -11,9 +11,9 @@ async function listFiles(root, relative='') {
 }
 // Seatbelt localhost selectors also admit wildcard listeners on current macOS.
 // Build mode is separately authorized; do not claim loopback-only enforcement.
-function sandboxProfile(root, sdk, build=false, javaHome) {
+function sandboxProfile(root, sdk, build=false, javaHome, readDirectories=[]) {
   const q=s=>JSON.stringify(s);
-  const read=['/System','/usr','/bin','/sbin','/opt/homebrew','/Library/Java','/Library/Developer','/Library/Apple','/Applications/Android Studio.app','/private/etc','/private/var/db/dyld','/dev',sdk,javaHome].filter(Boolean);
+  const read=['/System','/usr','/bin','/sbin','/opt/homebrew','/Library/Java','/Library/Developer','/Library/Apple','/Applications/Android Studio.app','/private/etc','/private/var/db/dyld','/dev',sdk,javaHome,...readDirectories].filter(Boolean);
   const readable=read.map(p=>`(subpath ${q(p)})`).join(' ')+` (subpath ${q(root)})`;
   return `(version 1)(deny default)(allow process*)(allow sysctl-read)(allow mach-lookup (global-name "com.apple.system.logger") (global-name "com.apple.logd") (global-name "com.apple.system.notification_center") (global-name "com.apple.mDNSResponder"))(allow file-read-metadata)${build?'(allow network-bind (local ip "localhost:*"))(allow network-inbound (local ip "localhost:*"))':''}(allow network-outbound)(allow file-read* (literal "/") ${readable})(allow file-map-executable ${readable})(allow file-write* (subpath ${q(root)}) (literal "/dev/null") (literal "/dev/tty"))`;
 }
@@ -29,7 +29,7 @@ async function runCommand(root,command,signal,timeout=120000,options={}) {
   // No inherited API keys or unrestricted fallback when sandbox setup fails.
   return new Promise((resolve,reject)=>{
     if(signal.aborted)return reject(Error('已停止执行'));
-    const child=spawn('/usr/bin/sandbox-exec',['-p',sandboxProfile(root,sdk,!!options.build,javaHome),'/bin/sh','-c',command],{cwd:root,env,detached:true,stdio:['ignore','pipe','pipe']});
+    const child=spawn('/usr/bin/sandbox-exec',['-p',sandboxProfile(root,sdk,!!options.build,javaHome,options.readDirectories),'/bin/sh','-c',command],{cwd:root,env,detached:true,stdio:['ignore','pipe','pipe']});
     let output='',truncated=false,timedOut=false;
     const kill=()=>{try{process.kill(-child.pid,'SIGKILL');}catch{child.kill('SIGKILL');}};
     const timer=setTimeout(()=>{timedOut=true;kill();},timeout);
@@ -60,8 +60,18 @@ async function execute(workspace,action,signal,options={}) {
       await fs.writeFile(file,action.content,{mode:0o600,flag:require('node:fs').constants.O_WRONLY|require('node:fs').constants.O_CREAT|require('node:fs').constants.O_TRUNC|require('node:fs').constants.O_NOFOLLOW});
       return {path:action.path,bytes:Buffer.byteLength(action.content)};
     }
-    case 'run_command': return runCommand(files,action.command,signal);
+    case 'request_directory': {
+      if(!options.directoryAccess)throw Object.assign(Error('当前环境未提供目录授权入口，任务已保留。'),{code:'DIRECTORY_UNAVAILABLE'});
+      return options.directoryAccess.request(workspace.run.taskId,action,signal);
+    }
+    case 'run_command': {
+      const result=await runCommand(files,action.command,signal,120000,{readDirectories:options.directoryAccess?.directories(workspace.run.taskId)});
+      if(/Operation not permitted|Permission denied/i.test(result.output))result.notice='访问被拒绝，尚不能判断是否为系统隐私限制。若需要工作区外目录，请使用 request_directory 获取只读授权；已授权仍失败时说明具体路径，并引导用户检查系统文件与文件夹权限或管理员策略，不要重复探测或直接断言 TCC。';
+      return result;
+    }
     case 'web_search': if(!options.webSearch)throw Object.assign(Error('当前对话未开启联网搜索，请在 ＋ → 应用连接中开启。'),{code:'SEARCH_UNAVAILABLE'});return options.webSearch.execute(action,signal);
+    case 'knowledge': if(!options.knowledge)throw Error('当前对话未选择知识库');return options.knowledge.execute(action,signal);
+    case 'amap': if(!options.amap)throw Object.assign(Error('当前环境未启用高德地图，请在应用连接中配置。'),{code:'AMAP_UNAVAILABLE'});return options.amap.execute(action,signal);
     case 'feishu': if(!options.feishuCli)throw Error('当前未启用飞书应用连接');return options.feishuCli.execute(action,signal,workspace.run.executionId||workspace.run.taskId);
     case 'build_android': return require('./android-build.cjs').buildAndroid(files,action,signal,options);
     case 'android_device': {

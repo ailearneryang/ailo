@@ -26,6 +26,14 @@ const chat = require("./chat.cjs").createChat(storage);
 storage.agentDirectory = path.join(app.getPath("userData"), "agent");
 const { key, json, resolveFile, writeJson } = require("./agent/workspace.cjs");
 const { publicRun } = require("./agent/runner.cjs");
+storage.directoryAccess=require('./agent/directory-access.cjs').createDirectoryAccess({
+  select:async({path:requested,purpose},signal)=>{
+    const choice=await dialog.showMessageBox(win,{type:'question',title:'目录只读授权',message:'允许 Ailo 只读分析此文件夹？',detail:`请求目录：${requested}\n用途：${purpose}\n将读取目录元数据和必要文件内容。授权仅用于当前任务、本次应用会话；移动、删除需另行确认。`,buttons:['选择文件夹并授权','取消'],defaultId:1,cancelId:1});
+    if(choice.response!==0||signal.aborted)return null;
+    const selected=await dialog.showOpenDialog(win,{title:'选择允许只读访问的文件夹',defaultPath:requested,properties:['openDirectory','dontAddToRecent']});
+    return selected.canceled||signal.aborted?null:selected.filePaths[0];
+  },
+});
 const androidGrants=new Set(),androidApprovals=new Map();
 const buildGrants=new Set(),buildApprovals=new Map();
 storage.authorizeBuild=async(root,signal)=>{
@@ -101,7 +109,7 @@ const schedules=require('./scheduled-tasks.cjs').createScheduledTasks({
     try{
       const result=await chat.complete({id:run.id,taskId:run.taskId,modelId:task.modelId,feishuEnabled:task.feishuEnabled===true,searchEnabled:task.searchEnabled,messages:[{role:'user',content:prompt}]});
       await storage.patchTask(run.taskId,{modelName:result.modelName,contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens},[{id:run.id+'-assistant',role:'assistant',content:result.content,modelName:result.modelName,clarification:result.clarification}]);
-      if(result.clarification||['blocked','paused','running','understanding'].includes(result.agentRun?.status))throw Error('任务需要人工处理，请查看对话继续。');
+      if(result.clarification||['blocked','waiting_permission','paused','running','understanding'].includes(result.agentRun?.status))throw Error('任务需要人工处理，请查看对话继续。');
     }catch(error){await storage.patchTask(run.taskId,{lastError:error.message});throw error;}
   },
   notify:(task,result)=>{
@@ -213,6 +221,16 @@ const feishuCli=require('./feishu-cli.cjs').createFeishuCli({
 });
 ipcMain.handle('web:open',async(e,value)=>{trusted(e);let url;try{url=new URL(value);}catch{throw Error('链接无效');}if(!['https:','http:'].includes(url.protocol)||url.username||url.password||url.href.length>4000)throw Error('链接无效');await shell.openExternal(url.href);});
 storage.feishuCli=feishuCli;
+storage.knowledge=require('./knowledge.cjs').createKnowledge(app.getPath('userData'));
+for(const method of ['list','save','search','read'])ipcMain.handle('knowledge:'+method,(e,input)=>{trusted(e);return storage.knowledge[method](input);});
+ipcMain.handle('knowledge:removeDocument',async(e,input)=>{trusted(e);const choice=await dialog.showMessageBox(win,{type:'question',title:'删除资料',message:'从知识库移除此资料？',detail:'只删除 Ailo 中的文本副本，原文件不受影响。',buttons:['取消','删除'],defaultId:0,cancelId:0});if(choice.response===1)await storage.knowledge.removeDocument(input);});
+ipcMain.handle('knowledge:remove',async(e,id)=>{trusted(e);const choice=await dialog.showMessageBox(win,{type:'question',title:'删除知识库',message:'删除此知识库及全部资料？',detail:'只删除 Ailo 中的副本，原文件不受影响。已有对话回答仍保留。',buttons:['取消','删除'],defaultId:0,cancelId:0});if(choice.response===1){await storage.knowledge.remove(id);return true;}return false;});
+ipcMain.handle('knowledge:import',async(e,id)=>{trusted(e);const result=await dialog.showOpenDialog(win,{title:'导入知识库资料',properties:['openFile','multiSelections'],filters:[{name:'知识库资料',extensions:['docx','txt','md','markdown','csv','tsv','json','yaml','yml','toml','xml','html','sql','py','js','ts']}]});return result.canceled?[]:storage.knowledge.import(id,result.filePaths);});
+storage.amap=require('./amap-mcp.cjs').createAMap({directory:app.getPath('userData'),safeStorage,confirmWrite:async(action,signal)=>{
+  if(signal.aborted)return false;
+  const choice=await dialog.showMessageBox(win,{type:'question',title:'确认高德地图操作',message:action.purpose||'允许调用此高德工具？',detail:JSON.stringify({tool:action.query,params:action.params},null,2),buttons:['执行','取消'],defaultId:1,cancelId:1});return choice.response===0&&!signal.aborted;
+}});
+for(const method of ['status','save','test','disconnect'])ipcMain.handle('amap:'+method,(e,input)=>{trusted(e);return storage.amap[method](method==='save'?input:undefined);});
 storage.webSearch=require('./web-search.cjs').createWebSearch({directory:app.getPath('userData'),safeStorage});
 for(const method of ['status','save','test','disconnect'])ipcMain.handle('web-search:'+method,(e,input)=>{trusted(e);return storage.webSearch[method](method==='save'?input:undefined);});
 for(const method of ['status','begin','disconnect','openAuthorization','openPermissions'])ipcMain.handle('feishu-cli:'+method,(e,input)=>{trusted(e);return feishuCli[method](method==='begin'?input:undefined);});
@@ -324,7 +342,7 @@ let quitting=false;
 app.on("before-quit", e => {
   if(quitting)return;
   e.preventDefault();schedules.stop();chat.cancelAll();
-  Promise.allSettled([storage.androidManager.dispose(),feishuCli.dispose()]).finally(()=>{quitting=true;app.quit();});
+  Promise.allSettled([storage.androidManager.dispose(),feishuCli.dispose(),storage.amap.dispose()]).finally(()=>{quitting=true;app.quit();});
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
