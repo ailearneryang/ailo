@@ -17,3 +17,7 @@
 
 .composer-shortcuts-file-empty { width: 100%; }
 .composer-shortcuts-file-empty .composer-shortcuts-empty { margin: 0; padding: 18px 10px; text-align: center; color: #888; font-size: 13px; }
+
+.composer-turn-chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 10px; }
+.composer-turn-chips button { display: inline-flex; align-items: center; gap: 7px; border-radius: 999px; padding: 6px 12px; background: var(--ui-f3f5ef, #f3f5ef); font-size: calc(13px * var(--font-scale, 1)); }
+.composer-turn-chips .ui-icon { width: 16px; height: 16px; }

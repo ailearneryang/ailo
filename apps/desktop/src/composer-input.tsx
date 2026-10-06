@@ -8,6 +8,7 @@ type Props = {
   value: string; onChange: (value: string) => void; placeholder: string;
   disabled: boolean; files: Material[]; materials: Material[];
   extensions: Extension[]; selectedIds: string[];
+  turnIds: string[]; onRemoveExtension: (id:string) => void;
   onFile: (file: Material) => void;
   onPasteFiles: (files: File[]) => void;
   onExtensions: (ids: string[]) => void; onSubmit: (event: React.FormEvent) => void;
@@ -64,7 +65,7 @@ export function ComposerInput(props: Props) {
   }
   return <div className="composer-input">
     {open && <div className={`composer-shortcuts${trigger === '@' && !options.length ? ' composer-shortcuts-file-empty' : ''}`}>
-      {(trigger !== '@' || options.length > 0) && <div className="composer-shortcuts-heading">{trigger === '@' ? '引用文件' : '调用专家和技能'}<span>↑↓ 选择 · Enter 确认 · Esc 关闭</span></div>}
+      {(trigger !== '@' || options.length > 0) && <div className="composer-shortcuts-heading">{trigger === '@' ? '引用文件' : '本次调用专家和技能'}<span>↑↓ 选择 · Enter 确认 · Esc 关闭</span></div>}
       <div ref={list} id={listId} role="listbox" aria-label={trigger === '@' ? '文件快捷选择' : '专家和技能快捷选择'}>
         {options.map((option, index) => <button key={option.id} id={`${listId}-${index}`} type="button" role="option"
           aria-selected={current === index} aria-disabled={option.disabled || undefined} data-active={current === index}
@@ -75,8 +76,9 @@ export function ComposerInput(props: Props) {
         </button>)}
         {!options.length && <p className="composer-shortcuts-empty">{trigger === '@' ? (files.length ? '当前对话中没有匹配的文件' : '当前对话中暂无文件') : query ? '没有匹配的专家或技能' : '暂无可用专家或技能，请先在「扩展」中添加或启用。'}</p>}
       </div>
-      {trigger === '/' && <div className="composer-shortcuts-footer">可选 1 位专家和最多 5 个技能；选择其他专家会替换当前专家。</div>}
+      {trigger === '/' && <div className="composer-shortcuts-footer">仅本次发送使用；可选 1 位专家和最多 5 个技能，本次专家优先于会话专家。</div>}
     </div>}
+    {props.turnIds.length>0&&<div className="composer-turn-chips" aria-label="本次调用">{extensions.filter(e=>props.turnIds.includes(e.id)).map(e=><button type="button" key={e.id} disabled={disabled} title={`移除本次调用：${e.name}`} onClick={()=>props.onRemoveExtension(e.id)}><Icon name={e.kind==='expert'?'user':'sparkles'}/><span>{e.name}</span><span aria-hidden="true">×</span></button>)}</div>}
     <textarea ref={textarea} value={value} placeholder={props.placeholder} aria-label="任务需求"
       aria-autocomplete="list" aria-controls={open ? listId : undefined} aria-expanded={open}
       aria-activedescendant={open && options.length ? `${listId}-${current}` : undefined}

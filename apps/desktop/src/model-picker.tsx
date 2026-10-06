@@ -9,7 +9,11 @@ export function ModelPicker({
   disabled,
   onSelect,
   onConfigure,
+  reasoningSupported, reasoningEffort, onReasoningChange,
 }: {
+  reasoningSupported?: boolean;
+  reasoningEffort?: 'low'|'medium'|'high';
+  onReasoningChange?: (effort:'low'|'medium'|'high')=>void;
   models: Model[];
   value: string;
   defaultId: string;
@@ -18,6 +22,7 @@ export function ModelPicker({
   onConfigure: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [quick, setQuick] = useState(false);
   const [query, setQuery] = useState("");
   const [position, setPosition] = useState({
     left: 0,
@@ -74,10 +79,11 @@ export function ModelPicker({
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
-  }, [open, query, models.length]);
+  }, [open, quick, query, models.length]);
   useEffect(() => {
     if (!open) return;
-    search.current?.focus();
+    if(quick) popup.current?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus();
+    else search.current?.focus();
     function outside(e: PointerEvent) {
       if (
         !popup.current?.contains(e.target as Node) &&
@@ -97,7 +103,7 @@ export function ModelPicker({
       document.removeEventListener("pointerdown", outside);
       document.removeEventListener("keydown", escape);
     };
-  }, [open]);
+  }, [open, quick]);
   return (
     <div className="composer-model">
       <button
@@ -105,7 +111,7 @@ export function ModelPicker({
         type="button"
         className={"model-trigger " + (open ? "is-open" : "")}
         disabled={disabled}
-        aria-label={`选择模型：${current.name}`}
+        aria-label={reasoningSupported ? `切换思考强度：${current.name}` : `选择模型：${current.name}`}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? "model-picker" : undefined}
@@ -114,12 +120,13 @@ export function ModelPicker({
           if (open) close();
           else {
             setQuery("");
+            setQuick(!!reasoningSupported);
             setOpen(true);
           }
         }}
       >
         <span aria-hidden="true">{current.id === "demo" ? "✳" : "◇"}</span>
-        <span className="model-trigger-name">{current.name}</span>
+        <span className="model-trigger-name">{current.name}{reasoningSupported ? ` · ${{low:"轻度",medium:"标准",high:"深度"}[reasoningEffort||"medium"]}` : ""}</span>
         <svg
           width="12"
           height="12"
@@ -137,9 +144,9 @@ export function ModelPicker({
           <div
             ref={popup}
             role="dialog"
-            aria-label="选择模型"
+            aria-label={quick ? "切换思考强度" : "选择模型"}
             id="model-picker"
-            className="model-popover"
+            className={"model-popover"+(quick?" model-quick-popover":"")}
             style={position}
             onBlur={(e) => {
               if (
@@ -173,9 +180,15 @@ export function ModelPicker({
               ]?.focus();
             }}
           >
+            {quick ? <>
+              <button type="button" className="model-quick-heading" onClick={()=>{setQuick(false);setQuery("");}} aria-label="打开模型列表"><strong>{current.name}</strong><span>更换模型 ›</span></button>
+              <div className="model-quick-levels" role="group" aria-label="思考强度">{([['low','轻度'],['medium','标准'],['high','深度']] as const).map(([effort,label])=><button key={effort} type="button" disabled={disabled} aria-pressed={(reasoningEffort||'medium')===effort} onClick={()=>{onReasoningChange?.(effort);close(true);}}><span className="model-quick-dot" aria-hidden="true"/><span>{label}</span></button>)}</div>
+              <p className="model-quick-hint">轻度更快，深度适合复杂任务</p>
+            </> : <>
             <div className="model-popover-heading">
               选择模型<span>用于下一条消息</span>
             </div>
+            {reasoningSupported&&<fieldset className="model-reasoning"><legend>思考强度</legend><div>{([['low','轻度'],['medium','标准'],['high','深度']] as const).map(([effort,label])=><button key={effort} type="button" disabled={disabled} aria-pressed={reasoningEffort===effort} onClick={()=>onReasoningChange?.(effort)}>{label}</button>)}</div><p>更高强度适合复杂任务，通常耗时和消耗更多。用于当前会话后续消息。</p></fieldset>}
             <div className="project-search model-search">
               <svg
                 width="18"
@@ -261,6 +274,7 @@ export function ModelPicker({
               </button>
               <p>使用你配置的服务商接口回复</p>
             </div>
+            </>}
           </div>,
           document.body,
         )}

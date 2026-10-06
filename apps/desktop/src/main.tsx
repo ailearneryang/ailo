@@ -1,3 +1,4 @@
+import {supportsReasoning} from "../reasoning.cjs";
 import { canSendMaterial, isImageMaterial } from "../attachments.mjs";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -57,12 +58,14 @@ function App() {
   const [modelId, setModelId] = useState("demo");
   const [scheduleTarget,setScheduleTarget]=useState<string|null>(null);
   const [extensionTab,setExtensionTab]=useState<'expert'|'skill'|'connector'>('expert');
+  const [reasoningChoices,setReasoningChoices]=useState<Record<string,'low'|'medium'|'high'>>({});
   const [searchChoices,setSearchChoices]=useState<Record<string,boolean>>({});
   const [connectionChoices,setConnectionChoices]=useState<Record<string,boolean>>({});
   const [extensionIds, setExtensionIds] = useState<string[]>([]);
+  const [turnExtensions, setTurnExtensions] = useState<Record<string,string[]>>({});
   const [notice, setNotice] = useState("");
   const availableExtensions = data.extensions || [];
-  const selectedIds = extensionIds.filter(id => availableExtensions.some(e => e.id === id && e.enabled));
+  const selectedIds = extensionIds.filter(id => availableExtensions.some(e => e.id === id && e.enabled && e.kind === 'expert'));
   function selectProject(id: string) {
     setProjectId(id);
     setExtensionIds(data.projects.find(p => p.id === id)?.extensionIds || []);
@@ -182,6 +185,19 @@ function App() {
   const isConversation = view === "chat" || view === "assistant";
   const task = data.tasks.find((t) => t.id === active);
   const connectionKey=task?.id || projectId || "new";
+  const turnIds=(turnExtensions[connectionKey] || []).filter(id=>availableExtensions.some(e=>e.id===id&&e.enabled));
+  const turnHasExpert=turnIds.some(id=>availableExtensions.find(e=>e.id===id)?.kind==='expert');
+  const effectiveIds=[...new Set([...selectedIds.filter(id=>!turnHasExpert||availableExtensions.find(e=>e.id===id)?.kind!=='expert'),...turnIds])];
+  function changeConversationExtensions(ids:string[]) {
+    setExtensionIds(ids);setNotice("");
+    if(task)void window.ailo.patchTask(task.id,{extensionIds:ids}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,extensionIds:ids}:t)}))).catch(e=>setError(String(e)));
+  }
+  function changeAddedExtensions(ids:string[]) {
+    changeConversationExtensions(ids.filter(id=>availableExtensions.find(e=>e.id===id)?.kind==='expert'));
+    setTurnExtensions(previous=>({...previous,[connectionKey]:[...turnIds.filter(id=>availableExtensions.find(e=>e.id===id)?.kind==='expert'),...ids.filter(id=>availableExtensions.find(e=>e.id===id)?.kind==='skill')]}));
+  }
+  const reasoningSupported=supportsReasoning(currentModel);
+  const reasoningEffort=reasoningChoices[connectionKey] ?? task?.reasoningEffort ?? 'medium';
   const useSearch=searchChoices[connectionKey] ?? task?.searchEnabled ?? false;
   const useFeishu=connectionChoices[connectionKey] ?? task?.feishuEnabled ?? false;
   async function commit(next: Workspace) {
@@ -237,6 +253,7 @@ function App() {
       knowledgeIds:nextTask.knowledgeIds||(data.tasks.some(t=>t.id===nextTask.id)?[]:newKnowledgeIds),
       modelId: currentModel.id,
       modelName: currentModel.name,
+      reasoningEffort,
       extensionIds: selectedIds,
       feishuEnabled: useFeishu,
       searchEnabled: useSearch,
@@ -246,6 +263,7 @@ function App() {
     try {
       const saved=await window.ailo.patchTask(updated.id,updated);
       setData(previous=>({...previous,tasks:previous.tasks.some(t=>t.id===saved.id)?previous.tasks.map(t=>t.id===saved.id?{...t,...saved}:t):[saved,...previous.tasks]}));
+      setTurnExtensions(previous=>({...previous,[connectionKey]:[]}));
       if (clearDraft) {
         setInput("");
         setMaterials([]);
@@ -257,7 +275,8 @@ function App() {
         id: requestId,
         knowledgeIds:nextTask.knowledgeIds||(data.tasks.some(t=>t.id===nextTask.id)?[]:newKnowledgeIds),
       modelId: currentModel.id,
-        extensionIds: selectedIds,
+        extensionIds: effectiveIds,
+        reasoningEffort:reasoningSupported?reasoningEffort:undefined,
       feishuEnabled: useFeishu,
       searchEnabled: useSearch,
         taskId: updated.id,
@@ -737,19 +756,20 @@ function App() {
                     placeholder={view === "assistant" ? "" : pending ? "补充指令…" : "告诉 Ailo 你想做什么… @ 引用对话文件，/ 调用专家和技能"}
                     disabled={!ready || busy}
                     files={[...(task?.materials || []), ...materials]}
-                    materials={materials} extensions={availableExtensions} selectedIds={selectedIds}
+                    materials={materials} extensions={availableExtensions} selectedIds={effectiveIds}
+                    turnIds={turnIds} onRemoveExtension={id=>setTurnExtensions(previous=>({...previous,[connectionKey]:turnIds.filter(value=>value!==id)}))}
                     onPasteFiles={files => { void pasteFiles(files); }}
                     onFile={file => setMaterials(previous => [...previous, file])}
-                    onExtensions={ids => { setExtensionIds(ids); setNotice(""); }}
+                    onExtensions={ids => { setTurnExtensions(previous=>({...previous,[connectionKey]:ids.filter(id=>!selectedIds.includes(id))})); setNotice(""); }}
                     onSubmit={event => { void submit(event); }}
                   />
                   <div className="composerbar">
                     <KnowledgePicker openFrom={knowledgeMenuAnchor} onClose={()=>setKnowledgeMenuAnchor(null)} key={'knowledge-'+(task?.id||view)} value={task?(task.knowledgeIds||[]):newKnowledgeIds} disabled={!ready||busy||!!pending} onManage={()=>setView('knowledge')} onChange={ids=>{if(task)void window.ailo.patchTask(task.id,{knowledgeIds:ids}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,knowledgeIds:ids}:t)}))).catch(e=>setError(String(e)));else setNewKnowledgeIds(ids);}}/>
-                  <ComposerAdd onKnowledge={setKnowledgeMenuAnchor} searchEnabled={useSearch} setSearchEnabled={enabled=>{setSearchChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{searchEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,searchEnabled:enabled}:t)})));}} onProject={!task && view !== "assistant"?setProjectMenuAnchor:undefined} feishu={useFeishu} setFeishu={enabled=>{setConnectionChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{feishuEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,feishuEnabled:enabled}:t)})));}} key={task?.id || projectId || "new"} items={availableExtensions} value={selectedIds} disabled={!ready || busy} onChange={ids => { setExtensionIds(ids); setNotice(""); }} onManage={tab => {setExtensionTab(tab);setView("extensions");}} onAttach={attach} importing={importing}
+                  <ComposerAdd onKnowledge={setKnowledgeMenuAnchor} searchEnabled={useSearch} setSearchEnabled={enabled=>{setSearchChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{searchEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,searchEnabled:enabled}:t)})));}} onProject={!task && view !== "assistant"?setProjectMenuAnchor:undefined} feishu={useFeishu} setFeishu={enabled=>{setConnectionChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{feishuEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,feishuEnabled:enabled}:t)})));}} key={task?.id || projectId || "new"} items={availableExtensions} value={[...selectedIds,...turnIds.filter(id=>availableExtensions.find(e=>e.id===id)?.kind==='skill')]} disabled={!ready || busy} onChange={changeAddedExtensions} onManage={tab => {setExtensionTab(tab);setView("extensions");}} onAttach={attach} importing={importing}
                     onDefault={(task?.projectId || projectId) ? () => { const id = task?.projectId || projectId; void commit({...data, projects:data.projects.map(p => p.id === id ? {...p,extensionIds:selectedIds} : p)}).then(ok => { if(ok) setNotice("已保存为项目默认扩展，将用于该项目的新对话。"); }); } : undefined} />
                     <ContextMeter
                       messages={[...(task ? messagesFor(task) : []), ...(input || materials.length ? [{ role: "user" as const, content: input, materials }] : [])]}
-                      extensions={availableExtensions.filter(e => selectedIds.includes(e.id))}
+                      extensions={availableExtensions.filter(e => effectiveIds.includes(e.id))}
                       model={currentModel} checkpoint={task?.contextCheckpoint} promptTokens={task?.promptTokens}
                       run={task?.agentRun}
                       onConfigure={() => setView("models")} />
@@ -757,6 +777,8 @@ function App() {
                       models={models}
                       value={currentModel.id}
                       defaultId={data.defaultModelId}
+                      reasoningSupported={reasoningSupported} reasoningEffort={reasoningEffort}
+                      onReasoningChange={effort=>{setReasoningChoices(previous=>({...previous,[connectionKey]:effort}));if(task)void window.ailo.patchTask(task.id,{reasoningEffort:effort}).then(saved=>setData(previous=>({...previous,tasks:previous.tasks.map(t=>t.id===saved.id?{...t,reasoningEffort:effort}:t)}))).catch(e=>setError(String(e)));}}
                       disabled={!ready || busy}
                       onSelect={setModelId}
                       onConfigure={() => setView("models")}

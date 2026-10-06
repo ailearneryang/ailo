@@ -43,6 +43,7 @@ export type Message = {
   modelName?: string;
 };
 export type Task = {
+  reasoningEffort?: 'low'|'medium'|'high';
   knowledgeIds?:string[];
   scheduledTaskId?: string;
   scheduledRunId?: string;
@@ -157,6 +158,7 @@ declare global {
         knowledgeIds?:string[];
         id: string;
         modelId: string;
+        reasoningEffort?: 'low'|'medium'|'high';
         taskId?: string;
         contextCheckpoint?: ContextCheckpoint;
         extensionIds?: string[];

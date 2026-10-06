@@ -1,3 +1,4 @@
+const {reasoningParameters} = require("./reasoning.cjs");
 const { selectedExtensions } = require("./extensions.cjs");
 // Requests run in the main process. Credentials never enter the renderer.
 function createChat(storage, fetchImpl = fetch, timeouts = {}) {
@@ -74,6 +75,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
         armTimer(limits.first, "未收到模型内容");
         const selected = input.extensionIds?.length ? selectedExtensions((await storage.readWorkspace()).extensions || [], input.extensionIds) : [];
         const model = await storage.modelCredentials(input.modelId);
+        const reasoning = reasoningParameters(model,input.reasoningEffort);
         const url = new URL(model.baseUrl);
         if (
           url.username ||
@@ -129,6 +131,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
               max_tokens: Math.min(maxTokens,model.maxOutputTokens || maxTokens),
               messages,
               ...format,
+              ...reasoning,
             }),
           }).catch(error=>{throw require('./network-error.cjs').networkError(error,true);});
           if (!response.ok) {
