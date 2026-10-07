@@ -1,3 +1,5 @@
+export type ArtifactPreview={kind:'image'|'text'|'markdown'|'html'|'pdf'|'spreadsheet';content:string;version:string;truncated?:boolean;sheets?:{name:string;cells:{address:string;text:string}[]}[]};
+export type ProjectMemoryData={revision:number;notes:string;hiddenTaskIds?:string[];records:{taskId:string;title:string;goal:string;status:string;decisions:unknown[];steps:unknown[];updatedAt?:string}[]};
 export type KnowledgeDocument={id:string;name:string;chars:number;chunks:number;createdAt:string};
 export type KnowledgeLibrary={id:string;name:string;description:string;createdAt:string;documents:KnowledgeDocument[]};
 export type KnowledgeHit={libraryId:string;libraryName:string;documentId:string;name:string;chunk:number;offset:number;end:number;text:string;citation:string};
@@ -44,6 +46,7 @@ export type Message = {
 };
 export type Task = {
   reasoningEffort?: 'low'|'medium'|'high';
+  petReadToken?: string;
   knowledgeIds?:string[];
   scheduledTaskId?: string;
   scheduledRunId?: string;
@@ -118,6 +121,8 @@ export const emptyWorkspace: Workspace = {
 declare global {
   interface Window {
     ailo: {
+      projectMemory:(id:string)=>Promise<ProjectMemoryData>;
+      saveProjectMemory:(id:string,input:{notes:string;revision:number;hiddenTaskIds?:string[]})=>Promise<unknown>;
       schedulesList:()=>Promise<Schedule[]>;
       schedulesSave:(input:ScheduleInput)=>Promise<Schedule>;
       schedulesToggle:(input:{id:string;enabled:boolean})=>Promise<void>;
@@ -130,7 +135,7 @@ declare global {
       openWeb:(url:string)=>Promise<void>;
       knowledgeList:()=>Promise<KnowledgeLibrary[]>;
       knowledgeSave:(input:{id?:string;name:string;description:string})=>Promise<KnowledgeLibrary>;
-      knowledgeImport:(id:string)=>Promise<{name:string;status:string;error?:string}[]>;
+      knowledgeImport:(id:string)=>Promise<{name:string;status:string;error?:string;notice?:string}[]>;
       knowledgeRemove:(id:string)=>Promise<boolean>;
       knowledgeRemoveDocument:(input:{libraryId:string;documentId:string})=>Promise<void>;
       knowledgeSearch:(input:{libraryIds:string[];query:string})=>Promise<{hits:KnowledgeHit[];notice:string}>;
@@ -173,7 +178,8 @@ declare global {
       steer: (input:{id:string;taskId:string;content:string}) => Promise<Message>;
       projectFiles: (taskId:string) => Promise<{files:{path:string;label:string;size:number;sha256:string}[];truncated:boolean}>;
       reveal: (taskId:string, artifactPath?:string, projectFile?:boolean) => Promise<void>;
-      preview: (taskId:string, artifactPath:string, projectFile?:boolean) => Promise<{kind:'image'|'text';content:string;truncated?:boolean}>;
+      editArtifact:(taskId:string,path:string,input:{version:string;operation?:string;text?:string;sheet?:string;address?:string})=>Promise<ArtifactPreview>;
+      preview: (taskId:string, artifactPath:string, projectFile?:boolean) => Promise<ArtifactPreview>;
       read: () => Promise<Workspace>;
       save: (state: Workspace) => Promise<void>;
       pasteFiles: (entries: { name: string; bytes: Uint8Array }[]) => Promise<Material[]>;

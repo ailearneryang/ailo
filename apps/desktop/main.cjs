@@ -179,6 +179,9 @@ ipcMain.handle("agent:reveal", async (e, {taskId, artifactPath, projectFile = fa
     if (error) throw Error(error);
   }
 });
+ipcMain.handle('project:memory',async(e,id)=>{trusted(e);const state=await storage.readWorkspace();const p=state.projects.find(p=>p.id===id);if(!p)throw Error('项目不存在');return require('./project-memory.cjs').readMemory(storage.agentDirectory,p,state.tasks);});
+ipcMain.handle('project:memorySave',async(e,{id,input})=>{trusted(e);const state=await storage.readWorkspace();if(!state.projects.some(p=>p.id===id))throw Error('项目不存在');return require('./project-memory.cjs').saveMemory(storage.agentDirectory,id,input);});
+ipcMain.handle('agent:edit',async(e,{taskId,artifactPath,input})=>{trusted(e);const state=await storage.readWorkspace();const task=state.tasks.find(t=>t.id===taskId);if(!task)throw Error('任务不存在');if(chat.sessions().some(s=>s.taskId===taskId||(task.projectId&&state.tasks.find(t=>t.id===s.taskId)?.projectId===task.projectId)))throw Error('请等待当前任务停止后编辑');const root=await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task);await require('./agent/project-files.cjs').projectFile(root,artifactPath);return require('./artifact-edit.cjs').editFile(root,path.join(require('./agent/workspace-path.cjs').workspacePath(storage.agentDirectory,task),'backups'),artifactPath,input);});
 ipcMain.handle("agent:preview", async (e, {taskId, artifactPath, projectFile = false}) => {
   trusted(e);
   const state=await storage.readWorkspace();
@@ -189,14 +192,7 @@ ipcMain.handle("agent:preview", async (e, {taskId, artifactPath, projectFile = f
   if(projectFile)await require('./agent/project-files.cjs').projectFile(await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task),artifactPath);
   else if(!run?.artifacts.some(a=>a.path===artifactPath))throw Error('成果不属于当前任务');
   const file=await resolveFile(await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task),artifactPath);
-  const fs=require('node:fs/promises');
-  const stat=await fs.stat(file);
-  if(!stat.isFile()||stat.size>10*1024*1024)throw Error('此成果请在项目文件夹中查看');
-  const data=await fs.readFile(file);
-  const ext=path.extname(file).toLowerCase();
-  if(['.png','.jpg','.jpeg','.webp'].includes(ext))return {kind:'image',content:`data:image/${ext==='.jpg'||ext==='.jpeg'?'jpeg':ext.slice(1)};base64,${data.toString('base64')}`};
-  if(data.includes(0))throw Error('二进制成果请在项目文件夹中查看');
-  return {kind:'text',content:data.toString('utf8').slice(0,100000),truncated:data.length>100000};
+  return require('./artifact-edit.cjs').previewFile(file);
 });
 ipcMain.handle("state:write", (e, state) => {
   trusted(e);
@@ -225,7 +221,7 @@ storage.knowledge=require('./knowledge.cjs').createKnowledge(app.getPath('userDa
 for(const method of ['list','save','search','read'])ipcMain.handle('knowledge:'+method,(e,input)=>{trusted(e);return storage.knowledge[method](input);});
 ipcMain.handle('knowledge:removeDocument',async(e,input)=>{trusted(e);const choice=await dialog.showMessageBox(win,{type:'question',title:'删除资料',message:'从知识库移除此资料？',detail:'只删除 Ailo 中的文本副本，原文件不受影响。',buttons:['取消','删除'],defaultId:0,cancelId:0});if(choice.response===1)await storage.knowledge.removeDocument(input);});
 ipcMain.handle('knowledge:remove',async(e,id)=>{trusted(e);const choice=await dialog.showMessageBox(win,{type:'question',title:'删除知识库',message:'删除此知识库及全部资料？',detail:'只删除 Ailo 中的副本，原文件不受影响。已有对话回答仍保留。',buttons:['取消','删除'],defaultId:0,cancelId:0});if(choice.response===1){await storage.knowledge.remove(id);return true;}return false;});
-ipcMain.handle('knowledge:import',async(e,id)=>{trusted(e);const result=await dialog.showOpenDialog(win,{title:'导入知识库资料',properties:['openFile','multiSelections'],filters:[{name:'知识库资料',extensions:['docx','txt','md','markdown','csv','tsv','json','yaml','yml','toml','xml','html','sql','py','js','ts']}]});return result.canceled?[]:storage.knowledge.import(id,result.filePaths);});
+ipcMain.handle('knowledge:import',async(e,id)=>{trusted(e);const result=await dialog.showOpenDialog(win,{title:'导入知识库资料',properties:['openFile','multiSelections'],filters:[{name:'知识库资料',extensions:['pdf','xlsx','docx','txt','md','markdown','csv','tsv','json','yaml','yml','toml','xml','html','sql','py','js','ts']}]});return result.canceled?[]:storage.knowledge.import(id,result.filePaths);});
 storage.amap=require('./amap-mcp.cjs').createAMap({directory:app.getPath('userData'),safeStorage,confirmWrite:async(action,signal)=>{
   if(signal.aborted)return false;
   const choice=await dialog.showMessageBox(win,{type:'question',title:'确认高德地图操作',message:action.purpose||'允许调用此高德工具？',detail:JSON.stringify({tool:action.query,params:action.params},null,2),buttons:['执行','取消'],defaultId:1,cancelId:1});return choice.response===0&&!signal.aborted;

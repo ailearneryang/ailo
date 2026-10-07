@@ -1,7 +1,8 @@
 import React from 'react';
 // A single stroke weight and viewbox keep navigation icons optically consistent.
-export function Icon({ name }: { name: 'book' | 'sparkles' | 'plug' | 'chevron-right' | 'plus' | 'arrow-up' | 'compose' | 'chat' | 'grid' | 'folder' | 'info' | 'user' | 'chevron' | 'paperclip' | 'panel' | 'expand' | 'file' | 'queue' | 'play' | 'edit' | 'trash' | 'check' | 'close' | 'clock' }) {
+export function Icon({ name }: { name: 'settings' | 'book' | 'sparkles' | 'plug' | 'chevron-right' | 'plus' | 'arrow-up' | 'compose' | 'chat' | 'grid' | 'folder' | 'info' | 'user' | 'chevron' | 'paperclip' | 'panel' | 'expand' | 'file' | 'queue' | 'play' | 'edit' | 'trash' | 'check' | 'close' | 'clock' }) {
   const shapes = {
+    settings: <><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></>,
     book: <><path d="M12 5v16M12 5C9 3 5 3 2 4v15c3-1 7-1 10 2 3-3 7-3 10-2V4c-3-1-7-1-10 1Z"/></>,
     sparkles: <><path d="m10 3 2.4 6.6L19 12l-6.6 2.4L10 21l-2.4-6.6L1 12l6.6-2.4Z"/><path d="M19 2v6M16 5h6"/></>,
     plug: <><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0V8ZM12 17v4"/></>,

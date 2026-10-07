@@ -43,10 +43,7 @@ const root = path.resolve(__dirname, "..");
       .getByText("这个项目名称已存在，请选择已有项目或换个名称。")
       .waitFor();
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: /^选择模型：/ }).click();
-    await page
-      .getByRole("button", { name: "配置自定义模型", exact: true })
-      .click();
+    await page.getByRole("button", { name: "连接模型，开始使用 →", exact: true }).click();
     await page
       .getByRole("button", { name: "＋ 添加模型", exact: true })
       .click();
@@ -103,6 +100,7 @@ const root = path.resolve(__dirname, "..");
       .getByRole("button", { name: "工作模型", exact: true })
       .click();
     await page.getByRole("button", { name: "登录或注册", exact: true }).click();
+    await page.getByRole("menuitem", { name: "登录 / 注册", exact: true }).click();
     await page.getByRole("button", { name: "注册", exact: true }).click();
     await page.getByLabel("昵称", { exact: true }).fill("测试用户");
     await page.getByLabel("邮箱", { exact: true }).fill("test@example.com");

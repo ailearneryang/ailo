@@ -1,6 +1,6 @@
 {
   "name": "ailo-desktop",
-  "version": "0.1.63",
+  "version": "0.1.64",
   "description": "Ailo personal agent assistant — desktop development preview",
   "main": "main.cjs",
   "scripts": {
@@ -17,9 +17,13 @@
   "license": "UNLICENSED",
   "type": "commonjs",
   "dependencies": {
+    "@xmldom/xmldom": "0.9.12",
+    "exceljs": "^4.4.0",
+    "pdfjs-dist": "^6.4.299",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "@xmldom/xmldom": "0.9.12"
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "productName": "Ailo",
   "config": {
@@ -35,5 +39,10 @@
     "electron": "^44.4.5",
     "typescript": "^7.0.2",
     "vite": "^8.3.1"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
   }
 }

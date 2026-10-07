@@ -1,4 +1,10 @@
 import {supportsReasoning} from "../reasoning.cjs";
+import {CompanionNavigation} from './companion-navigation';
+import {PetSettings} from './pet-settings';
+import {ProfileMenu} from './profile-menu';
+import './appearance';
+import './appearance.css';
+import {AppearanceSettings} from './appearance-settings';
 import { canSendMaterial, isImageMaterial } from "../attachments.mjs";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -8,6 +14,7 @@ import { Schedules } from "./schedules";
 import { MyAilo } from "./my-ailo";
 import { AccountPage, ModelSettings } from "./settings";
 import { AssistantText } from "./assistant-text";
+import { ConversationNavigation } from './conversation-navigation';
 import { ProjectNavigation } from "./project-navigation";
 import { ProjectOverview } from "./project-overview";
 import { ProjectPicker } from "./project-picker";
@@ -26,6 +33,7 @@ import { TaskActivity } from "./task-activity";
 import {progressAnchor} from "./progress-placement";
 import { TaskProgress, ExecutionHistory } from "./task-progress";
 import { Pet } from "./pet";
+import { workspacePetState, taskPetState, unreadAttentionTasks, petNotificationToken } from "./pet-state";
 import {
   demoModel,
   emptyWorkspace,
@@ -184,6 +192,23 @@ function App() {
   const recentTasks = data.tasks.filter(t=>t.id !== ASSISTANT_ID).sort((a,b)=>Date.parse(b.scheduledAt||b.created)-Date.parse(a.scheduledAt||a.created)).filter((t,index,items)=>!t.scheduledTaskId || t.scheduledArchived || items.findIndex(other=>other.scheduledTaskId===t.scheduledTaskId)===index);
   const isConversation = view === "chat" || view === "assistant";
   const task = data.tasks.find((t) => t.id === active);
+  const attentionCount = unreadAttentionTasks(data.tasks, Object.keys(sessions)).length;
+  const companionState = workspacePetState(data.tasks, sessions);
+  const markingPetRead = useRef<string | null>(null);
+  useEffect(() => {
+    function markRead() {
+      if (!isConversation || !task || pending || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+      const token = petNotificationToken(task);
+      const key = task.id + ':' + token;
+      if (!token || token === task.petReadToken || markingPetRead.current === key) return;
+      markingPetRead.current = key;
+      void window.ailo.patchTask(task.id, { petReadToken: token }).then(() => {
+        setData(previous => ({...previous, tasks: previous.tasks.map(item => item.id === task.id ? {...item, petReadToken: token} : item)}));
+      }).catch(() => {}).finally(() => { if (markingPetRead.current === key) markingPetRead.current = null; });
+    }
+    markRead(); window.addEventListener('focus', markRead); document.addEventListener('visibilitychange', markRead);
+    return () => { window.removeEventListener('focus', markRead); document.removeEventListener('visibilitychange', markRead); };
+  }, [task, pending, isConversation]);
   const connectionKey=task?.id || projectId || "new";
   const turnIds=(turnExtensions[connectionKey] || []).filter(id=>availableExtensions.some(e=>e.id===id&&e.enabled));
   const turnHasExpert=turnIds.some(id=>availableExtensions.find(e=>e.id===id)?.kind==='expert');
@@ -237,7 +262,8 @@ function App() {
   }
   function modelReady() {
     if (currentModel.id !== "demo") return true;
-    setError("请先在输入框右下角配置或选择模型，再发送消息。");
+    setError("");
+    setView("models");
     return false;
   }
   async function respond(nextTask: Task, clearDraft: boolean) {
@@ -443,10 +469,9 @@ function App() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand">
-          <Pet size="brand" thinking={!!pending} interactive />
+        <button className="brand brand-home" type="button" aria-label="Ailo 首页" title="返回首页" disabled={!ready || saving || importing} onClick={() => select(null)}>
           Ailo
-        </div>
+        </button>
         <button
           className="new"
           disabled={!ready || saving || importing}
@@ -455,7 +480,7 @@ function App() {
           <Icon name="compose" /><span>新的对话</span>
         </button>
         <nav>
-          <button aria-label="我的 Ailo" className={view === "assistant" ? "selected" : ""} onClick={() => select(ASSISTANT_ID)}><Pet size="mini" /><span>我的 Ailo</span></button>
+          <CompanionNavigation state={companionState} count={attentionCount} selected={view === "assistant"} onSelect={()=>select(ASSISTANT_ID)}/>
           <button className={view === "knowledge" ? "selected" : ""} onClick={()=>setView("knowledge")}><Icon name="book"/><span>知识库</span></button>
           <button className={view === "schedules" ? "selected" : ""} onClick={()=>{setScheduleTarget(null);setView("schedules");}}><Icon name="clock"/><span>定时任务</span></button>
           <button
@@ -465,58 +490,45 @@ function App() {
             <Icon name="grid" /><span>扩展</span>
           </button>
         </nav>
-        <div className="label">
-          项目 <span>{data.projects.length || ""}</span>
+        <div className="sidebar-scroll">
+          <div className="label">
+            项目 <span>{data.projects.length || ""}</span>
+          </div>
+          <div className="project-list">
+            {data.projects.length === 0 ? (
+              <p className="muted">在新对话中创建项目</p>
+            ) : (
+              [...data.projects].sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned)).map(p=><ProjectNavigation key={p.id} project={p} expanded={!!expandedProjects[p.id]} selected={projectId===p.id} tasks={data.tasks.filter(t=>t.projectId===p.id)} active={view==='chat'?active:null} runningIds={Object.keys(sessions)} extensions={availableExtensions} busy={saving||importing} onExpand={()=>setExpandedProjects(v=>({...v,[p.id]:!v[p.id]}))} onOpen={()=>{select(null);selectProject(p.id);setView('project');}} onNew={()=>{select(null);selectProject(p.id);}} onSelect={select} onSave={async project=>{
+                if(data.projects.some(other=>other.id!==project.id&&other.name.toLowerCase()===project.name.toLowerCase())){setError('项目名称已存在，请换个名称。');return false;}
+                return commit({...data,projects:data.projects.map(old=>old.id===project.id?project:old)});
+              }} onDelete={async()=>{try{if(await window.ailo.removeProject(p.id)){const latest=await window.ailo.read();setData(latest);if(projectId===p.id){select(null);setProjectId('');}}}catch(e){setError((e as Error).message);}}} onError={setError}/>)
+            )}
+          </div>
+          <div className="label">最近的对话</div>
+          <div className="history">
+            {recentTasks.length === 0 ? (
+              <p className="muted">从一件想完成的事开始</p>
+            ) : (
+              recentTasks.map((t) => (
+                <button
+                  key={t.id}
+                  disabled={saving || importing}
+                  className={(active === t.id ? "selected" : "") + (t.scheduledTaskId ? " scheduled-recent" : "")}
+                  onClick={() => select(t.id)}
+                >
+                  <span>{t.title}</span>{t.scheduledTaskId ? <small className="scheduled-recent-date">{new Date(t.scheduledAt||t.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})} · {sessions[t.id] ? (sessions[t.id].status.startsWith('等待执行')?'排队中':'执行中') : t.lastError || ['failed','blocked','waiting_permission','paused','waiting_user'].includes(t.agentRun?.status||'') || t.messages?.at(-1)?.clarification ? '待处理' : t.messages?.at(-1)?.role==='assistant' || t.answer ? '已有结果' : '等待结果'}</small> : sessions[t.id]&&<small className="session-status">{sessions[t.id].status.startsWith('等待执行')?'排队中':'执行中'}</small>}
+                </button>
+              ))
+            )}
+          </div>
         </div>
-        <div className="project-list">
-          {data.projects.length === 0 ? (
-            <p className="muted">在新对话中创建项目</p>
-          ) : (
-            [...data.projects].sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned)).map(p=><ProjectNavigation key={p.id} project={p} expanded={!!expandedProjects[p.id]} selected={projectId===p.id} tasks={data.tasks.filter(t=>t.projectId===p.id)} active={view==='chat'?active:null} runningIds={Object.keys(sessions)} extensions={availableExtensions} busy={saving||importing} onExpand={()=>setExpandedProjects(v=>({...v,[p.id]:!v[p.id]}))} onOpen={()=>{select(null);selectProject(p.id);setView('project');}} onNew={()=>{select(null);selectProject(p.id);}} onSelect={select} onSave={async project=>{
-              if(data.projects.some(other=>other.id!==project.id&&other.name.toLowerCase()===project.name.toLowerCase())){setError('项目名称已存在，请换个名称。');return false;}
-              return commit({...data,projects:data.projects.map(old=>old.id===project.id?project:old)});
-            }} onDelete={async()=>{try{if(await window.ailo.removeProject(p.id)){const latest=await window.ailo.read();setData(latest);if(projectId===p.id){select(null);setProjectId('');}}}catch(e){setError((e as Error).message);}}} onError={setError}/>)
-          )}
-        </div>
-        <div className="label">最近的对话</div>
-        <div className="history">
-          {recentTasks.length === 0 ? (
-            <p className="muted">从一件想完成的事开始</p>
-          ) : (
-            recentTasks.map((t) => (
-              <button
-                key={t.id}
-                disabled={saving || importing}
-                className={(active === t.id ? "selected" : "") + (t.scheduledTaskId ? " scheduled-recent" : "")}
-                onClick={() => select(t.id)}
-              >
-                <span>{t.title}</span>{t.scheduledTaskId ? <small className="scheduled-recent-date">{new Date(t.scheduledAt||t.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})} · {sessions[t.id] ? (sessions[t.id].status.startsWith('等待执行')?'排队中':'执行中') : t.lastError || ['failed','blocked','waiting_permission','paused','waiting_user'].includes(t.agentRun?.status||'') || t.messages?.at(-1)?.clarification ? '待处理' : t.messages?.at(-1)?.role==='assistant' || t.answer ? '已有结果' : '等待结果'}</small> : sessions[t.id]&&<small className="session-status">{sessions[t.id].status.startsWith('等待执行')?'排队中':'执行中'}</small>}
-              </button>
-            ))
-          )}
-        </div>
-        <button className="sidebar-about" onClick={() => setView("about")}><Icon name="info" /><span>关于 Ailo</span></button>
-        <button
-          className={"profile " + (view === "account" ? "selected" : "")}
-          disabled={!accountReady}
-          onClick={() => setView("account")}
-          aria-label={user ? "查看用户信息" : "登录或注册"}
-        >
-          <span className="avatar">
-            {user ? Array.from(user.name)[0]?.toUpperCase() : <Icon name="user" />}
-          </span>
-          <span className="profile-copy">
-            {user ? user.name : "登录 / 注册"}
-            <small>{user ? user.email : "登录你的 Ailo 账号"}</small>
-          </span>
-          <span className="profile-arrow"><Icon name="chevron" /></span>
-        </button>
+        <ProfileMenu user={user} ready={accountReady} onSelect={setView}/>
       </aside>
       <main>
         <header>
           <div>
             <strong>
-              {view === "assistant" ? "我的 Ailo" : view === "knowledge" ? "知识库" : view === "schedules" ? "定时任务" : view === "extensions" ? "扩展" : view === "about"
+              {view === "pets" ? "宠物与陪伴" : view === "appearance" ? "外观设置" : view === "assistant" ? "我的 Ailo" : view === "knowledge" ? "知识库" : view === "schedules" ? "定时任务" : view === "extensions" ? "扩展" : view === "about"
                 ? "关于 Ailo"
                 : view === "models"
                   ? "偏好设置"
@@ -555,9 +567,9 @@ function App() {
             "workspace " + (task && isConversation && rightPanel ? "split" : "")
           }
         >
-          <section className={"conversation" + (view === "assistant" ? " assistant-conversation" : "")}>
-            {view === "assistant" && <MyAilo compact={!!task} data={data} runningIds={Object.keys(sessions)} onOpen={select} onSchedules={()=>setView("schedules")} onModels={()=>setView("models")} />}
-            {view === "knowledge" ? <KnowledgeCenter onUse={id=>{select(null);setNewKnowledgeIds([id]);setView("chat");setNotice("已选择知识库，发送问题即可检索资料。");}}/> : view === "schedules" ? <Schedules key={scheduleTarget||"all"} initialId={scheduleTarget||undefined} focusHistory={!!scheduleTarget} onChanged={async()=>setData(await window.ailo.read())} tasks={data.tasks} models={models} defaultModelId={data.defaultModelId} onFeishu={()=>{setExtensionTab("connector");setView("extensions");}} onModels={()=>setView("models")} onOpen={async id=>{const latest=await window.ailo.read();if(!latest.tasks.some(t=>t.id===id))throw Error('对话已删除或尚未创建');setData(latest);select(id);const opened=latest.tasks.find(t=>t.id===id)!;setModelId(opened.modelId||latest.defaultModelId);setProjectId(opened.projectId||"");setExtensionIds(opened.extensionIds||[]);}}/> : view === "project" && data.projects.some(p=>p.id===projectId) ? <ProjectOverview key={projectId} project={data.projects.find(p=>p.id===projectId)!} tasks={data.tasks.filter(t=>t.projectId===projectId)} onSelect={select} onNew={()=>{const id=projectId;select(null);selectProject(id);}}/> : view === "extensions" ? (
+          <section className={"conversation" + (view === "assistant" ? " assistant-conversation" : "") + (isConversation && !task ? " conversation-home" : "")}>
+            {view === "assistant" && <MyAilo compact={!!task} data={data} runningIds={Object.keys(sessions)} onOpen={select} onSchedules={()=>setView("schedules")} onPets={()=>setView("pets")} />}
+            {view === "pets" ? <PetSettings/> : view === "appearance" ? <AppearanceSettings/> : view === "knowledge" ? <KnowledgeCenter onUse={id=>{select(null);setNewKnowledgeIds([id]);setView("chat");setNotice("已选择知识库，发送问题即可检索资料。");}}/> : view === "schedules" ? <Schedules key={scheduleTarget||"all"} initialId={scheduleTarget||undefined} focusHistory={!!scheduleTarget} onChanged={async()=>setData(await window.ailo.read())} tasks={data.tasks} models={models} defaultModelId={data.defaultModelId} onFeishu={()=>{setExtensionTab("connector");setView("extensions");}} onModels={()=>setView("models")} onOpen={async id=>{const latest=await window.ailo.read();if(!latest.tasks.some(t=>t.id===id))throw Error('对话已删除或尚未创建');setData(latest);select(id);const opened=latest.tasks.find(t=>t.id===id)!;setModelId(opened.modelId||latest.defaultModelId);setProjectId(opened.projectId||"");setExtensionIds(opened.extensionIds||[]);}}/> : view === "project" && data.projects.some(p=>p.id===projectId) ? <ProjectOverview key={projectId} project={data.projects.find(p=>p.id===projectId)!} tasks={data.tasks.filter(t=>t.projectId===projectId)} onSelect={select} onNew={()=>{const id=projectId;select(null);selectProject(id);}}/> : view === "extensions" ? (
               <ExtensionCenter initialTab={extensionTab} items={availableExtensions} busy={busy || !ready}
                 onTryConnection={text=>{setConnectionChoices(v=>({...v,[connectionKey]:true}));setView(active === ASSISTANT_ID ? "assistant" : "chat");setInput(text);setError("");}}
                 onImporting={setImporting}
@@ -615,31 +627,19 @@ function App() {
                   <section>
                     <h2>数据与使用范围</h2>
                     <p>记录保存在本机；对话和相关材料会发送给你选择的模型服务商。当前不支持云端同步或自动更新。</p>
-                    <p>支持文本、Markdown、DOCX 及压缩包中的可读文件。PDF 与图片内容暂不解析；开发任务可能需要额外工具链。</p>
+                    <p>支持文本、Markdown、DOCX、文本型 PDF、Excel 及压缩包中的可读文件。扫描型 PDF 与图片内容识别仍需 OCR 或视觉模型；开发任务可能需要额外工具链。</p>
                   </section>
                 </div>
               </div>
             ) : !task ? (view === "assistant" ? null :
               <div className="welcome home-welcome">
                 <Pet interactive />
-                <div className="eyebrow">YOUR EVERYDAY COMPANION</div>
                 <h1>今天，有什么想交给我？</h1>
-                <p>一个问题、一份材料，或一件想完成的事。</p>
-                <div className="suggestions">
-                  {[
-                    "根据需求和界面稿，开发一个安卓应用",
-                    "把这些资料整理成一份研究报告",
-                    "帮我规划一个新项目",
-                  ].map((s) => (
-                    <button key={s} onClick={() => setInput(s)}>
-                      {s}
-                      <span>↗</span>
-                    </button>
-                  ))}
-                </div>
+                <p>开始一件独立的事；需要持续交流或安排任务，可以使用「我的 Ailo」。</p>
               </div>
             ) : (
               <div className="thread">
+                <ConversationNavigation messages={messagesFor(task)} conversationId={task.id}/>
                 <div className="day">
                   {new Date(task.created).toLocaleDateString("zh-CN")} ·{" "}
                   {data.projects.find((p) => p.id === task.projectId)?.name ||
@@ -651,6 +651,7 @@ function App() {
                   <div
                     key={message.id}
                     className={message.role === "user" ? "user-turn" : "reply"}
+                    data-conversation-turn={message.role === 'user' ? message.id : undefined}
                   >
                     {message.role === "assistant" && (
                       <div className="byline">
@@ -687,16 +688,16 @@ function App() {
                 {pending === task.id ? (
                   <div className="reply" role="status">
                     <div className="byline">
-                      <Pet size="mini" thinking />
+                      <Pet size="mini" state={taskPetState(task, chatStatus)} />
                       Ailo
                     </div>
-                    {visibleReply(streamText) && <div className="assistant-text">{visibleReply(streamText)}</div>}
+                    {visibleReply(streamText) && <div className="assistant-text"><AssistantText content={visibleReply(streamText)}/></div>}
                     <p className="muted">{chatStatus || `正在等待 ${currentModel.name} 回复…`}</p>
                   </div>
                 ) : (
                   messagesFor(task).at(-1)?.role === "user" && (
                     <div className="chat-retry">
-                      {task.partialReply && <details><summary>查看未完成的回复（不计入后续上下文）</summary><div className="assistant-text">{task.partialReply}</div></details>}
+                      {task.partialReply && <details><summary>查看未完成的回复（不计入后续上下文）</summary><div className="assistant-text"><AssistantText content={task.partialReply}/></div></details>}
                       <p
                         className={task.lastError ? "error" : "muted"}
                         role={task.lastError ? "alert" : undefined}
@@ -767,13 +768,13 @@ function App() {
                     <KnowledgePicker openFrom={knowledgeMenuAnchor} onClose={()=>setKnowledgeMenuAnchor(null)} key={'knowledge-'+(task?.id||view)} value={task?(task.knowledgeIds||[]):newKnowledgeIds} disabled={!ready||busy||!!pending} onManage={()=>setView('knowledge')} onChange={ids=>{if(task)void window.ailo.patchTask(task.id,{knowledgeIds:ids}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,knowledgeIds:ids}:t)}))).catch(e=>setError(String(e)));else setNewKnowledgeIds(ids);}}/>
                   <ComposerAdd onKnowledge={setKnowledgeMenuAnchor} searchEnabled={useSearch} setSearchEnabled={enabled=>{setSearchChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{searchEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,searchEnabled:enabled}:t)})));}} onProject={!task && view !== "assistant"?setProjectMenuAnchor:undefined} feishu={useFeishu} setFeishu={enabled=>{setConnectionChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{feishuEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,feishuEnabled:enabled}:t)})));}} key={task?.id || projectId || "new"} items={availableExtensions} value={[...selectedIds,...turnIds.filter(id=>availableExtensions.find(e=>e.id===id)?.kind==='skill')]} disabled={!ready || busy} onChange={changeAddedExtensions} onManage={tab => {setExtensionTab(tab);setView("extensions");}} onAttach={attach} importing={importing}
                     onDefault={(task?.projectId || projectId) ? () => { const id = task?.projectId || projectId; void commit({...data, projects:data.projects.map(p => p.id === id ? {...p,extensionIds:selectedIds} : p)}).then(ok => { if(ok) setNotice("已保存为项目默认扩展，将用于该项目的新对话。"); }); } : undefined} />
-                    <ContextMeter
+                    {currentModel.id !== "demo" && <ContextMeter
                       messages={[...(task ? messagesFor(task) : []), ...(input || materials.length ? [{ role: "user" as const, content: input, materials }] : [])]}
                       extensions={availableExtensions.filter(e => effectiveIds.includes(e.id))}
                       model={currentModel} checkpoint={task?.contextCheckpoint} promptTokens={task?.promptTokens}
                       run={task?.agentRun}
-                      onConfigure={() => setView("models")} />
-                    <ModelPicker
+                      onConfigure={() => setView("models")} />}
+                    {currentModel.id === "demo" ? <button type="button" className="model-connect" disabled={!ready || busy} onClick={()=>{setError("");setView("models");}}>连接模型，开始使用 <span aria-hidden="true">→</span></button> : <ModelPicker
                       models={models}
                       value={currentModel.id}
                       defaultId={data.defaultModelId}
@@ -782,7 +783,7 @@ function App() {
                       disabled={!ready || busy}
                       onSelect={setModelId}
                       onConfigure={() => setView("models")}
-                    />
+                    />}
                     {pending && !input.trim() ? (
                       <button
                         type="button"
@@ -833,7 +834,7 @@ function App() {
                   ) : null}
                   <span className="composer-status">
                     {currentModel.id === "demo"
-                        ? "请先配置模型"
+                        ? "需求会保留，连接模型后即可发送"
                         : "Enter 发送 · Shift + Enter 换行"}
                   </span>
                 </div>
@@ -851,7 +852,7 @@ function App() {
               </p>
             )}
           </section>
-          {task && isConversation && rightPanel==='artifacts' && <ArtifactPanel key={task.id} task={task} onClose={()=>setRightPanel(null)}/>}
+          {task && isConversation && rightPanel==='artifacts' && <ArtifactPanel key={task.id} task={task} onRequest={text=>setInput(text)} onClose={()=>setRightPanel(null)}/>}
           {task && isConversation && showPanel && (
             <aside className="inspector">
               <h2>对话材料</h2>

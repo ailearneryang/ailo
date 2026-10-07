@@ -1,5 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("ailo", {
+  projectMemory:id=>ipcRenderer.invoke('project:memory',id),
+  saveProjectMemory:(id,input)=>ipcRenderer.invoke('project:memorySave',{id,input}),
   schedulesList:()=>ipcRenderer.invoke('schedules:list'),
   schedulesSave:input=>ipcRenderer.invoke('schedules:save',input),
   schedulesToggle:input=>ipcRenderer.invoke('schedules:toggle',input),
@@ -48,6 +50,7 @@ contextBridge.exposeInMainWorld("ailo", {
   cancel: (id) => ipcRenderer.invoke("chat:cancel", id),
   projectFiles: taskId => ipcRenderer.invoke("agent:files", taskId),
   reveal: (taskId, artifactPath, projectFile = false) => ipcRenderer.invoke("agent:reveal", {taskId, artifactPath, projectFile}),
+  editArtifact:(taskId,artifactPath,input)=>ipcRenderer.invoke('agent:edit',{taskId,artifactPath,input}),
   preview: (taskId, artifactPath, projectFile = false) => ipcRenderer.invoke("agent:preview", {taskId, artifactPath, projectFile}),
   read: () => ipcRenderer.invoke("state:read"),
   save: (state) => ipcRenderer.invoke("state:write", state),

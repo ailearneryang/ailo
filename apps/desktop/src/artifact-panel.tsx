@@ -1,10 +1,13 @@
-import React, {useEffect,useState} from 'react';
-import type {Task} from './types';
+import React, {useEffect,useState,useRef} from 'react';
+import {ArtifactViewer} from './artifact-viewer';
+import type {Task,ArtifactPreview} from './types';
 import {Icon} from './icon';
-export function ArtifactPanel({task,onClose}:{task:Task;onClose:()=>void}) {
+export function ArtifactPanel({task,onClose,onRequest}:{task:Task;onClose:()=>void;onRequest:(text:string)=>void}) {
+  const previewElement=useRef<HTMLDivElement>(null);
   const [expanded,setExpanded]=useState(false);
   const [selected,setSelected]=useState<string>();
-  const [preview,setPreview]=useState<{kind:'image'|'text';content:string;truncated?:boolean}>();
+  useEffect(()=>{if(selected)previewElement.current?.scrollIntoView({block:'start'});},[selected]);
+  const [preview,setPreview]=useState<ArtifactPreview>();
   const [error,setError]=useState('');
   const [loading,setLoading]=useState(false);
   const [scope,setScope]=useState<'project'|'delivery'>('project');
@@ -25,7 +28,7 @@ export function ArtifactPanel({task,onClose}:{task:Task;onClose:()=>void}) {
     let cancelled=false;setPreview(undefined);setError('');setLoading(!!artifact);
     if(artifact)window.ailo.preview(task.id,artifact.path,scope==='project').then(value=>{if(!cancelled)setPreview(value);}).catch(e=>{if(!cancelled)setError(String(e).replace(/^Error: /,''));}).finally(()=>{if(!cancelled)setLoading(false);});
     return ()=>{cancelled=true;};
-  },[task.id,artifact?.path,artifact?.sha256,scope]);
+  },[task.id,artifact?.path,artifact?.sha256,scope,refresh]);
   async function reveal(path:string){try{await window.ailo.reveal(task.id,path,scope==='project');}catch(e){setError(String(e).replace(/^Error: /,''));}}
   return <aside id="artifact-panel" className={'artifact-panel'+(expanded?' expanded':'')} aria-label="当前任务产物" onKeyDown={e=>{if(e.key==='Escape'){e.stopPropagation();onClose();}}}>
     <div className="artifact-panel-heading"><div><strong>产物</strong><span className="artifact-count">{files.length || deliveries.length}</span></div><div>
@@ -43,10 +46,10 @@ export function ArtifactPanel({task,onClose}:{task:Task;onClose:()=>void}) {
       {!artifacts.length?<div className="artifact-empty"><Icon name="folder"/><strong>{scope==='project'?'暂无项目文件':'暂无交付成果'}</strong><p>{scope==='project'?'文件生成后会自动显示，可点击刷新重新检查。':'Agent 尚未登记交付成果；已生成的代码和文档可在项目文件中查看。'}</p></div>:<>
         <div className="artifact-list">{artifacts.map(a=><button className={selected===a.path?'selected':''} aria-pressed={selected===a.path} onClick={()=>setSelected(a.path)} key={a.path}><Icon name="file"/><span><strong>{a.label}</strong><small>{a.path}</small><small>{a.size<1024?`${a.size} B`:a.size<1048576?`${(a.size/1024).toFixed(1)} KB`:`${(a.size/1048576).toFixed(1)} MB`}</small></span></button>)}</div>
         <p className="muted artifact-note">{task.agentRun?.status==='completed'?'当前任务已完成。':'任务进行中，产物可能仍需修改或验证。'}</p>
-        {artifact?<div className="artifact-preview"><div className="artifact-preview-heading"><strong>{artifact.label}</strong><button aria-label="关闭预览" onClick={()=>setSelected(undefined)}>×</button></div>
+        {artifact?<div ref={previewElement} className="artifact-preview"><div className="artifact-preview-heading"><strong>{artifact.label}</strong><button aria-label="关闭预览" onClick={()=>setSelected(undefined)}>×</button></div>
           <button className="artifact-reveal" onClick={()=>void reveal(artifact.path)}><Icon name="folder"/>在文件夹中查看</button>
           {loading&&<p role="status">正在加载预览…</p>}
-          {preview?.kind==='image'?<img alt={artifact.label} src={preview.content}/>:preview&&<pre tabIndex={0}>{preview.content}</pre>}
+          {preview&&<ArtifactViewer preview={preview} path={artifact.path} taskId={task.id} onChanged={()=>setRefresh(v=>v+1)} onRequest={onRequest}/>}
           {preview?.truncated&&<p className="muted">仅显示部分内容，完整文件可在文件夹中查看。</p>}
         </div>:<p className="artifact-select-hint">选择产物查看内容</p>}
       </>}

@@ -48,15 +48,22 @@ async function execute(workspace,action,signal,options={}) {
     case 'list_files':return listFiles(files,action.path === undefined ? '' : action.path);
     case 'read_file': {
       const file=await resolveFile(files,action.path);const stat=await fs.stat(file);
-      if(!stat.isFile()||stat.size>2000000)throw Error('仅支持读取 2 MB 以内文本文件');
-      const text=await fs.readFile(file,'utf8');const offset=action.offset||0;
+      if(!stat.isFile()||stat.size>(/\.(pdf|xlsx)$/i.test(action.path)?20*1024*1024:2000000))throw Error('仅支持读取 2 MB 以内文本文件');
+      const parsed=/\.(pdf|xlsx)$/i.test(action.path)?await require('../document-parser.cjs').parseDocument(file,action.path):null;
+      const text=parsed?parsed.text:await fs.readFile(file,'utf8');const offset=action.offset||0;
       if(!Number.isInteger(offset)||offset<0)throw Error('读取位置无效');
-      return {path:action.path,total:text.length,offset,text:text.slice(offset,offset+10000)};
+      return {path:action.path,sha256:require('node:crypto').createHash('sha256').update(await fs.readFile(file)).digest('hex'),total:text.length,offset,text:text.slice(offset,offset+10000)};
+    }
+    case 'edit_spreadsheet': {
+      if(!/\.xlsx$/i.test(action.path)||!action.data||typeof action.data.version!=='string')throw Error('需要 XLSX 路径和当前 SHA-256 版本');
+      const result=await require('../artifact-edit.cjs').editFile(files,require('node:path').join(workspace.project,'backups'),action.path,{version:action.data.version,sheet:action.data.sheet,cells:action.data.cells});
+      return {path:action.path,sha256:result.version,updatedCells:action.data.cells,notice:'单元格已修改并保留上一版本；未重算公式。请核对业务要求并登记成果。'};
     }
     case 'write_file': {
       if(typeof action.content!=='string'||action.content.length>200000)throw Error('文件内容超过限制');
       if(action.path?.split('/').includes('.runtime'))throw Error('运行目录不允许写入');
       const file=await resolveFile(files,action.path,true);
+      try{const before=await fs.readFile(file);if(before.length<=10*1024*1024){const backupDir=require('node:path').join(workspace.project,'backups');await fs.mkdir(backupDir,{recursive:true,mode:0o700});await fs.writeFile(require('node:path').join(backupDir,require('node:crypto').createHash('sha256').update(normalizeProjectPath(action.path)).digest('hex')+'.backup'),before,{mode:0o600});}}catch(e){if(e.code!=='ENOENT')throw e;}
       await fs.writeFile(file,action.content,{mode:0o600,flag:require('node:fs').constants.O_WRONLY|require('node:fs').constants.O_CREAT|require('node:fs').constants.O_TRUNC|require('node:fs').constants.O_NOFOLLOW});
       return {path:action.path,bytes:Buffer.byteLength(action.content)};
     }

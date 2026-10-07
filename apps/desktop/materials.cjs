@@ -10,6 +10,7 @@ const MAX_FILE = 20 * 1024 * 1024;
 const MAX_TEXT = 100000;
 const extensions = [
   "docx",
+  "xlsx",
   "txt",
   "md",
   "csv",
@@ -207,6 +208,10 @@ async function readMaterial(filename) {
   const info = await fs.stat(filename);
   if (!info.isFile()) throw Error("请选择文件。");
   if (info.size > MAX_FILE) throw Error("单个材料文件请小于 20 MB。");
+  if (/\.(pdf|xlsx)$/i.test(filename)) {
+    const parsed=await require("./document-parser.cjs").parseDocument(filename);
+    return {name:path.basename(filename),size:info.size,text:parsed.text.slice(0,MAX_TEXT),summary:parsed.summary+(parsed.text.length>MAX_TEXT?"；附件摘要已截断，可按需读取原件":""),parseStatus:parsed.status};
+  }
   if (/\.docx$/i.test(filename)) {
     const content = await readDocx(filename);
     return { name: path.basename(filename), size: info.size, text: content.slice(0, MAX_TEXT),
@@ -258,6 +263,7 @@ async function readSource(filename, name, entry) {
     if(text===null)throw Error('条目不是 UTF-8 文本');
     return {text,kind:'archive_entry',entry};
   }
+  if (/\.(pdf|xlsx)$/i.test(name)) return require('./document-parser.cjs').parseDocument(filename,name);
   if (/\.docx$/i.test(name)) return {text:await readDocx(filename),kind:'docx_text'};
   if(!readable(name))throw Error('此文件暂不支持文本解析');
   const text=decode(await fs.readFile(filename));if(text===null)throw Error('文件不是 UTF-8 文本');

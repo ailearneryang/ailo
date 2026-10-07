@@ -32,3 +32,15 @@ button.ailo-pet:focus-visible { outline:2px solid #729262; outline-offset:3px; }
 @keyframes pet-dot { 0%,100% { opacity:.25; } 50% { opacity:1; } }
 @media (max-height:700px) { .pet-hero { width:80px; height:75px; } .pet-brand { width:38px; height:36px; } }
 @media (prefers-reduced-motion:reduce) { .ailo-pet * { animation:none !important; } .ailo-pet.is-happy .pet-heart { opacity:1; } }
+
+.pet-state-badge { display: none; }
+.is-completed .pet-state-badge, .is-attention .pet-state-badge { display: block; }
+.ailo-pet.is-running .pet-body { animation: pet-work 1.4s ease-in-out infinite; }
+.ailo-pet.is-running .pet-tail { animation: pet-tail .8s ease-in-out infinite; }
+.ailo-pet.is-running .pet-head { animation: none; transform: rotate(-6deg); }
+.ailo-pet.is-completed .pet-body { animation: pet-hop .6s ease-in-out 3; }
+.ailo-pet.is-completed .pet-eyes { opacity: 0; }
+.ailo-pet.is-completed .pet-smile-eyes { opacity: 1; }
+.ailo-pet.is-attention .pet-head { animation: none; transform: rotate(10deg); }
+@keyframes pet-work { 0%,100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-3px) rotate(2deg); } }
+@media (prefers-reduced-motion: reduce) { .ailo-pet * { animation: none !important; } }

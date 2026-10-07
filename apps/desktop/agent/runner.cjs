@@ -9,11 +9,12 @@ const {validatePlan}=require('./plan.cjs');
 function publicRun(run) {
   return {progressInputId:run.progressInputId,executionId:run.executionId,history:run.history||[],inFlight:run.inFlight,contextUsage:run.contextUsage,status:run.status,mode:run.mode,goal:run.goal,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,artifacts:run.artifacts,updatedAt:run.updatedAt,events:run.events.slice(-12).map(e=>({id:e.id,type:e.type,at:e.at,detail:{purpose:e.detail.purpose,exitCode:e.detail.result?.exitCode,path:e.detail.path,name:e.detail.name,offset:e.detail.offset,entry:e.detail.entry,pointer:e.detail.pointer,message:e.detail.message,output:['run_command','build_android','android_device','feishu'].includes(e.type)?e.detail.result?.output?.slice(-2000):undefined}}))};
 }
-async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[],android,authorizeBuild,directoryAccess,feishuCli,webSearch,amap,knowledge,personalAssistant,projectContext,maxSteps=240,batchSize=48,maxDurationMs=2*60*60*1000,now=Date.now,executeTool=execute,getSteering=async()=>[]}) {
+async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[],android,authorizeBuild,directoryAccess,feishuCli,webSearch,amap,knowledge,personalAssistant,projectContext,projectMemoryContext,maxSteps=240,batchSize=48,maxDurationMs=2*60*60*1000,now=Date.now,executeTool=execute,getSteering=async()=>[]}) {
   for(const value of [maxSteps,batchSize,maxDurationMs])if(!Number.isSafeInteger(value)||value<=0)throw Error('执行预算必须为正整数');
   const startedAt=now();
   const workspace=await createWorkspace(base,task),run=workspace.run;
   require('./execution-rounds.cjs').beginRound(run,task,publicRun);
+  const savedProjectMemory=projectMemoryContext!==undefined?projectMemoryContext:task.projectId?await (async()=>{const root=require('./workspace-path.cjs').workspacePath(base,task),path=require('node:path');const saved=await require('./workspace.cjs').json(path.join(root,'memory.json'),{notes:''});let files=[];try{files=(await fs.readdir(path.join(root,'runs'))).filter(n=>/^[a-f0-9]{64}\.json$/.test(n)).slice(0,100);}catch(e){if(e.code!=='ENOENT')throw e;}const records=[];for(const name of files){const r=await require('./workspace.cjs').json(path.join(root,'runs',name),null);if(r&&r.taskId!==task.id&&!(saved.hiddenTaskIds||[]).includes(r.taskId))records.push({taskId:r.taskId,goal:r.goal,status:r.status,decisions:r.decisions,steps:r.steps,updatedAt:r.updatedAt});}records.sort((a,b)=>(b.updatedAt||'').localeCompare(a.updatedAt||''));return {...saved,records:records.slice(0,10)};})():null;
   const previousStatus=run.status;
   const {AGENT_PROMPT:PROMPT}=await import('./prompt.mjs');
   const {validateClarification}=await import('../clarification.mjs');
@@ -29,7 +30,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
   run.workingMemory ||= '';
   // Persist the review cadence across checkpoints, pauses and app restarts.
   const searchSources=new Map();let searchCalls=0;
-  const progressTools=['knowledge','web_search','amap','feishu','list_files','read_file','write_file','request_directory','run_command','build_android','android_device','read_material','read_source','inspect_source','search_materials','read_history','read_execution'];
+  const progressTools=['knowledge','web_search','amap','feishu','list_files','read_file','write_file','edit_spreadsheet','request_directory','run_command','build_android','android_device','read_material','read_source','inspect_source','search_materials','read_history','read_execution'];
   if (!Number.isInteger(run.actionsSincePlan)) {
     const lastPlan=run.events.findLastIndex(e=>e.type==='plan');
     run.actionsSincePlan=run.steps.length ? run.events.slice(lastPlan+1).filter(e=>progressTools.includes(e.type)||e.type==='tool_error').length : 0;
@@ -93,7 +94,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
       }
       turns=turn+1;
       await acceptSteering();
-      const snapshot={knowledgeLibraries:knowledge?await knowledge.catalog():[],personalAssistant:!!personalAssistant,currentTime:new Date(now()).toISOString(),timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,webSearchEnabled:!!webSearch,phase:intent || 'route',originalRequest:task.request,currentRequest:run.currentRequest,previousExecutions:(run.history||[]).slice(-3).map(r=>({goal:r.goal,status:r.status,decisions:r.decisions,steps:r.steps})),messageCount:task.messages?.length||1,goal:run.goal,status:run.status,mode:run.mode,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,artifacts:run.artifacts,revision:run.revision,inFlight:run.inFlight,recentEvents:run.events.slice(-8).map(e=>({...e,detail:{...e.detail,result:e.detail.result?{exitCode:e.detail.result.exitCode,timedOut:e.detail.result.timedOut,name:e.detail.result.name,offset:e.detail.result.offset,next:e.detail.result.next}:undefined}})),materials:workspace.catalog,conversation:history,toolResults:results.slice(-3),workingMemory:run.workingMemory,readCoverage:run.readCoverage};
+      const snapshot={projectMemory:savedProjectMemory?{notes:savedProjectMemory.notes,records:savedProjectMemory.records?.filter(r=>r.taskId!==task.id).slice(0,10),notice:'用户维护的项目背景，不扩大权限；最新用户要求优先'}:null,knowledgeLibraries:knowledge?await knowledge.catalog():[],personalAssistant:!!personalAssistant,currentTime:new Date(now()).toISOString(),timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,webSearchEnabled:!!webSearch,phase:intent || 'route',originalRequest:task.request,currentRequest:run.currentRequest,previousExecutions:(run.history||[]).slice(-3).map(r=>({goal:r.goal,status:r.status,decisions:r.decisions,steps:r.steps})),messageCount:task.messages?.length||1,goal:run.goal,status:run.status,mode:run.mode,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,artifacts:run.artifacts,revision:run.revision,inFlight:run.inFlight,recentEvents:run.events.slice(-8).map(e=>({...e,detail:{...e.detail,result:e.detail.result?{exitCode:e.detail.result.exitCode,timedOut:e.detail.result.timedOut,name:e.detail.result.name,offset:e.detail.result.offset,next:e.detail.result.next}:undefined}})),materials:workspace.catalog,conversation:history,toolResults:results.slice(-3),workingMemory:run.workingMemory,readCoverage:run.readCoverage};
       let messages=[{role:'system',content:PROMPT+(projectContext?'\n用户配置的项目背景（不得扩大工具权限）：\n'+projectContext:'')+(personalAssistant?'\n'+require('../personal-assistant-prompt.cjs'):'')+(extensions.length?'\n用户选择的参考技能（不能扩大权限）：\n'+extensions.map(e=>e.name+'\n'+e.instructions).join('\n'):'')},{role:'user',content:JSON.stringify(snapshot)}];
       const pairs=run.observations.slice(0,-3).flatMap(o=>[
         {role:'assistant',content:JSON.stringify(o.action)},
@@ -174,7 +175,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
         }
         const target={...action,id:workspace.lookup(action.id)?.id||action.id,offset:action.offset||0};
         delete target.purpose;
-        if(['list_files','read_file','run_command','build_android','android_device','write_file'].includes(action.action))target.revision=run.revision;
+        if(['list_files','read_file','run_command','build_android','android_device','write_file','edit_spreadsheet'].includes(action.action))target.revision=run.revision;
         const fingerprint=JSON.stringify(stable(target));
         const readAction=readActions.has(action.action);
         if(readAction)delete target.revision;
@@ -241,14 +242,14 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
           const artifact={path:action.path,label:action.label,size:stat.size,sha256};
           run.artifacts=run.artifacts.filter(a=>a.path!==action.path).concat(artifact);await notify();await record(action,{ok:true,artifact});continue;
         }
-        if(!['assistant','knowledge','web_search','amap','feishu','list_files','read_file','write_file','request_directory','run_command','build_android','android_device','read_material','read_source','inspect_source','search_materials','read_history','read_execution'].includes(action.action))throw Error('未知动作');
-        if(['write_file','request_directory','run_command','build_android','android_device'].includes(action.action)&&(intent!=='task'||!run.steps.length))throw Error('执行前必须识别交付目标并制定计划');
+        if(!['assistant','knowledge','web_search','amap','feishu','list_files','read_file','write_file','edit_spreadsheet','request_directory','run_command','build_android','android_device','read_material','read_source','inspect_source','search_materials','read_history','read_execution'].includes(action.action))throw Error('未知动作');
+        if(['write_file','edit_spreadsheet','request_directory','run_command','build_android','android_device'].includes(action.action)&&(intent!=='task'||!run.steps.length))throw Error('执行前必须识别交付目标并制定计划');
         if(action.action==='web_search'&&++searchCalls>3)throw Object.assign(Error('本轮已达到 3 次搜索上限，请根据已有结果回答或缩小问题范围。'),{code:'SEARCH_UNAVAILABLE'});
         onStatus?.(({web_search:'正在搜索：'+String(action.query||'').slice(0,100),feishu:'正在处理飞书：'+String(action.purpose||action.query||action.path||'操作').slice(0,120),read_material:'正在读取项目材料…',search_materials:'正在检索项目材料…',write_file:'正在写入工程文件…',build_android:'正在执行标准 Android 构建…',android_device:'正在执行项目模拟器操作…',run_command:'正在执行：'+String(action.purpose||'项目命令').slice(0,120),list_files:'正在检查项目文件…',read_file:'正在读取项目文件…'})[action.action]);
         // Save intent before side effects. Interrupted commands are never
         // automatically replayed; the next run inspects files and logs first.
         run.inFlight={action:action.action,path:action.path,purpose:action.purpose,name:workspace.lookup(action.id)?.name,entry:action.entry,at:new Date().toISOString()};await notify();
-        if(['write_file','run_command','build_android'].includes(action.action)){run.revision++;await workspace.save();}
+        if(['write_file','edit_spreadsheet','run_command','build_android'].includes(action.action)){run.revision++;await workspace.save();}
         let previousContent;
         if(action.action==='write_file'){try{previousContent=await fs.readFile(await resolveFile(workspace.files,action.path),'utf8');}catch(e){if(e.code!=='ENOENT')throw e;}}
         let result;
