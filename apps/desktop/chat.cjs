@@ -59,9 +59,10 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
       let timer, totalTimer, textTimer;
       let replyStartedAt;
       let phase = "连接模型服务";
-      function armTimer(ms, reason) {
+      function armTimer(ms, reason, onTimeout) {
         clearTimeout(timer);
         timer = setTimeout(() => {
+          if (onTimeout) { onTimeout(); return; }
           timeoutMessage = `${phase}超时：${reason}（${Math.round(ms / 1000)} 秒）。可以重试或检查模型服务。`;
           controller.abort();
         }, ms);
@@ -97,6 +98,12 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           const startedAt = Date.now();
           if (showReply) replyStartedAt ??= startedAt;
           const isDecision = requestPhase === '任务决策';
+          // An idle decision aborts only its request, leaving the task available
+          // for recovery. User cancellation still aborts every request.
+          const requestController = new AbortController();
+          const cancelRequest = () => requestController.abort();
+          controller.signal.addEventListener('abort', cancelRequest, {once:true});
+          let idleTimedOut = false;
           const outputWait = isDecision ? limits.decision : limits.text;
           let hasText = false, lastThinkingStatus = -Infinity;
           // Reasoning deltas count as network activity, but must not postpone
@@ -118,7 +125,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           const response = await fetchImpl(url, {
             method: "POST",
             redirect: "error",
-            signal: controller.signal,
+            signal: requestController.signal,
             headers: {
               "Content-Type": "application/json",
               ...(model.apiKey
@@ -164,8 +171,11 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
             );
           }
           return await readCompletion(response, {
-            signal: controller.signal,
-            onActivity: () => armTimer(limits.idle, "模型内容已停止更新"),
+            signal: requestController.signal,
+            onActivity: () => armTimer(limits.idle, "模型内容已停止更新", isDecision ? () => {
+              idleTimedOut = true;
+              requestController.abort();
+            } : undefined),
             onToolActivity: () => {
               hasText = true; clearTimeout(textTimer);
               if (isDecision && Date.now()-lastThinkingStatus>=1000) {
@@ -186,7 +196,12 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
               input.onStatus?.(`模型正在思考 · 已等待 ${Math.floor((now - replyStartedAt) / 1000)} 秒 · 已收到 ${chars.toLocaleString()} 字思考数据，尚未生成正文…`);
             } : undefined,
           });
+          } catch (error) {
+            if (idleTimedOut && !controller.signal.aborted)
+              throw Object.assign(Error(`任务决策超时：模型内容已停止更新（${Math.round(limits.idle / 1000)} 秒）。`), {code:'MODEL_DECISION_IDLE_TIMEOUT'});
+            throw error;
           } finally {
+            controller.signal.removeEventListener('abort', cancelRequest);
             clearTimeout(timer);
             clearTimeout(totalTimer);
             clearTimeout(textTimer);
@@ -201,6 +216,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           const { tool,allowedActions,actionTools } = require("./agent/protocol.cjs");
           let formatMode = 'tools', parallelControl = true, namedActions = false;
           async function askAgent(messages,budget,onContext) {
+            let idleRetries = 0;
             const state=JSON.parse(messages.at(-1).content);
             if(state.protocolRecovery && formatMode==='tools') {
               if(!namedActions){namedActions=true;input.onStatus?.('正在适配模型动作格式，改用具名工具…');}
@@ -234,6 +250,11 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
                 const d=error.diagnostics;
                 const providerUsage=d?{inputTokens:d.promptTokens,outputTokens:d.completionTokens,reasoningTokens:d.reasoningTokens}:undefined;
                 await onContext?.({...stats,status:'failed',completedAt:new Date().toISOString(),providerUsage});
+                if(error.code==='MODEL_DECISION_IDLE_TIMEOUT' && !controller.signal.aborted) {
+                  if (idleRetries >= 2) throw Object.assign(Error(error.message+' 已自动重试 2 次仍未恢复。任务进度、项目文件和材料已保留，可重试当前步骤或检查模型服务。'), {code:error.code});
+                  input.onStatus?.(`模型响应暂时停顿，正在自动重试当前决策（${++idleRetries}/2）…`);
+                  continue;
+                }
                 if(error.code==='MODEL_PARALLEL_UNSUPPORTED' && parallelControl){parallelControl=false;continue;}
                 if (error.code !== 'MODEL_FORMAT_UNSUPPORTED' || formatMode === 'text') throw error;
                 formatMode = formatMode === 'tools' ? 'json' : 'text';
@@ -242,7 +263,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
             }
           }
           session.accepting=true;
-          const result = await runAgent({ getSteering:async()=>{await session.saving;return session.queue.splice(0);}, base: storage.agentDirectory, task, model, projectMemoryContext:task.projectId?await require('./project-memory.cjs').readMemory(storage.agentDirectory,state.projects?.find(p=>p.id===task.projectId)||{id:task.projectId},state.tasks||[]):null, projectContext:state.projects?.find(p=>p.id===task.projectId)?.description, personalAssistant:task.id===require('./personal-assistant.cjs').ASSISTANT_ID?storage.personalAssistant:undefined, knowledge:storage.knowledge?.scope(task.knowledgeIds||[]),amap:storage.amap, webSearch:input.searchEnabled===true?storage.webSearch:undefined, android:storage.androidManager, authorizeBuild:storage.authorizeBuild,directoryAccess:storage.directoryAccess,feishuCli:input.feishuEnabled===false?{execute:async()=>{throw Object.assign(Error('当前对话已关闭飞书，请在输入框 ＋ → 应用连接中开启后再试。'),{code:'FEISHU_DECLINED'});}}:storage.feishuCli,
+          const result = await runAgent({ getSteering:async()=>{await session.saving;return session.queue.splice(0);}, base: storage.agentDirectory, task, model, projectMemoryContext:task.projectId?await require('./project-memory.cjs').readMemory(storage.agentDirectory,state.projects?.find(p=>p.id===task.projectId)||{id:task.projectId},state.tasks||[]):null, projectContext:state.projects?.find(p=>p.id===task.projectId)?.description, personalAssistant:task.id===require('./personal-assistant.cjs').ASSISTANT_ID?storage.personalAssistant:undefined, knowledge:storage.knowledge?.scope(task.knowledgeIds||[]),mcp:storage.mcpConnections?.scope(input.mcpConnectionIds||[]),amap:input.amapEnabled===false?undefined:storage.amap, webSearch:input.searchEnabled===true?storage.webSearch:undefined, android:storage.androidManager, authorizeBuild:storage.authorizeBuild,directoryAccess:storage.directoryAccess,feishuCli:input.feishuEnabled===false?{execute:async()=>{throw Object.assign(Error('当前对话已关闭飞书，请在输入框 ＋ → 应用连接中开启后再试。'),{code:'FEISHU_DECLINED'});}}:storage.feishuCli,
             signal: controller.signal, ask: askAgent, extensions: selected,
             onStatus: input.onStatus, onRun: input.onRun });
           return { ...result, modelName: model.name };

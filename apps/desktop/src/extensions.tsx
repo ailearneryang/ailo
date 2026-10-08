@@ -1,10 +1,10 @@
 import React, { useRef, useState } from 'react';
 import { FeishuCliConnection } from './feishu-cli-connection';
 import { FeishuConnection } from './feishu-connection';
-import type { Material, Extension } from './types';
+import type { Material, Extension, ConnectionTarget } from './types';
 import './extensions.css';
 import { Icon } from './icon';
-export function ExtensionCenter({ initialTab='expert', items, busy, onSave, onUse, onMaterial, onImporting, onTryConnection }: { initialTab?:'expert'|'skill'|'connector'; onTryConnection:(text:string)=>void; onImporting:(busy:boolean)=>void; onMaterial:(material:Material)=>void; items: Extension[]; busy: boolean; onSave: (items: Extension[]) => Promise<boolean>; onUse: (item: Extension) => void }) {
+export function ExtensionCenter({ initialTab='expert', items, busy, onSave, onUse, onMaterial, onImporting, onTryConnection }: { initialTab?:'expert'|'skill'|'connector'; onTryConnection:(text:string,connector:ConnectionTarget)=>void; onImporting:(busy:boolean)=>void; onMaterial:(material:Material)=>void; items: Extension[]; busy: boolean; onSave: (items: Extension[]) => Promise<boolean>; onUse: (item: Extension) => void }) {
   const [tab, setTab] = useState<'expert' | 'skill' | 'connector'>(initialTab);
   const [query, setQuery] = useState('');
   const [draft, setDraft] = useState<Extension | null>(null);

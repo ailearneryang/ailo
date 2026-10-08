@@ -6,7 +6,7 @@ import remarkGfm from 'remark-gfm';
 export function AssistantText({content}:{content:string}){
  const [error,setError]=useState('');
  return <><ReactMarkdown skipHtml remarkPlugins={[remarkGfm]} components={{
-  table:({children})=><div className="assistant-table-scroll" role="region" aria-label="回复表格，可横向滚动" tabIndex={0}><table>{children}</table></div>,
+  table:({children})=><div className="assistant-table-scroll" role="region" aria-label="回复表格"><table>{children}</table></div>,
   a:({href,children})=>{
    let url:URL;try{url=new URL(href||'');}catch{return <>{children}</>;}
    if(!['http:','https:'].includes(url.protocol)||url.username||url.password)return <>{children}</>;

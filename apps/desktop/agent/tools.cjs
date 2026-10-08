@@ -78,6 +78,7 @@ async function execute(workspace,action,signal,options={}) {
     }
     case 'web_search': if(!options.webSearch)throw Object.assign(Error('当前对话未开启联网搜索，请在 ＋ → 应用连接中开启。'),{code:'SEARCH_UNAVAILABLE'});return options.webSearch.execute(action,signal);
     case 'knowledge': if(!options.knowledge)throw Error('当前对话未选择知识库');return options.knowledge.execute(action,signal);
+    case 'mcp': if(!options.mcp)throw Object.assign(Error('当前对话未选择自定义应用连接。'),{code:'MCP_UNAVAILABLE'});return options.mcp.execute(action,signal);
     case 'amap': if(!options.amap)throw Object.assign(Error('当前环境未启用高德地图，请在应用连接中配置。'),{code:'AMAP_UNAVAILABLE'});return options.amap.execute(action,signal);
     case 'feishu': if(!options.feishuCli)throw Error('当前未启用飞书应用连接');return options.feishuCli.execute(action,signal,workspace.run.executionId||workspace.run.taskId);
     case 'build_android': return require('./android-build.cjs').buildAndroid(files,action,signal,options);

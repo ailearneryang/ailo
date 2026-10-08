@@ -1,3 +1,8 @@
+export type MCPPermission='ask'|'read'|'disabled';
+export type MCPTool={name:string;description:string;inputSchema:Record<string,unknown>;readOnly:boolean;permission:MCPPermission;fingerprint:string};
+export type MCPConnection={id:string;name:string;description:string;url:string;authType:'none'|'token'|'oauth';headerName:string;clientId:string;hasCredential:boolean;enabled:boolean;connected:boolean;verifiedAt:string|null;error:string;authorizing:boolean;pendingCalls:{id:string;tool:string;purpose:string;params:Record<string,unknown>;at:string}[];tools:MCPTool[]};
+export type MCPConnectionInput={id?:string;name:string;description:string;url:string;authType:'none'|'token'|'oauth';headerName?:string;token?:string;clientId?:string};
+export type ConnectionTarget='feishu'|'amap'|{mcpId:string};
 export type ArtifactPreview={kind:'image'|'text'|'markdown'|'html'|'pdf'|'spreadsheet';content:string;version:string;truncated?:boolean;sheets?:{name:string;cells:{address:string;text:string}[]}[]};
 export type ProjectMemoryData={revision:number;notes:string;hiddenTaskIds?:string[];records:{taskId:string;title:string;goal:string;status:string;decisions:unknown[];steps:unknown[];updatedAt?:string}[]};
 export type KnowledgeDocument={id:string;name:string;chars:number;chunks:number;createdAt:string};
@@ -62,6 +67,8 @@ export type Task = {
   promptTokens?: number;
   extensionIds?: string[];
   feishuEnabled?: boolean;
+  amapEnabled?: boolean;
+  mcpConnectionIds?: string[];
   searchEnabled?: boolean;
   messages?: Message[];
   lastError?: string;
@@ -140,6 +147,14 @@ declare global {
       knowledgeRemoveDocument:(input:{libraryId:string;documentId:string})=>Promise<void>;
       knowledgeSearch:(input:{libraryIds:string[];query:string})=>Promise<{hits:KnowledgeHit[];notice:string}>;
       knowledgeRead:(input:{libraryId:string;documentId:string;offset?:number})=>Promise<KnowledgePage>;
+      mcpList:()=>Promise<MCPConnection[]>;
+      mcpSave:(input:MCPConnectionInput)=>Promise<MCPConnection>;
+      mcpTest:(id:string)=>Promise<MCPConnection>;
+      mcpAuthorize:(id:string)=>Promise<MCPConnection>;
+      mcpDisconnect:(id:string)=>Promise<MCPConnection>;
+      mcpRemove:(id:string)=>Promise<void>;
+      mcpResolveCall:(input:{id:string;callId:string})=>Promise<MCPConnection>;
+      mcpPermissions:(input:{id:string;permissions:Record<string,MCPPermission>})=>Promise<MCPConnection>;
       amapStatus:()=>Promise<AMapState>;
       amapSave:(input:{key:string})=>Promise<AMapState>;
       amapTest:()=>Promise<AMapState>;
@@ -168,6 +183,8 @@ declare global {
         contextCheckpoint?: ContextCheckpoint;
         extensionIds?: string[];
   feishuEnabled?: boolean;
+  amapEnabled?: boolean;
+  mcpConnectionIds?: string[];
   searchEnabled?: boolean;
         messages: { role: "user" | "assistant"; content: string }[];
       }) => Promise<{ content: string; clarification?: Clarification; modelName: string; contextCheckpoint?: ContextCheckpoint; promptTokens?: number }>;

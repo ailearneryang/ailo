@@ -227,6 +227,12 @@ storage.amap=require('./amap-mcp.cjs').createAMap({directory:app.getPath('userDa
   const choice=await dialog.showMessageBox(win,{type:'question',title:'确认高德地图操作',message:action.purpose||'允许调用此高德工具？',detail:JSON.stringify({tool:action.query,params:action.params},null,2),buttons:['执行','取消'],defaultId:1,cancelId:1});return choice.response===0&&!signal.aborted;
 }});
 for(const method of ['status','save','test','disconnect'])ipcMain.handle('amap:'+method,(e,input)=>{trusted(e);return storage.amap[method](method==='save'?input:undefined);});
+storage.mcpConnections=require('./mcp-connections.cjs').createMCPConnections({directory:app.getPath('userData'),safeStorage,openExternal:url=>shell.openExternal(url),confirmCall:async({server,tool,params,purpose},signal)=>{
+  if(signal.aborted)return false;
+  const choice=await dialog.showMessageBox(win,{type:'question',title:'确认应用工具操作',message:purpose||`允许调用“${server.name}”的工具？`,detail:`应用：${server.name}\n工具：${tool}\n参数：${JSON.stringify(params,null,2)}`,buttons:['执行','取消'],defaultId:1,cancelId:1});
+  return choice.response===0&&!signal.aborted;
+}});
+for(const method of ['list','save','test','authorize','disconnect','remove','permissions','resolveCall'])ipcMain.handle('mcp:'+method,(e,input)=>{trusted(e);return storage.mcpConnections[method](input);});
 storage.webSearch=require('./web-search.cjs').createWebSearch({directory:app.getPath('userData'),safeStorage});
 for(const method of ['status','save','test','disconnect'])ipcMain.handle('web-search:'+method,(e,input)=>{trusted(e);return storage.webSearch[method](method==='save'?input:undefined);});
 for(const method of ['status','begin','disconnect','openAuthorization','openPermissions'])ipcMain.handle('feishu-cli:'+method,(e,input)=>{trusted(e);return feishuCli[method](method==='begin'?input:undefined);});
@@ -338,7 +344,7 @@ let quitting=false;
 app.on("before-quit", e => {
   if(quitting)return;
   e.preventDefault();schedules.stop();chat.cancelAll();
-  Promise.allSettled([storage.androidManager.dispose(),feishuCli.dispose(),storage.amap.dispose()]).finally(()=>{quitting=true;app.quit();});
+  Promise.allSettled([storage.androidManager.dispose(),feishuCli.dispose(),storage.amap.dispose(),storage.mcpConnections.dispose()]).finally(()=>{quitting=true;app.quit();});
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

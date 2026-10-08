@@ -1,13 +1,15 @@
 import React,{useEffect,useState,useRef} from 'react';
+import {MCPConnections} from './mcp-connections';
 import {AMapConnection} from './amap-connection';
 import {SearchConnection} from './search-connection';
-import type {FeishuConnectionState} from './types';
+import type {FeishuConnectionState,ConnectionTarget} from './types';
 const initial:FeishuConnectionState={installed:false,enabled:false,connected:false,phase:'loading',message:''};
-export function FeishuCliConnection({onTry,children}:{onTry:(text:string)=>void;children?:React.ReactNode}) {
+export function FeishuCliConnection({onTry,children}:{onTry:(text:string,connector:ConnectionTarget)=>void;children?:React.ReactNode}) {
  const dialog=useRef<HTMLDialogElement>(null);
  const awaitingSuccess=useRef(false);
+ const [mcpCount,setMCPCount]=useState(0);
  const [query,setQuery]=useState('');const [searchConnected,setSearchConnected]=useState(false);const [amapConnected,setAMapConnected]=useState(false);
- const tryChat=(text:string)=>{dialog.current?.close();onTry(text);};
+ const tryChat=(text:string)=>{dialog.current?.close();onTry(text,'feishu');};
  const [state,setState]=useState(initial),[busy,setBusy]=useState(false),[error,setError]=useState(''),[scopes,setScopes]=useState('');
  useEffect(()=>{
   if(state.phase==='authorizing')awaitingSuccess.current=true;
@@ -30,14 +32,15 @@ export function FeishuCliConnection({onTry,children}:{onTry:(text:string)=>void;
  }
  const label=state.phase==='authorizing'?'等待飞书授权':state.connected?'已连接':state.phase==='loading'?'检测中…':state.installed?'未连接':'未安装 CLI';
  return <>
-  <div className="extension-toolbar connection-toolbar"><span>已连接 {(state.connected?1:0)+(searchConnected?1:0)+(amapConnected?1:0)} 个应用</span><input aria-label="搜索应用连接" placeholder="搜索应用名称或用途…" value={query} onChange={e=>setQuery(e.target.value)}/></div>
+  <div className="extension-toolbar connection-toolbar"><span>已连接 {(state.connected?1:0)+(searchConnected?1:0)+(amapConnected?1:0)+mcpCount} 个应用</span><input aria-label="搜索应用连接" placeholder="搜索应用名称或用途…" value={query} onChange={e=>setQuery(e.target.value)}/></div>
   <div className="connection-grid">{('飞书 feishu lark 消息 文档 日程 表格 待办'.includes(query.trim().toLowerCase()))?<article className={'connection-tile '+(state.connected?'is-connected':'')}>
    <button className="connection-tile-main" disabled={busy||state.phase==='loading'} onClick={()=>state.connected||state.phase==='authorizing'||state.phase==='error'||error?dialog.current?.showModal():void connectDirect()} aria-label={state.connected||state.phase==='authorizing'||state.phase==='error'||error?"查看飞书连接详情":"连接飞书"}>
     <span className="connection-tile-heading"><img className="feishu-mark" src="./feishu.png" alt="" aria-hidden="true"/><strong>飞书</strong>{state.connected&&<span className="connection-dot" role="img" aria-label="已连接" title="已连接"/>}{(!state.connected&&(state.phase==='authorizing'||state.phase==='loading'||state.phase==='error'||error))&&<span className="connection-tile-status">{state.phase==='error'||error?'连接异常':label}</span>}</span>
     <span className="connection-tile-description">在对话中查询日程、查找和创建文档、整理待办，按你的要求操作飞书消息与表格。</span>
    </button>
    <button className="connection-tile-action" title={state.connected?'去对话':'添加飞书连接'} aria-label={state.connected?'去对话':'添加飞书连接'} onClick={()=>state.connected?tryChat('帮我查看飞书今天的日程，并整理需要准备的事项。'):void connectDirect()} disabled={busy||state.phase==='loading'}>{state.connected?<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M8 19l-4 3v-6a8 8 0 01-1-4V9a7 7 0 017-7h4a7 7 0 017 7v3a7 7 0 01-7 7z"/><path d="M8 10h8m-5-3l-3 3 3 3"/></svg>:'＋'}</button>
-  </article>:null}<SearchConnection query={query} onState={setSearchConnected}/><AMapConnection query={query} onState={setAMapConnected} onTry={onTry}/></div>
+  </article>:null}<SearchConnection query={query} onState={setSearchConnected}/><AMapConnection query={query} onState={setAMapConnected} onTry={text=>onTry(text,'amap')}/></div>
+  <MCPConnections query={query} onState={setMCPCount} onTry={onTry}/>
   <dialog ref={dialog} className="connection-dialog" aria-label="飞书连接管理" onClick={e=>{if(e.target===e.currentTarget)dialog.current?.close();}}>
    <div className="connection-dialog-toolbar"><button type="button" className="connection-dialog-close" aria-label="关闭飞书连接详情" onClick={e=>{e.stopPropagation();dialog.current?.close();}}>×</button></div>
    <article className="feishu-cli-card">

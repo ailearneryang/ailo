@@ -4,7 +4,7 @@ function createPersonalAssistant({storage,chat,schedules,notify=()=>{}}){
   const launches=new Map();
   function launch(task,modelId){
     const id=randomUUID();
-    const promise=chat.complete({id,taskId:task.id,modelId,extensionIds:task.extensionIds,searchEnabled:task.searchEnabled,feishuEnabled:task.feishuEnabled,
+    const promise=chat.complete({id,taskId:task.id,modelId,extensionIds:task.extensionIds,searchEnabled:task.searchEnabled,feishuEnabled:task.feishuEnabled,amapEnabled:task.amapEnabled,mcpConnectionIds:task.mcpConnectionIds,
       messages:(task.messages||[]).map(({role,content})=>({role,content})),
       onRun:run=>notify({id,taskId:task.id,run}),onStatus:message=>notify({id,taskId:task.id,message}),onText:content=>notify({id,taskId:task.id,content})});
     launches.set(task.id,promise);
@@ -35,7 +35,7 @@ function createPersonalAssistant({storage,chat,schedules,notify=()=>{}}){
       if(params.projectId&&!state.projects.some(p=>p.id===params.projectId))throw Error('项目不存在');
       const duplicate=state.tasks.find(t=>t.parentMessageId===input?.id&&t.parentAssistantId===ASSISTANT_ID&&t.request===params.prompt.trim());
       if(duplicate)return {taskId:duplicate.id,title:duplicate.title,alreadyCreated:true,status:live.some(s=>s.taskId===duplicate.id)?'running':duplicate.agentRun?.status||'saved'};
-      const id=randomUUID(),task=await storage.patchTask(id,{title:String(params.title||params.prompt).slice(0,60),request:params.prompt.trim(),created:new Date().toISOString(),materials:context.task.materials||[],projectId:params.projectId||'',parentAssistantId:ASSISTANT_ID,parentMessageId:input?.id,modelId:context.modelId,extensionIds:context.task.extensionIds||[],searchEnabled:context.task.searchEnabled===true,feishuEnabled:context.task.feishuEnabled===true},[{id:randomUUID(),role:'user',content:params.prompt.trim(),materials:input?.materials||[]}]);
+      const id=randomUUID(),task=await storage.patchTask(id,{title:String(params.title||params.prompt).slice(0,60),request:params.prompt.trim(),created:new Date().toISOString(),materials:context.task.materials||[],projectId:params.projectId||'',parentAssistantId:ASSISTANT_ID,parentMessageId:input?.id,modelId:context.modelId,extensionIds:context.task.extensionIds||[],searchEnabled:context.task.searchEnabled===true,feishuEnabled:context.task.feishuEnabled===true,amapEnabled:context.task.amapEnabled,mcpConnectionIds:context.task.mcpConnectionIds||[]},[{id:randomUUID(),role:'user',content:params.prompt.trim(),materials:input?.materials||[]}]);
       if(context.signal.aborted){await storage.patchTask(id,{lastError:'助手已停止，任务尚未开始。'});throw Error('已停止执行');}
       launch(task,context.modelId);return {taskId:id,title:task.title,status:'started',note:'任务已开始，尚未完成。进度与成果将在关联任务卡片显示。'};
     }

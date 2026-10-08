@@ -146,9 +146,31 @@ test('agent reasoning is bounded, releases session and can retry after timeout',
  assert.equal((await chat.complete(input)).content,'恢复成功');
 });
 test('agent tool output still obeys idle timeout after decision timer clears',async t=>{
- const storage=await fixture(t);
- const chat=createChat(storage,async()=>slowDecision({action:'route',kind:'chat'},{reasoning:0,end:false}),{first:200,idle:35,text:20,decision:200,total:1000});
- await assert.rejects(chat.complete(input),/模型内容已停止更新/);assert.deepEqual(chat.sessions(),[]);
+ const storage=await fixture(t);let calls=0;
+ const chat=createChat(storage,async()=>{calls++;return slowDecision({action:'route',kind:'chat'},{reasoning:0,end:false});},{first:200,idle:35,text:20,decision:200,total:1000});
+ await assert.rejects(chat.complete(input),/模型内容已停止更新.*已自动重试 2 次/);assert.equal(calls,3);assert.deepEqual(chat.sessions(),[]);
+});
+
+test('idle decision retries only the interrupted step and discards unfinished tools',async t=>{
+ const storage=await fixture(t),statuses=[];let calls=0;const states=[];
+ const chat=createChat(storage,async(url,options)=>{
+  states.push(JSON.parse(options.body).messages);
+  calls++;
+  if(calls===1)return native({action:'route',kind:'chat'});
+  if(calls===2)return slowDecision({action:'reply',text:'未完成响应不得执行'},{reasoning:0,end:false});
+  return native({action:'reply',text:'自动恢复成功'});
+ },{first:200,idle:35,text:20,decision:200,total:1000});
+ assert.equal((await chat.complete({...input,onStatus:s=>statuses.push(s)})).content,'自动恢复成功');
+ assert.equal(calls,3);assert.deepEqual(states[1],states[2]);
+ assert.ok(statuses.some(s=>s.includes('自动重试当前决策（1/2）')));assert.deepEqual(chat.sessions(),[]);
+});
+
+test('user cancellation during an idle decision never retries',async t=>{
+ const storage=await fixture(t);let calls=0;
+ const chat=createChat(storage,async()=>{calls++;return slowDecision({action:'route',kind:'chat'},{reasoning:0,end:false});},{first:200,idle:1000,decision:2000,total:3000});
+ const result=chat.complete(input);const timer=setTimeout(()=>chat.cancel(input.id),30);
+ t.after(()=>clearTimeout(timer));
+ await assert.rejects(result,/已停止/);assert.equal(calls,1);assert.deepEqual(chat.sessions(),[]);
 });
 
 test('empty agent response retries without replaying tools, preserves diagnostic counts',async t=>{
