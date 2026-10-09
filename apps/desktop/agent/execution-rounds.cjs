@@ -11,7 +11,7 @@ function beginRound(run,task,snapshot) {
   const terminal=['completed','idle'].includes(run.status);
   const newInput=run.inputKey ? run.inputKey!==trigger : messages.at(-1)?.role==='user';
   run.history ||= [];
-  if(terminal && newInput) {
+  if(newInput && (terminal || task.editedInputId===trigger)) {
     if(run.mode==='task') {
       const anchor=messages.slice(0,index).findLast(m=>m.role==='assistant');
       run.history.push({...snapshot(run),history:undefined,afterMessageId:anchor?.id});

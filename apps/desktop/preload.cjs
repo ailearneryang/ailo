@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld("ailo", {
     return () => ipcRenderer.removeListener("chat:status", listener);
   },
   sessions: () => ipcRenderer.invoke("chat:sessions"),
+  editLastMessage: (id,messageId,content) => ipcRenderer.invoke("task:edit-last-message", {id,messageId,content}),
   patchTask: (id,patch,append) => ipcRenderer.invoke("task:patch", {id,patch,append}),
   steer: input => ipcRenderer.invoke("chat:steer", input),
   cancel: (id) => ipcRenderer.invoke("chat:cancel", id),

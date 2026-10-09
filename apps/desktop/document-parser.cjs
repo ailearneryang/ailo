@@ -3,6 +3,7 @@ const MAX_BYTES=20*1024*1024,MAX_CHARS=2000000;
 // Each parser produces located text. OCR/vision adapters can add segments later.
 async function parseDocument(file,name=file){
  const stat=await fs.stat(file);if(stat.size>MAX_BYTES)throw Error('单个材料文件请小于 20 MB');
+ if(/\.(pptx|ppt)$/i.test(name))return require('./presentation-parser.cjs').parsePresentation(file,name);
  if(/\.pdf$/i.test(name)){
   const {getDocument}=await import('pdfjs-dist/legacy/build/pdf.mjs');
   const loading=getDocument({data:new Uint8Array(await fs.readFile(file)),isEvalSupported:false,useSystemFonts:true});

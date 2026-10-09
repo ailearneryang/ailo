@@ -48,8 +48,8 @@ async function execute(workspace,action,signal,options={}) {
     case 'list_files':return listFiles(files,action.path === undefined ? '' : action.path);
     case 'read_file': {
       const file=await resolveFile(files,action.path);const stat=await fs.stat(file);
-      if(!stat.isFile()||stat.size>(/\.(pdf|xlsx)$/i.test(action.path)?20*1024*1024:2000000))throw Error('仅支持读取 2 MB 以内文本文件');
-      const parsed=/\.(pdf|xlsx)$/i.test(action.path)?await require('../document-parser.cjs').parseDocument(file,action.path):null;
+      if(!stat.isFile()||stat.size>(/\.(pdf|xlsx|pptx|ppt)$/i.test(action.path)?20*1024*1024:2000000))throw Error('仅支持读取 2 MB 以内文本文件');
+      const parsed=/\.(pdf|xlsx|pptx|ppt)$/i.test(action.path)?await require('../document-parser.cjs').parseDocument(file,action.path):null;
       const text=parsed?parsed.text:await fs.readFile(file,'utf8');const offset=action.offset||0;
       if(!Number.isInteger(offset)||offset<0)throw Error('读取位置无效');
       return {path:action.path,sha256:require('node:crypto').createHash('sha256').update(await fs.readFile(file)).digest('hex'),total:text.length,offset,text:text.slice(offset,offset+10000)};

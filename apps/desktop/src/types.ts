@@ -191,6 +191,7 @@ declare global {
       onChatStatus: (callback: (status: { id: string; message?: string; content?: string; taskId?:string; finished?:boolean; run?:AgentRun }) => void) => () => void;
       cancel: (id: string) => Promise<void>;
       sessions: () => Promise<{id:string;taskId:string;status:string;content:string;updatedAt?:string}[]>;
+      editLastMessage: (id:string,messageId:string,content:string) => Promise<Task>;
       patchTask: (id:string,patch:Partial<Task>,append?:Message[]) => Promise<Task>;
       steer: (input:{id:string;taskId:string;content:string}) => Promise<Message>;
       projectFiles: (taskId:string) => Promise<{files:{path:string;label:string;size:number;sha256:string}[];truncated:boolean}>;

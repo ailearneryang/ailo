@@ -52,6 +52,7 @@ function App() {
   const [newKnowledgeIds,setNewKnowledgeIds]=useState<string[]>([]);
   const [view, setView] = useState("assistant");
   const [expandedProjects,setExpandedProjects]=useState<Record<string,boolean>>({});
+  const [messageEdit,setMessageEdit]=useState<{taskId:string;messageId:string;content:string}|null>(null);
   const [input, setInput] = useState("");
   const [materials, setMaterials] = useState<Material[]>([]);
   const [error, setError] = useState("");
@@ -249,6 +250,7 @@ function App() {
     }
   }
   function select(id: string | null) {
+    setMessageEdit(null);
     drafts.current[active||'new']={input,materials};
     const draft=drafts.current[id||'new']||{input:'',materials:[]};
     setActive(id);
@@ -345,6 +347,18 @@ function App() {
       if(requests.current[nextTask.id]?.id===requestId)delete requests.current[nextTask.id];syncSessions();
     }
   }
+  async function resendEditedMessage() {
+    if(!task||busy||!messageEdit||messageEdit.taskId!==task.id||!messageEdit.content.trim()||!modelReady())return;
+    setSaving(true);
+    let edited:Task;
+    try {
+      edited=await window.ailo.editLastMessage(task.id,messageEdit.messageId,messageEdit.content);
+      setData(previous=>({...previous,tasks:previous.tasks.map(t=>t.id===edited.id?edited:t)}));
+      setMessageEdit(null);
+    } catch(e) {setError(String(e));return;}
+    finally {setSaving(false);}
+    await respond(edited,false);
+  }
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if(pending && task?.id===pending && requestRef.current) {
@@ -362,7 +376,7 @@ function App() {
       return;
     if (materials.some((m) => !canSendMaterial(m))) {
       setError(
-        "有材料无法读取，请移除 PDF 或不支持的文件后重试；图片支持 PNG、JPEG、WebP、GIF，需使用支持图片的模型。",
+        "有材料无法读取，请重新添加或移除不支持的文件。支持 PPT/PPTX、DOCX、文字 PDF、XLSX 和文本；图片需使用支持图片的模型。",
       );
       return;
     }
@@ -639,7 +653,7 @@ function App() {
                   <section>
                     <h2>数据与使用范围</h2>
                     <p>记录保存在本机；对话和相关材料会发送给你选择的模型服务商。当前不支持云端同步或自动更新。</p>
-                    <p>支持文本、Markdown、DOCX、文本型 PDF、Excel 及压缩包中的可读文件。扫描型 PDF 与图片内容识别仍需 OCR 或视觉模型；开发任务可能需要额外工具链。</p>
+                    <p>支持文本、Markdown、DOCX、PPT/PPTX、文本型 PDF、Excel 及压缩包中的可读文件。扫描型 PDF 与图片内容识别仍需 OCR 或视觉模型；开发任务可能需要额外工具链。</p>
                   </section>
                 </div>
               </div>
@@ -677,37 +691,41 @@ function App() {
                         message.role === "user" ? "bubble" : "assistant-text"
                       }
                     >
-                      {message.role === "assistant" ? <AssistantText content={message.content}/> : message.content}
+                      {messageEdit?.taskId===task.id && messageEdit.messageId===message.id ? <div className="message-editor">
+                        <textarea autoFocus aria-label="编辑刚刚发送的消息" value={messageEdit.content} disabled={busy} onChange={e=>setMessageEdit({...messageEdit,content:e.target.value})}/>
+                        <div><button className="primary" disabled={busy||!messageEdit.content.trim()} onClick={()=>void resendEditedMessage()}>发送</button><button disabled={busy} onClick={()=>setMessageEdit(null)}>取消</button></div>
+                      </div> : message.role === "assistant" ? <AssistantText content={message.content}/> : message.content}
+                      {!!message.materials?.length && <div className="message-files" aria-label="消息附件">
+                        {message.materials.map((material,i)=><span className="message-file" key={i} title={material.name}><Icon name="file"/><span>{material.name}</span></span>)}
+                      </div>}
                     </div>
+                    {message.role==='user' && messagesFor(task).at(-1)?.id===message.id && !pending && messageEdit?.taskId!==task.id && (
+                      <div className="message-actions">
+                        <button type="button" title="编辑消息" aria-label="编辑消息" disabled={busy} onClick={()=>setMessageEdit({taskId:task.id,messageId:message.id,content:message.content})}><Icon name="edit"/></button>
+                      </div>
+                    )}
                     {message.role === "assistant" && message.clarification && <ClarificationCard
                       messageId={message.id} value={message.clarification} disabled={busy}
                       active={messagesFor(task).at(-1)?.id === message.id}
                       completed={messagesFor(task).find(m => m.clarificationReplyTo === message.id)?.clarificationAnswers}
                       onSubmit={(answers, attached) => answerQuestions(message, answers, attached)} />}
-                    {!!message.materials?.length && (
-                      <div className="attachments">
-                        {message.materials.map((m, i) => (
-                          <span key={i}>▤ {m.name}</span>
-                        ))}
-                      </div>
-                    )}
                     {view === "assistant" && data.tasks.filter(t=>(t.parentAssistantId === ASSISTANT_ID && t.parentMessageId === message.id) || task.assistantReferences?.[message.id]?.includes(t.id)).map(linked=><button key={linked.id} className="assistant-linked-task" onClick={()=>select(linked.id)}><Icon name="folder"/><span><strong>{linked.title}</strong><small>{sessions[linked.id] ? sessions[linked.id].status : linked.assistantPaused ? "已暂停" : linked.lastError ? "需要处理" : linked.agentRun?.status === "completed" ? "成果已准备好" : linked.messages?.at(-1)?.clarification ? "需要补充信息" : linked.messages?.at(-1)?.role === "assistant" ? "已有结果" : "查看任务进度"}{linked.agentRun?.artifacts.length ? ` · ${linked.agentRun.artifacts.length} 项成果` : ""}</small></span><span>查看任务 ↗</span></button>)}
                     {view === "assistant" && task.assistantScheduleLinks?.filter(link=>link.messageId===message.id).map(link=><button key={link.id} className="assistant-linked-task" onClick={()=>setView("schedules")}><Icon name="clock"/><span><strong>{link.title}</strong><small>已保存到定时任务</small></span><span>查看安排 ↗</span></button>)}
                     {progressAt===message.id && currentProgress}
                     {task.agentRun?.history?.filter(r=>r.afterMessageId===message.id).map((r,i)=><ExecutionHistory key={r.executionId||i} task={task} run={r} onOpenArtifacts={()=>setRightPanel('artifacts')}/>)}
                   </div>
                 ))}
-                {pending === task.id ? (
-                  <div className="reply" role="status">
+                {pending === task.id ? (visibleReply(streamText) && (
+                  <div className="reply">
                     <div className="byline">
                       <Pet size="mini" state={taskPetState(task, chatStatus)} />
                       Ailo
                     </div>
-                    {visibleReply(streamText) && <div className="assistant-text"><AssistantText content={visibleReply(streamText)}/></div>}
-                    <p className="muted">{chatStatus || `正在等待 ${currentModel.name} 回复…`}</p>
+                    <div className="assistant-text"><AssistantText content={visibleReply(streamText)}/></div>
                   </div>
-                ) : (
-                  messagesFor(task).at(-1)?.role === "user" && (
+                )) : (
+                  messagesFor(task).at(-1)?.role === "user" &&
+                  !/^已停止(?:回复|执行)(?:[。，]|$)/.test(task.lastError || "") && (
                     <div className="chat-retry">
                       {task.partialReply && <details><summary>查看未完成的回复（不计入后续上下文）</summary><div className="assistant-text"><AssistantText content={task.partialReply}/></div></details>}
                       <p
@@ -719,7 +737,7 @@ function App() {
                       </p>
                       <button
                         className={task.agentRun ? 'primary' : undefined}
-                        disabled={busy}
+                        disabled={busy||messageEdit?.taskId===task.id}
                         onClick={() => void respond(task, false)}
                       >
                         {task.agentRun ? "重试当前步骤" : task.lastError ? "重试回复" : "发送给模型"}

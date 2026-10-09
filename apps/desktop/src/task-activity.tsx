@@ -14,11 +14,11 @@ export function TaskActivity({task,status}:{task:Task;status:string}) {
     const start=operation?.at?Date.parse(operation.at):Date.now();
     const update=()=>setElapsed(Math.max(0,Math.floor((Date.now()-start)/1000)));
     update();const timer=setInterval(update,1000);return ()=>clearInterval(timer);
-  },[label,operation?.at]);
+  },[queued,operation?.action,operation?.at]);
   const event=task.agentRun?.events.filter(e=>completed[e.type]||e.type==='tool_error').at(-1);
   const recent=event?(event.detail.message?event.detail.message:`${completed[event.type]}${event.detail.path||event.detail.name?' · '+(event.detail.path||event.detail.name):''}${event.detail.exitCode!==undefined?' · 退出码 '+event.detail.exitCode:''}`):undefined;
   return <div className="task-activity" aria-label="当前任务活动">
-    <div className="task-activity-current"><Pet size="mini" state={taskPetState(task,status)} /><span role="status" title={label}>{label}</span><small aria-label="当前活动用时">{elapsed} 秒</small></div>
+    <div className="task-activity-current"><Pet size="mini" state={taskPetState(task,status)} /><span role="status" title={label}>{label}</span>{!label.includes("已等待") && <small aria-label="当前活动用时">{elapsed} 秒</small>}</div>
     {!queued&&recent&&<div className="task-activity-recent" title={recent}>最近：{recent}</div>}
   </div>;
 }

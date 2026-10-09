@@ -116,6 +116,22 @@ function createStorage(directory, safeStorage) {
         await write('workspace',state);return task;
       });
     },
+    editLastMessage(id, messageId, content) {
+      return queue(async()=>{
+        if(typeof content!=='string'||!content.trim())throw Error('请输入消息内容');
+        const state=await read('workspace',{tasks:[]});
+        const task=state.tasks.find(t=>t.id===id);
+        const messages=task?.messages|| (task?[{id:id+'-original',role:'user',content:task.request,materials:task.materials}]:[]);
+        const last=messages.at(-1);
+        if(!last||last.id!==messageId||last.role!=='user')throw Error('只能编辑尚未回复的最后一条消息');
+        task.messages=[...messages.slice(0,-1),{...last,id:randomUUID(),content:content.trim()}];
+        task.editedInputId=task.messages.at(-1).id;
+        if(messages.length===1)task.request=content.trim();
+        delete task.contextCheckpoint;delete task.promptTokens;delete task.partialReply;delete task.lastError;
+        if(JSON.stringify(state).length>2000000)throw Error('工作空间超过容量限制');
+        await write('workspace',state);return task;
+      });
+    },
     removeProject(id,canRemove=()=>true){return queue(async()=>{
       const state=await read('workspace',{tasks:[],projects:[],models:[]});
       if(!state.projects.some(p=>p.id===id))throw Error('项目不存在');

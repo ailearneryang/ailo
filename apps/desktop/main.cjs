@@ -95,6 +95,11 @@ ipcMain.handle("chat:complete", async (e, input) => {
     send({finished:!chat.sessions().some(s=>s.taskId===input.taskId)});throw error;
   }
 });
+ipcMain.handle("task:edit-last-message", (e, {id,messageId,content}) => {
+  trusted(e);
+  if(chat.sessions().some(s=>s.taskId===id))throw Error('请先停止回复再编辑消息');
+  return storage.editLastMessage(id,messageId,content);
+});
 ipcMain.handle("task:patch", (e, {id,patch,append}) => { trusted(e); return storage.patchTask(id,patch,append); });
 ipcMain.handle("chat:steer", (e, input) => { trusted(e); return chat.steer(input); });
 ipcMain.handle("chat:cancel", (e, id) => {
@@ -221,7 +226,7 @@ storage.knowledge=require('./knowledge.cjs').createKnowledge(app.getPath('userDa
 for(const method of ['list','save','search','read'])ipcMain.handle('knowledge:'+method,(e,input)=>{trusted(e);return storage.knowledge[method](input);});
 ipcMain.handle('knowledge:removeDocument',async(e,input)=>{trusted(e);const choice=await dialog.showMessageBox(win,{type:'question',title:'删除资料',message:'从知识库移除此资料？',detail:'只删除 Ailo 中的文本副本，原文件不受影响。',buttons:['取消','删除'],defaultId:0,cancelId:0});if(choice.response===1)await storage.knowledge.removeDocument(input);});
 ipcMain.handle('knowledge:remove',async(e,id)=>{trusted(e);const choice=await dialog.showMessageBox(win,{type:'question',title:'删除知识库',message:'删除此知识库及全部资料？',detail:'只删除 Ailo 中的副本，原文件不受影响。已有对话回答仍保留。',buttons:['取消','删除'],defaultId:0,cancelId:0});if(choice.response===1){await storage.knowledge.remove(id);return true;}return false;});
-ipcMain.handle('knowledge:import',async(e,id)=>{trusted(e);const result=await dialog.showOpenDialog(win,{title:'导入知识库资料',properties:['openFile','multiSelections'],filters:[{name:'知识库资料',extensions:['pdf','xlsx','docx','txt','md','markdown','csv','tsv','json','yaml','yml','toml','xml','html','sql','py','js','ts']}]});return result.canceled?[]:storage.knowledge.import(id,result.filePaths);});
+ipcMain.handle('knowledge:import',async(e,id)=>{trusted(e);const result=await dialog.showOpenDialog(win,{title:'导入知识库资料',properties:['openFile','multiSelections'],filters:[{name:'知识库资料',extensions:['pdf','xlsx','pptx','ppt','docx','txt','md','markdown','csv','tsv','json','yaml','yml','toml','xml','html','sql','py','js','ts']}]});return result.canceled?[]:storage.knowledge.import(id,result.filePaths);});
 storage.amap=require('./amap-mcp.cjs').createAMap({directory:app.getPath('userData'),safeStorage,confirmWrite:async(action,signal)=>{
   if(signal.aborted)return false;
   const choice=await dialog.showMessageBox(win,{type:'question',title:'确认高德地图操作',message:action.purpose||'允许调用此高德工具？',detail:JSON.stringify({tool:action.query,params:action.params},null,2),buttons:['执行','取消'],defaultId:1,cancelId:1});return choice.response===0&&!signal.aborted;
