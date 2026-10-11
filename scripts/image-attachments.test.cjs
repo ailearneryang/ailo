@@ -11,16 +11,18 @@ test('image attachments reach model requests and survive retry after source migr
   await fs.mkdir(path.join(base, 'imports'));
   const sourceId = randomUUID();
   await fs.writeFile(path.join(base, 'imports', sourceId), png);
-  const task = { id: 'image-task', request: '描述图片', materials: [], messages: [{ role: 'user', content: '描述图片', materials: [{ name: '截图.png', size: png.length, text: null, sourceId }] }] };
+  const task = { id: 'image-task', request: '', materials: [], messages: [{ role: 'user', content: '', materials: [{ name: '截图.png', size: png.length, text: null, sourceId }] }] };
   const storage = { agentDirectory: base, readWorkspace: async () => ({ tasks: [task] }), modelCredentials: async () => ({ baseUrl: 'https://example.com/v1', model: 'vision', contextWindow: 32768 }) };
   let calls = 0;
   const chat = createChat(storage, async (_, options) => {
     const request = JSON.parse(options.body);
-    const images = request.messages.filter(message => Array.isArray(message.content));
-    assert.equal(images.length, 1);
-    const image = images[0].content.find(part => part.type === 'image_url');
-    assert.equal(image.image_url.url, `data:image/png;base64,${png.toString('base64')}`);
     const state = JSON.parse(request.messages.at(-1).content);
+    const images = request.messages.filter(message => Array.isArray(message.content));
+    assert.equal(images.length, state.phase==='route'?0:1);
+    if(state.phase!=='route'){
+      const image = images[0].content.find(part => part.type === 'image_url');
+      assert.equal(image.image_url.url, `data:image/png;base64,${png.toString('base64')}`);
+    }
     const action = state.phase === 'route' ? { action: 'route', kind: 'chat' } : { action: 'reply', text: '已收到图片' };
     calls++;
     return new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ id: 'a', type: 'function', function: { name: 'ailo_action', arguments: JSON.stringify(action) } }] } }] }));
@@ -32,7 +34,7 @@ test('attachment availability, image validation and token estimates', async t =>
   const { canSendMaterial } = await import('../apps/desktop/attachments.mjs');
   assert.ok(canSendMaterial({ name: 'a.png', text: null, sourceId: randomUUID() }));
   assert.ok(canSendMaterial({ name: 'a.txt', text: 'text' }));
-  assert.ok(!canSendMaterial({ name: 'a.pdf', text: null, sourceId: randomUUID() }));
+  assert.ok(canSendMaterial({ name: 'a.pdf', text: null, sourceId: randomUUID() }));
   assert.ok(!canSendMaterial({ name: 'a.png', text: null }));
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'ailo-image-'));
   t.after(() => fs.rm(base, { recursive: true, force: true }));

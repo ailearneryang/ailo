@@ -8,7 +8,7 @@ const {
   shell,
 } = require("electron");
 app.setName("Ailo");
-const { readMaterial, extensions, importPastedMaterials } = require("./materials.cjs");
+const { readMaterial, importPastedMaterials } = require("./materials.cjs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 if (process.env.AILO_DATA_DIR)
@@ -22,7 +22,13 @@ const storage = require("./storage.cjs").createStorage(
   app.getPath("userData"),
   safeStorage,
 );
-const chat = require("./chat.cjs").createChat(storage);
+const chat = require("./chat.cjs").createChat(storage,require('./model-transport.cjs').createModelTransport());
+// Model requests and proxy diagnostics use Electron's default session.
+// Do not log proxy addresses or credentials.
+storage.modelNetworkContext=async url=>{
+ const proxy=await require('electron').session.defaultSession.resolveProxy(url.href);
+ return {systemProxyMode:proxy==='DIRECT'?'direct':/PROXY|SOCKS/i.test(proxy)?'configured':'unknown'};
+};
 storage.agentDirectory = path.join(app.getPath("userData"), "agent");
 const { key, json, resolveFile, writeJson } = require("./agent/workspace.cjs");
 const { publicRun } = require("./agent/runner.cjs");
@@ -80,6 +86,7 @@ storage.androidManager=require('./agent/android-device.cjs').createAndroidManage
   },
 });
 
+ipcMain.handle('extensions:importSkill', (e, input) => { trusted(e); return storage.skillPackages.importSkill(input); });
 ipcMain.handle("chat:sessions", e=>{trusted(e);return chat.sessions();});
 ipcMain.handle("chat:complete", async (e, input) => {
   trusted(e);
@@ -88,10 +95,11 @@ ipcMain.handle("chat:complete", async (e, input) => {
   if(chat.sessions().some(s=>s.taskId===input.taskId))throw Error('此会话正在执行或排队，请补充消息或等待完成。');
   try {
     const result=await chat.complete({...input,onRun:run=>send({run}),onText:content=>send({content}),onStatus:message=>send({message})});
-    if(input.taskId)await storage.patchTask(input.taskId,{contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens,lastError:undefined,partialReply:undefined},[{id:input.id+'-assistant',role:'assistant',content:result.content,clarification:result.clarification,modelName:result.modelName}]);
+    if(input.taskId)await storage.patchTask(input.taskId,{contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens,lastError:undefined,lastErrorCode:undefined,modelRequestDiagnostics:undefined,partialReply:undefined},[{id:input.id+'-assistant',role:'assistant',content:result.content,clarification:result.clarification,modelName:result.modelName}]);
     send({finished:true});return result;
   }catch(error){
-    if(input.taskId&&!chat.sessions().some(s=>s.taskId===input.taskId))await storage.patchTask(input.taskId,{lastError:error.message});
+    if(error.code||error.requestDiagnostics)send({failure:{code:error.code||'MODEL_RESPONSE_ERROR',requestDiagnostics:error.requestDiagnostics,retryCount:error.retryCount||0}});
+    if(input.taskId&&!chat.sessions().some(s=>s.taskId===input.taskId))await storage.patchTask(input.taskId,{lastError:error.message,lastErrorCode:error.code||'MODEL_RESPONSE_ERROR',modelRequestDiagnostics:error.requestDiagnostics,...(error.partialContent?{partialReply:error.partialContent}:{})});
     send({finished:!chat.sessions().some(s=>s.taskId===input.taskId)});throw error;
   }
 });
@@ -101,6 +109,7 @@ ipcMain.handle("task:edit-last-message", (e, {id,messageId,content}) => {
   return storage.editLastMessage(id,messageId,content);
 });
 ipcMain.handle("task:patch", (e, {id,patch,append}) => { trusted(e); return storage.patchTask(id,patch,append); });
+ipcMain.handle("task:pin", (e, {id,pinned}) => { trusted(e); return storage.setTaskPinned(id,pinned); });
 ipcMain.handle("chat:steer", (e, input) => { trusted(e); return chat.steer(input); });
 ipcMain.handle("chat:cancel", (e, id) => {
   trusted(e);
@@ -196,8 +205,9 @@ ipcMain.handle("agent:preview", async (e, {taskId, artifactPath, projectFile = f
   const run=await json(path.join(project,'runs',key(task.id)+'.json'),null);
   if(projectFile)await require('./agent/project-files.cjs').projectFile(await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task),artifactPath);
   else if(!run?.artifacts.some(a=>a.path===artifactPath))throw Error('成果不属于当前任务');
-  const file=await resolveFile(await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task),artifactPath);
-  return require('./artifact-edit.cjs').previewFile(file);
+  const root=await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task);
+  const file=await resolveFile(root,artifactPath);
+  return require('./artifact-edit.cjs').previewFile(file,root);
 });
 ipcMain.handle("state:write", (e, state) => {
   trusted(e);
@@ -264,12 +274,6 @@ ipcMain.handle("materials:pick", async (e) => {
   trusted(e);
   const result = await dialog.showOpenDialog(win, {
     properties: ["openFile", "multiSelections"],
-    filters: [
-      {
-        name: "需求与界面材料",
-        extensions,
-      },
-    ],
   });
   if (result.canceled) return [];
   if (result.filePaths.length > 10) throw Error("一次最多添加 10 个材料文件。");

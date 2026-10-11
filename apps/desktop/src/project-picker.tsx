@@ -1,25 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Project } from "./types";
+import {Icon} from "./icon";
 
-function FolderIcon() {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
-      <path d="M3 8h18" />
-    </svg>
-  );
-}
 export function ProjectPicker({
   menuAnchor, onMenuClose, hideEmptyTrigger=false,
   projects,
@@ -161,7 +144,7 @@ export function ProjectPicker({
           }
         }}
       >
-        <FolderIcon />
+        <Icon name="folder"/>
         <span>{selected?.name || "选择项目"}</span>
       </button>
       {open &&
@@ -208,7 +191,7 @@ export function ProjectPicker({
             {creating ? (
               <form className="project-create" onSubmit={create}>
                 <h3>
-                  <FolderIcon />
+                  <Icon name="folder"/>
                   新建项目
                 </h3>
                 <label htmlFor="project-name">项目名称</label>
@@ -254,18 +237,7 @@ export function ProjectPicker({
             ) : (
               <>
                 <div className="project-search">
-                  <svg
-                    width="19"
-                    height="19"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    aria-hidden="true"
-                  >
-                    <circle cx="10.5" cy="10.5" r="7.5" />
-                    <path d="m16 16 5 5" />
-                  </svg>
+                  <Icon name="search"/>
                   <input
                     ref={search}
                     aria-label="搜索项目"
@@ -274,7 +246,7 @@ export function ProjectPicker({
                     onChange={(e) => setQuery(e.target.value)}
                   />
                 </div>
-                <div className="project-options" aria-label="项目列表"><button type="button" className={"project-option "+(!value?"is-selected":"")} aria-pressed={!value} disabled={disabled} onClick={()=>{onSelect("");close(true);}}>不选择项目{!value&&<span className="project-check">✓</span>}</button>
+                <div className="project-options" aria-label="项目列表"><button type="button" className={"project-option "+(!value?"is-selected":"")} aria-pressed={!value} disabled={disabled} onClick={()=>{onSelect("");close(true);}}>不选择项目{!value&&<span className="project-check"><Icon name="check"/></span>}</button>
                   {filtered.map((project) => (
                     <button
                       type="button"
@@ -290,11 +262,11 @@ export function ProjectPicker({
                         close(true);
                       }}
                     >
-                      <FolderIcon />
+                      <Icon name="folder"/>
                       <span title={project.localPath}>{project.name}<small className="project-path">{project.localPath || "Ailo 托管项目"}</small></span>
                       {value === project.id && (
                         <span className="project-check" aria-hidden="true">
-                          ✓
+                          <Icon name="check"/>
                         </span>
                       )}
                     </button>
@@ -307,7 +279,7 @@ export function ProjectPicker({
                     </p>
                   )}
                 </div>
-                <div className="project-popover-footer"><button type="button" disabled={busy||disabled} onClick={async()=>{setBusy(true);setError("");try{await onOpenLocal();close(true);}catch(e){setError(String(e));}finally{setBusy(false);}}}>打开本地文件夹</button>{error&&<p role="alert">{error}</p>}
+                <div className="project-popover-footer"><button type="button" disabled={busy||disabled} onClick={async()=>{setBusy(true);setError("");try{await onOpenLocal();close(true);}catch(e){setError(String(e));}finally{setBusy(false);}}}><Icon name="folder"/>打开本地文件夹</button>{error&&<p role="alert">{error}</p>}
                   <button
                     type="button"
                     disabled={disabled}
@@ -316,9 +288,7 @@ export function ProjectPicker({
                       setCreating(true);
                     }}
                   >
-                    <span className="project-plus" aria-hidden="true">
-                      ＋
-                    </span>
+                    <Icon name="plus"/>
                     新建项目
                   </button>
                 </div>

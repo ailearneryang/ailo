@@ -62,7 +62,7 @@ test('checkpoint survives failed final reply and storage restart; provider token
    return response('完成',{prompt_tokens:123});
   });
   const result=await retry.complete({id:'retry',taskId:'t',modelId:'m',messages:history,contextCheckpoint:checkpoint});
-  assert.equal(result.promptTokens,123);assert.equal(finalCalls,1);
+  assert.equal(result.promptTokens,123);assert.equal(finalCalls,3);
  } finally {await rm(dir,{recursive:true,force:true});}
 });
 test('cancellation during compaction aborts without checkpoint writes',async()=>{

@@ -48,11 +48,12 @@ async function execute(workspace,action,signal,options={}) {
     case 'list_files':return listFiles(files,action.path === undefined ? '' : action.path);
     case 'read_file': {
       const file=await resolveFile(files,action.path);const stat=await fs.stat(file);
-      if(!stat.isFile()||stat.size>(/\.(pdf|xlsx|pptx|ppt)$/i.test(action.path)?20*1024*1024:2000000))throw Error('仅支持读取 2 MB 以内文本文件');
+      if(!stat.isFile()||! /\.(pdf|xlsx|pptx|ppt)$/i.test(action.path)&&stat.size>2000000)throw Error('请选择文档或 2 MB 以内文本文件');
       const parsed=/\.(pdf|xlsx|pptx|ppt)$/i.test(action.path)?await require('../document-parser.cjs').parseDocument(file,action.path):null;
-      const text=parsed?parsed.text:await fs.readFile(file,'utf8');const offset=action.offset||0;
+      const text=parsed?parsed.text:await fs.readFile(file,'utf8');const offset=action.offset??0,limit=action.limit??10000;
       if(!Number.isInteger(offset)||offset<0)throw Error('读取位置无效');
-      return {path:action.path,sha256:require('node:crypto').createHash('sha256').update(await fs.readFile(file)).digest('hex'),total:text.length,offset,text:text.slice(offset,offset+10000)};
+      if(!Number.isSafeInteger(limit)||limit<1||limit>12000)throw Error('读取长度必须为 1–12000 的整数');
+      return {path:action.path,sha256:require('node:crypto').createHash('sha256').update(await fs.readFile(file)).digest('hex'),total:text.length,offset,text:text.slice(offset,offset+limit),next:offset+limit<text.length?offset+limit:null};
     }
     case 'edit_spreadsheet': {
       if(!/\.xlsx$/i.test(action.path)||!action.data||typeof action.data.version!=='string')throw Error('需要 XLSX 路径和当前 SHA-256 版本');
@@ -88,7 +89,7 @@ async function execute(workspace,action,signal,options={}) {
     }
     case 'read_material':return workspace.material(action.id,action.offset||0,action.limit||6000);
     case 'read_source':return workspace.source(action.id,action.entry,action.offset||0);
-    case 'read_execution':return workspace.execution(action.offset||0);
+    case 'read_execution':return action.id?workspace.observation(action.id,action.offset??0,action.limit):workspace.execution(action.offset??0,action.limit);
     case 'inspect_source':return workspace.inspect(action.id,action.entry,action.pointer,action.offset||0,action.query);
     case 'search_materials':return workspace.search(action.query);
     default:throw Error('未知工具');

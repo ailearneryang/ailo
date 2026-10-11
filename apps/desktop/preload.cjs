@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("ailo", {
+  importSkill: input => ipcRenderer.invoke('extensions:importSkill', input),
   projectMemory:id=>ipcRenderer.invoke('project:memory',id),
   saveProjectMemory:(id,input)=>ipcRenderer.invoke('project:memorySave',{id,input}),
   schedulesList:()=>ipcRenderer.invoke('schedules:list'),
@@ -55,6 +56,7 @@ contextBridge.exposeInMainWorld("ailo", {
   sessions: () => ipcRenderer.invoke("chat:sessions"),
   editLastMessage: (id,messageId,content) => ipcRenderer.invoke("task:edit-last-message", {id,messageId,content}),
   patchTask: (id,patch,append) => ipcRenderer.invoke("task:patch", {id,patch,append}),
+  setTaskPinned: (id,pinned) => ipcRenderer.invoke("task:pin", {id,pinned}),
   steer: input => ipcRenderer.invoke("chat:steer", input),
   cancel: (id) => ipcRenderer.invoke("chat:cancel", id),
   projectFiles: taskId => ipcRenderer.invoke("agent:files", taskId),

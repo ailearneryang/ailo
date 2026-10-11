@@ -33,6 +33,7 @@ test("ZIP, 7z, TAR and gzip TAR import readable Unicode contents and mark skippe
     await fs.writeFile(path.join(src, "nested.zip"), "nested");
     for (const [name, format] of [
       ["test.zip", "zip"],
+      ["test.sketch", "zip"],
       ["test.7z", "7zip"],
       ["test.tar", "pax"],
       ["test.tar.gz", "pax"],

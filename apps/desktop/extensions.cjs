@@ -12,7 +12,8 @@ function validateExtensions(items) {
   return items.map(e => {
     if (!e || typeof e.id !== 'string' || e.id.length > 100 || ids.has(e.id) || !['expert','skill'].includes(e.kind) || typeof e.name !== 'string' || !e.name.trim() || e.name.length > 60 || typeof e.description !== 'string' || e.description.length > 300 || typeof e.instructions !== 'string' || !e.instructions.trim() || e.instructions.length > 20000 || typeof e.enabled !== 'boolean') throw Error('扩展配置无效，请检查名称和指令长度。');
     ids.add(e.id);
-    return { id:e.id, kind:e.kind, name:e.name.trim(), description:e.description.trim(), instructions:e.instructions.trim(), enabled:e.enabled };
+    if (e.package !== undefined && (e.kind !== 'skill' || !e.package || typeof e.package.id !== 'string' || !/^[a-f0-9]{64}$/.test(e.package.id) || !Number.isSafeInteger(e.package.files) || e.package.files < 1 || e.package.files > 1000)) throw Error('技能包配置无效，请重新导入。');
+    return { id:e.id, kind:e.kind, name:e.name.trim(), description:e.description.trim(), instructions:e.instructions.trim(), enabled:e.enabled, ...(e.package ? {package:{id:e.package.id,files:e.package.files}} : {}) };
   });
 }
 function selectedExtensions(items, ids = []) {

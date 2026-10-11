@@ -21,3 +21,13 @@ test('missing usage does not invent consumption and partial actions retain actio
  p.succeeded();p.succeeded({outputTokens:NaN});assert.equal(p.budget(100000),8192);
  assert.equal(p.limited(8192,{contentChars:0,toolCalls:1,toolArgumentChars:500}),'action');
 });
+test('stages learn independently, shrink after small successes and ignore legacy inflation',()=>{
+ const model={id:'m'};
+ const p=createOutputBudget(model,131072);p.limited(8192);p.limited(16384);p.limited(32768);
+ assert.equal(p.budget(100000,'route'),4096);assert.equal(p.budget(100000,'summary'),8192);
+ p.succeeded({outputTokens:100});p.succeeded({outputTokens:100});assert.equal(p.budget(100000),32768);
+ p.succeeded({outputTokens:100});p.succeeded({outputTokens:100});assert.equal(p.budget(100000),16384);
+ const saved=p.snapshot();assert.equal(createOutputBudget(model,131072,saved).budget(100000),16384);
+ assert.equal(createOutputBudget(model,131072,{key:saved.key,preferred:41984}).budget(100000),8192);
+ p.reset();assert.equal(p.budget(100000),8192);
+});

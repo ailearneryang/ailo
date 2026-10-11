@@ -11,6 +11,7 @@ const { promisify } = require("node:util");
 const scrypt = promisify(scryptCallback);
 
 function createStorage(directory, safeStorage) {
+  const skillPackages = require('./skill-packages.cjs').createSkillPackages(path.join(directory, 'skill-packages'));
   let writes = Promise.resolve();
   const attempts = new Map();
   const file = (name) => path.join(directory, name + ".json");
@@ -50,6 +51,13 @@ function createStorage(directory, safeStorage) {
     return { email, password: input.password };
   }
   return {
+    skillPackages,
+    recordModelRequest(record){return queue(async()=>{
+      const fields=['id','modelId','taskId','attempt','phase','startedAt','transport','headersMs','responseHeadersTimeoutMs','timeoutStage','requestBytes','messageCount','requestedOutputTokens','providerRequestId','httpStatus','chunks','bytes','maxChunkGapMs','firstByteMs','firstContentMs','streamCancelled','outcome','errorCode','abortRequested','durationMs','systemProxyMode'];
+      fields.push('networkCode');
+      const safe=Object.fromEntries(fields.filter(k=>['string','number','boolean'].includes(typeof record[k])).map(k=>[k,typeof record[k]==='string'?record[k].slice(0,128):record[k]]));
+      const records=await read('model-requests',[]);await write('model-requests',[...records.slice(-199),safe]);
+    });},
     async modelCredentials(id) {
       await writes.catch(() => {});
       const state = await read("workspace", { models: [] });
@@ -99,18 +107,39 @@ function createStorage(directory, safeStorage) {
       await require('./agent/workspace-path.cjs').bindLocalRoot(path.join(directory,'agent'),project.id,root);
       state.projects.push(project);await write('workspace',state);return project;
     });},
+    setGeneratedTitle(id, title) {
+      return queue(async()=>{
+        if(typeof id!=='string'||typeof title!=='string'||!title.trim()||title.length>40||/[\r\n\x00-\x1f]/.test(title))return null;
+        const state=await read('workspace',{tasks:[]});const task=state.tasks.find(t=>t.id===id);
+        if(!task||task.scheduledTaskId||id===require('./personal-assistant.cjs').ASSISTANT_ID)return null;
+        task.title=title.trim();task.titleGenerated=true;
+        await write('workspace',state);return task.title;
+      });
+    },
+    setTaskPinned(id, pinned) {
+      return queue(async()=>{
+        if(typeof id!=='string'||typeof pinned!=='boolean')throw Error('置顶设置无效');
+        const state=await read('workspace',{tasks:[]});
+        const task=state.tasks.find(t=>t.id===id);
+        if(!task)throw Error('对话不存在');
+        task.pinned=pinned;task.pinnedAt=pinned?new Date().toISOString():undefined;
+        await write('workspace',state);return task;
+      });
+    },
     patchTask(id, patch, append=[]) {
       return queue(async()=>{
         if(typeof id!=='string'||!patch||!Array.isArray(append))throw Error('会话更新无效');
         const state=await read('workspace',{tasks:[],projects:[],models:[]});
         const previous=state.tasks.find(t=>t.id===id);
-        const {agentRun,messages,...fields}=patch;
+        const {agentRun,messages,pinned,pinnedAt,titleGenerated,...fields}=patch;
+        if(previous?.titleGenerated)delete fields.title;
 
         if(previous && Object.hasOwn(fields,'projectId') && (fields.projectId||'')!==(previous.projectId||''))throw Error('不能更改会话所属项目');
-        const merged=[...(previous?.messages || messages || (previous?.request?[{id:id+'-original',role:'user',content:previous.request}]:[]))];
-        for(const m of [...(messages||[]),...append])if(!merged.some(old=>old.id===m.id))merged.push(m);
+        const merged=[...(previous?.messages || (previous?.request?[{id:id+'-original',role:'user',content:previous.request,createdAt:previous.created}]:[]))];
+        const receivedAt=new Date().toISOString();
+        for(const m of [...(messages||[]),...append])if(!merged.some(old=>old.id===m.id))merged.push({...m,createdAt:typeof m.createdAt==='string'&&Number.isFinite(Date.parse(m.createdAt))?m.createdAt:receivedAt});
         const task={...previous,...fields,id,messages:merged};
-        if(!task.request||!Array.isArray(task.materials)||(!!task.projectId&&!state.projects.some(p=>p.id===task.projectId))||merged.some(m=>!m||!['user','assistant'].includes(m.role)||typeof m.content!=='string'))throw Error('任务数据无效');
+        if(typeof task.request!=='string'||(!task.request.trim()&&!task.materials?.length)||!Array.isArray(task.materials)||(!!task.projectId&&!state.projects.some(p=>p.id===task.projectId))||merged.some(m=>!m||!['user','assistant'].includes(m.role)||typeof m.content!=='string'))throw Error('任务数据无效');
         state.tasks=previous?state.tasks.map(t=>t.id===id?task:t):[task,...state.tasks];
         if(JSON.stringify(state).length>2000000)throw Error('工作空间超过容量限制');
         await write('workspace',state);return task;
@@ -122,13 +151,19 @@ function createStorage(directory, safeStorage) {
         const state=await read('workspace',{tasks:[]});
         const task=state.tasks.find(t=>t.id===id);
         const messages=task?.messages|| (task?[{id:id+'-original',role:'user',content:task.request,materials:task.materials}]:[]);
-        const last=messages.at(-1);
-        if(!last||last.id!==messageId||last.role!=='user')throw Error('只能编辑尚未回复的最后一条消息');
-        task.messages=[...messages.slice(0,-1),{...last,id:randomUUID(),content:content.trim()}];
+        const index=messages.findLastIndex(m=>m.role==='user'),last=messages[index];
+        if(!last||last.id!==messageId)throw Error('只能编辑最近一条用户消息');
+        const replacement={...last,id:randomUUID(),content:content.trim(),createdAt:new Date().toISOString()};
+        task.messages=[...messages.slice(0,index),replacement];
         task.editedInputId=task.messages.at(-1).id;
-        if(messages.length===1)task.request=content.trim();
-        delete task.contextCheckpoint;delete task.promptTokens;delete task.partialReply;delete task.lastError;
+        if(index===0)task.request=content.trim();
+        delete task.contextCheckpoint;delete task.promptTokens;delete task.partialReply;delete task.lastError;delete task.lastErrorCode;delete task.modelRequestDiagnostics;
         if(JSON.stringify(state).length>2000000)throw Error('工作空间超过容量限制');
+        // Keep the replaced question and its replies outside active model history.
+        // Write the backup first: a failure must not discard the original reply.
+        const backups=path.join(directory,'message-edits');
+        await fs.mkdir(backups,{recursive:true,mode:0o700});
+        await fs.writeFile(path.join(backups,replacement.id+'.json'),JSON.stringify({taskId:id,editedAt:replacement.createdAt,replacementId:replacement.id,messages:messages.slice(index)}),{mode:0o600,flag:'wx'});
         await write('workspace',state);return task;
       });
     },
@@ -204,7 +239,7 @@ function createStorage(directory, safeStorage) {
             ...(encryptedKey ? { encryptedKey } : {}),
           };
         });
-        const extensions = validateExtensions(state.extensions ?? previous.extensions ?? builtins);
+        const extensions = await skillPackages.validate(validateExtensions(state.extensions ?? previous.extensions ?? builtins), previous.extensions || []);
         const projectIds = new Set();
         const projects = state.projects.map((project) => {
           if (
@@ -225,7 +260,7 @@ function createStorage(directory, safeStorage) {
             (t) =>
               !t ||
               !t.id ||
-              !t.request ||
+              typeof t.request!=='string' || (!t.request.trim()&&!t.materials?.length) ||
               !Array.isArray(t.materials) ||
               (t.projectId && !projectIds.has(t.projectId)),
           )

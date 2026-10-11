@@ -3,10 +3,10 @@ const os = require("node:os");
 const { extractDocxXml } = require("./docx.cjs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
-const ARCHIVE = /\.(zip|7z|tar|tgz|tar\.gz)$/i;
+const ARCHIVE = /\.(zip|7z|tar|tgz|tar\.gz|sketch)$/i;
 const TEXT =
   /\.(txt|md|markdown|csv|tsv|json|jsonl|ya?ml|toml|xml|html?|css|scss|less|js|jsx|ts|tsx|mjs|cjs|py|java|kt|kts|swift|go|rs|c|h|cpp|hpp|cs|rb|php|sql|sh|bash|zsh|vue|svelte|ini|conf|log)$/i;
-const MAX_FILE = 20 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRY = 20 * 1024 * 1024;
 const MAX_TEXT = 100000;
 const extensions = [
   "docx",
@@ -167,7 +167,7 @@ async function readArchive(filename, size) {
     try {
       const buffer = await tar(
           ["-xOf", filename, "--", name],
-          isDocx ? MAX_FILE : 1024 * 1024,
+          isDocx ? MAX_ARCHIVE_ENTRY : 1024 * 1024,
           Math.max(1, Math.min(3000, deadline - Date.now())),
         );
       content = isDocx ? await readEmbeddedDocx(buffer, Math.max(1, Math.min(3000, deadline - Date.now()))) : decode(buffer);
@@ -209,7 +209,6 @@ async function readArchive(filename, size) {
 async function readMaterial(filename) {
   const info = await fs.stat(filename);
   if (!info.isFile()) throw Error("请选择文件。");
-  if (info.size > MAX_FILE) throw Error("单个材料文件请小于 20 MB。");
   if (/\.(pdf|xlsx|pptx|ppt)$/i.test(filename)) {
     const parsed=await require("./document-parser.cjs").parseDocument(filename);
     return {name:path.basename(filename),size:info.size,text:parsed.text.slice(0,MAX_TEXT),summary:parsed.summary+(parsed.text.length>MAX_TEXT?"；附件摘要已截断，可按需读取原件":""),parseStatus:parsed.status};
@@ -220,17 +219,14 @@ async function readMaterial(filename) {
       summary: `已读取 DOCX 正文和表格${content.length > MAX_TEXT ? "（前 100000 字符，内容已截断）" : ""}；图片暂不识别` };
   }
   if (ARCHIVE.test(filename)) return readArchive(filename, info.size);
-  if (/\.(rar|gz)$/i.test(filename))
-    throw Error(
-      "请使用 ZIP、7z、TAR 或 TAR.GZ/TGZ 格式；不支持 RAR 和单文件 GZ。",
-    );
-  const content = readable(filename)
-    ? decode(await fs.readFile(filename))
-    : null;
+  // Unknown extensions may contain ordinary text. Binary files remain available
+  // as originals rather than being rejected or interpreted as model text.
+  const content = decode(await fs.readFile(filename));
   return {
     name: path.basename(filename),
     size: info.size,
     text: content?.slice(0, MAX_TEXT) ?? null,
+    ...(content===null?{summary:'已保存原文件，可使用文件工具处理；尚未提取正文'}:{}),
     ...(content && content.length > MAX_TEXT
       ? { summary: "已读取前 100000 字符，内容已截断" }
       : {}),
@@ -260,15 +256,14 @@ async function readSource(filename, name, entry) {
     entry = resolveArchiveEntry(listing, entry);
     const isDocx=/\.docx$/i.test(entry);
     if(!readable(entry)&&!isDocx)throw Error('此条目不支持文本解析');
-    const buffer=await tar(['-xOf',filename,'--',entry],isDocx?MAX_FILE:2*1024*1024,8000);
+    const buffer=await tar(['-xOf',filename,'--',entry],isDocx?MAX_ARCHIVE_ENTRY:2*1024*1024,8000);
     const text=isDocx?await readEmbeddedDocx(buffer,8000):decode(buffer);
     if(text===null)throw Error('条目不是 UTF-8 文本');
     return {text,kind:'archive_entry',entry};
   }
   if (/\.(pdf|xlsx|pptx|ppt)$/i.test(name)) return require('./document-parser.cjs').parseDocument(filename,name);
   if (/\.docx$/i.test(name)) return {text:await readDocx(filename),kind:'docx_text'};
-  if(!readable(name))throw Error('此文件暂不支持文本解析');
-  const text=decode(await fs.readFile(filename));if(text===null)throw Error('文件不是 UTF-8 文本');
+  const text=decode(await fs.readFile(filename));if(text===null)return {text:'此文件为二进制格式，尚未提取正文。请使用材料目录中的 sourcePath，通过适合此格式的文件工具处理原件；不要把文件头或元信息当成正文。',kind:'binary_original'};
   return {text,kind:'text'};
 }
 async function importPastedMaterials(entries, directory) {
@@ -277,7 +272,6 @@ async function importPastedMaterials(entries, directory) {
   for (const entry of entries) {
     if (!entry || typeof entry.name !== 'string' || !entry.name || !(entry.bytes instanceof Uint8Array))
       throw Error('无效的粘贴文件。');
-    if (entry.bytes.byteLength > MAX_FILE) throw Error('单个材料文件请小于 20 MB。');
   }
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'ailo-paste-'));
   const saved = [];
@@ -308,7 +302,7 @@ async function importPastedMaterials(entries, directory) {
 }
 async function imageContent(filename) {
   const info = await fs.stat(filename);
-  if (!info.isFile() || info.size > MAX_FILE) throw Error('图片文件无效或超过 20 MB。');
+  if (!info.isFile()) throw Error('图片文件无效。');
   const bytes = await fs.readFile(filename);
   let mime;
   if (bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) mime = 'image/png';

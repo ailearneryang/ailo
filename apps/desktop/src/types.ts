@@ -3,7 +3,7 @@ export type MCPTool={name:string;description:string;inputSchema:Record<string,un
 export type MCPConnection={id:string;name:string;description:string;url:string;authType:'none'|'token'|'oauth';headerName:string;clientId:string;hasCredential:boolean;enabled:boolean;connected:boolean;verifiedAt:string|null;error:string;authorizing:boolean;pendingCalls:{id:string;tool:string;purpose:string;params:Record<string,unknown>;at:string}[];tools:MCPTool[]};
 export type MCPConnectionInput={id?:string;name:string;description:string;url:string;authType:'none'|'token'|'oauth';headerName?:string;token?:string;clientId?:string};
 export type ConnectionTarget='feishu'|'amap'|{mcpId:string};
-export type ArtifactPreview={kind:'image'|'text'|'markdown'|'html'|'pdf'|'spreadsheet';content:string;version:string;truncated?:boolean;sheets?:{name:string;cells:{address:string;text:string}[]}[]};
+export type ArtifactPreview={kind:'image'|'text'|'markdown'|'html'|'pdf'|'spreadsheet';content:string;version:string;truncated?:boolean;htmlResources?:{loaded:number;issues:string[];scriptsBlocked:number};sheets?:{name:string;cells:{address:string;text:string}[]}[]};
 export type ProjectMemoryData={revision:number;notes:string;hiddenTaskIds?:string[];records:{taskId:string;title:string;goal:string;status:string;decisions:unknown[];steps:unknown[];updatedAt?:string}[]};
 export type KnowledgeDocument={id:string;name:string;chars:number;chunks:number;createdAt:string};
 export type KnowledgeLibrary={id:string;name:string;description:string;createdAt:string;documents:KnowledgeDocument[]};
@@ -18,7 +18,7 @@ export type ClarificationOption = { id: string; label: string; description?: str
 export type ClarificationQuestion = { id: string; kind: "choice" | "attachment"; title: string; description?: string; options?: ClarificationOption[] };
 export type Clarification = { title: string; questions: ClarificationQuestion[]; defaults: string[] };
 export type ClarificationAnswer = { questionId: string; answer: string };
-export type Extension = { id: string; kind: "expert" | "skill"; name: string; description: string; instructions: string; enabled: boolean };
+export type Extension = { id: string; kind: "expert" | "skill"; name: string; description: string; instructions: string; enabled: boolean; package?: { id: string; files: number } };
 export type Material = {
   sourceId?: string;
   name: string;
@@ -40,6 +40,7 @@ export type Model = {
 };
 export type Project = { description?:string; pinned?:boolean; localPath?:string; source?:'local'; id: string; name: string; extensionIds?: string[] };
 export type Message = {
+  createdAt?: string;
   clarification?: Clarification;
   clarificationReplyTo?: string;
   clarificationAnswers?: ClarificationAnswer[];
@@ -50,6 +51,11 @@ export type Message = {
   modelName?: string;
 };
 export type Task = {
+  lastErrorCode?: string;
+  modelRequestDiagnostics?: Record<string,unknown>;
+  titleGenerated?: boolean;
+  pinned?: boolean;
+  pinnedAt?: string;
   reasoningEffort?: 'low'|'medium'|'high';
   petReadToken?: string;
   knowledgeIds?:string[];
@@ -91,6 +97,7 @@ export type RequestContextUsage = {
   providerUsage?: {inputTokens?:number;outputTokens?:number;reasoningTokens?:number};
 };
 export type AgentRun = {
+  conversationTitle?: string;
   executionId?: string;
   afterMessageId?: string;
   progressInputId?: string;
@@ -128,6 +135,7 @@ export const emptyWorkspace: Workspace = {
 declare global {
   interface Window {
     ailo: {
+      importSkill:(input:{name:string;buffer:ArrayBuffer})=>Promise<Extension>;
       projectMemory:(id:string)=>Promise<ProjectMemoryData>;
       saveProjectMemory:(id:string,input:{notes:string;revision:number;hiddenTaskIds?:string[]})=>Promise<unknown>;
       schedulesList:()=>Promise<Schedule[]>;
@@ -188,11 +196,12 @@ declare global {
   searchEnabled?: boolean;
         messages: { role: "user" | "assistant"; content: string }[];
       }) => Promise<{ content: string; clarification?: Clarification; modelName: string; contextCheckpoint?: ContextCheckpoint; promptTokens?: number }>;
-      onChatStatus: (callback: (status: { id: string; message?: string; content?: string; taskId?:string; finished?:boolean; run?:AgentRun }) => void) => () => void;
+      onChatStatus: (callback: (status: { id: string; message?: string; content?: string; taskId?:string; finished?:boolean; run?:AgentRun;failure?:{code:string;requestDiagnostics?:Record<string,unknown>;retryCount:number} }) => void) => () => void;
       cancel: (id: string) => Promise<void>;
       sessions: () => Promise<{id:string;taskId:string;status:string;content:string;updatedAt?:string}[]>;
       editLastMessage: (id:string,messageId:string,content:string) => Promise<Task>;
       patchTask: (id:string,patch:Partial<Task>,append?:Message[]) => Promise<Task>;
+      setTaskPinned: (id:string,pinned:boolean) => Promise<Task>;
       steer: (input:{id:string;taskId:string;content:string}) => Promise<Message>;
       projectFiles: (taskId:string) => Promise<{files:{path:string;label:string;size:number;sha256:string}[];truncated:boolean}>;
       reveal: (taskId:string, artifactPath?:string, projectFile?:boolean) => Promise<void>;

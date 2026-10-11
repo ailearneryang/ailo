@@ -3,11 +3,12 @@ const {createHash,randomUUID}=require('node:crypto');
 const {resolveFile,normalizeProjectPath}=require('./agent/workspace.cjs');
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const queues=new Map();
-async function previewFile(file){const stat=await fs.stat(file);if(!stat.isFile()||stat.size>10*1024*1024)throw Error('此成果请在项目文件夹中查看');const data=await fs.readFile(file),ext=path.extname(file).toLowerCase(),version=hash(data);
+async function previewFile(file,root=path.dirname(file)){const stat=await fs.stat(file);if(!stat.isFile()||stat.size>10*1024*1024)throw Error('此成果请在项目文件夹中查看');const data=await fs.readFile(file),ext=path.extname(file).toLowerCase(),version=hash(data);
  if(['.png','.jpg','.jpeg','.webp'].includes(ext))return {kind:'image',version,content:`data:image/${ext==='.jpg'||ext==='.jpeg'?'jpeg':ext.slice(1)};base64,${data.toString('base64')}`};
  if(ext==='.pdf')return {kind:'pdf',version,content:data.toString('base64')};
  if(ext==='.xlsx'){const ExcelJS=require('exceljs'),book=new ExcelJS.Workbook();await book.xlsx.load(data);const sheets=[];let total=0;book.eachSheet(sheet=>{const cells=[];sheet.eachRow(row=>row.eachCell(cell=>{if(++total<=10000)cells.push({address:cell.address,text:cell.text});}));sheets.push({name:sheet.name,cells});});return {kind:'spreadsheet',version,content:'',sheets,truncated:total>10000};}
  if(data.includes(0))throw Error('二进制成果请在项目文件夹中查看');
+ if(/\.html?$/i.test(file))return {kind:'html',version,...await require('./html-preview.cjs').htmlPreview(data.toString('utf8'),root,path.relative(root,file).split(path.sep).join('/'))};
  return {kind:/\.html?$/i.test(file)?'html':/\.(md|markdown)$/i.test(file)?'markdown':'text',version,content:data.toString('utf8').slice(0,100000),truncated:data.length>100000};
 }
 async function editFile(root,backupRoot,relative,input){relative=normalizeProjectPath(relative);const queueKey=root+'\0'+relative;const next=(queues.get(queueKey)||Promise.resolve()).catch(()=>{}).then(async()=>{

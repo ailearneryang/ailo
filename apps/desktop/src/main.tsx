@@ -5,7 +5,7 @@ import {ProfileMenu} from './profile-menu';
 import './appearance';
 import './appearance.css';
 import {AppearanceSettings} from './appearance-settings';
-import { canSendMaterial, isImageMaterial } from "../attachments.mjs";
+import { canSendMaterial, hasMessageContent } from "../attachments.mjs";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
@@ -14,8 +14,11 @@ import { Schedules } from "./schedules";
 import { MyAilo } from "./my-ailo";
 import { AccountPage, ModelSettings } from "./settings";
 import { AssistantText } from "./assistant-text";
+import {MessageActions} from './message-actions';
 import { ConversationNavigation } from './conversation-navigation';
 import { ProjectNavigation } from "./project-navigation";
+import { TaskNavigation } from "./task-navigation";
+import { SidebarLayout } from "./sidebar-layout";
 import { ProjectOverview } from "./project-overview";
 import { ProjectPicker } from "./project-picker";
 import { ModelPicker } from "./model-picker";
@@ -52,14 +55,15 @@ function App() {
   const [newKnowledgeIds,setNewKnowledgeIds]=useState<string[]>([]);
   const [view, setView] = useState("assistant");
   const [expandedProjects,setExpandedProjects]=useState<Record<string,boolean>>({});
+  const [projectsOpen,setProjectsOpen]=useState(true);
   const [messageEdit,setMessageEdit]=useState<{taskId:string;messageId:string;content:string}|null>(null);
   const [input, setInput] = useState("");
   const [materials, setMaterials] = useState<Material[]>([]);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [rightPanel,setRightPanel] = useState<'artifacts'|'materials'|null>(null);
-  const showPanel=rightPanel==='materials';
+  const [rightPanel,setRightPanel] = useState<'artifacts'|null>(null);
+  const rightPanelToggle=useRef<HTMLButtonElement>(null);
   const [user, setUser] = useState<User | null>(null);
   const [accountReady, setAccountReady] = useState(false);
   const [projectId, setProjectId] = useState("");
@@ -97,7 +101,7 @@ function App() {
   const drafts=useRef<Record<string,{input:string;materials:Material[]}>>({});
   const [steeringSending,setSteeringSending]=useState(false);
   const steeringRef=useRef(false);
-  type QueuedInput={id:string;taskId:string;content:string};
+  type QueuedInput={id:string;taskId:string;content:string;materials?:Material[]};
   const [queued,setQueued]=useState<QueuedInput[]>(()=>{try{return JSON.parse(localStorage.getItem('ailo-message-queue')||'[]');}catch{return [];}});
   const [queueEditing,setQueueEditing]=useState<string>();
   const [queueDraft,setQueueDraft]=useState('');
@@ -112,8 +116,9 @@ function App() {
     const entry=Object.entries(requests.current).find(([,s])=>s.id===status.id);
     if(!entry)return;
     const [taskId,session]=entry;
+    if(status.failure)setData(previous=>({...previous,tasks:previous.tasks.map(t=>t.id===taskId?{...t,lastErrorCode:status.failure!.code,modelRequestDiagnostics:status.failure!.requestDiagnostics}:t)}));
     if(status.finished){delete requests.current[taskId];syncSessions();void window.ailo.read().then(setData);return;}
-    if (status.run) setData(previous => ({...previous,tasks:previous.tasks.map(t => t.id === taskId ? {...t,agentRun:status.run} : t)}));
+    if (status.run) setData(previous => ({...previous,tasks:previous.tasks.map(t => t.id === taskId ? {...t,agentRun:status.run,...(status.run?.conversationTitle?{title:status.run.conversationTitle,titleGenerated:true}:{})} : t)}));
     requests.current[taskId]={...session,attached:true,...(status.message?{status:status.message}:{}),...(typeof status.content==='string'?{content:status.content,status:'正在生成回复…'}:{})};
     syncSessions();
   }), []);
@@ -142,6 +147,7 @@ function App() {
         role: "user",
         content: t.request,
         materials: t.materials,
+        createdAt: t.created,
       },
     ];
   useEffect(() => {
@@ -192,7 +198,12 @@ function App() {
       })
       .catch((e) => setError("无法加载本地记录：" + String(e)));
   }, []);
-  const recentTasks = data.tasks.filter(t=>t.id !== ASSISTANT_ID).sort((a,b)=>Date.parse(b.scheduledAt||b.created)-Date.parse(a.scheduledAt||a.created)).filter((t,index,items)=>!t.scheduledTaskId || t.scheduledArchived || items.findIndex(other=>other.scheduledTaskId===t.scheduledTaskId)===index);
+  const pinnedTasks = data.tasks.filter(t=>t.id!==ASSISTANT_ID&&t.pinned).sort((a,b)=>Date.parse(b.pinnedAt||b.created)-Date.parse(a.pinnedAt||a.created));
+  const recentTasks = data.tasks.filter(t=>t.id !== ASSISTANT_ID).sort((a,b)=>Date.parse(b.scheduledAt||b.created)-Date.parse(a.scheduledAt||a.created)).filter((t,index,items)=>!t.scheduledTaskId || t.scheduledArchived || items.findIndex(other=>other.scheduledTaskId===t.scheduledTaskId)===index).filter(t=>!t.pinned);
+  async function toggleTaskPin(t:Task){
+    try{const saved=await window.ailo.setTaskPinned(t.id,!t.pinned);setData(previous=>({...previous,tasks:previous.tasks.map(old=>old.id===saved.id?{...old,pinned:saved.pinned,pinnedAt:saved.pinnedAt}:old)}));}
+    catch(e){setError((e as Error).message);}
+  }
   const isConversation = view === "chat" || view === "assistant";
   const task = data.tasks.find((t) => t.id === active);
   const attentionCount = unreadAttentionTasks(data.tasks, Object.keys(sessions)).length;
@@ -321,7 +332,7 @@ function App() {
       searchEnabled: useSearch,
         taskId: updated.id,
         contextCheckpoint: nextTask.contextCheckpoint,
-        messages: messages.map(m => ({role:m.role,content:m.content})),
+        messages: messages.map(m => ({role:m.role,content:m.content,materials:m.materials})),
       });
       const assistant: Message = {
         id: requestId+'-assistant',
@@ -362,13 +373,13 @@ function App() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if(pending && task?.id===pending && requestRef.current) {
-      if(!input.trim()||input.trim().length>20000)return;
-      setQueued(previous=>[...previous,{id:crypto.randomUUID(),taskId:task.id,content:input.trim()}]);
-      queueAutoPaused.current=false;setInput('');setNotice('已加入待发送队列；本轮结束后自动发送，也可立即执行。');
+      if(!hasMessageContent(input,materials)||input.trim().length>20000)return;
+      setQueued(previous=>[...previous,{id:crypto.randomUUID(),taskId:task.id,content:input.trim(),materials}]);
+      queueAutoPaused.current=false;setInput('');setMaterials([]);setNotice('已加入待发送队列；带附件的消息将在本轮结束后发送。');
       return;
     }
     if (
-      !input.trim() ||
+      !hasMessageContent(input,materials) ||
       busy ||
       !ready ||
       !modelReady()
@@ -376,7 +387,7 @@ function App() {
       return;
     if (materials.some((m) => !canSendMaterial(m))) {
       setError(
-        "有材料无法读取，请重新添加或移除不支持的文件。支持 PPT/PPTX、DOCX、文字 PDF、XLSX 和文本；图片需使用支持图片的模型。",
+        "有附件的原文件缺失，请重新添加该文件。",
       );
       return;
     }
@@ -394,7 +405,7 @@ function App() {
         }
       : {
           id: view === "assistant" ? ASSISTANT_ID : crypto.randomUUID(),
-          title: view === "assistant" ? "我的 Ailo" : input.trim().slice(0, 26),
+          title: view === "assistant" ? "我的 Ailo" : (input.trim()||materials.map(m=>m.name).join('、')).slice(0, 26),
           request: input.trim(),
           materials,
           projectId,
@@ -417,6 +428,7 @@ function App() {
     if(queueSendingRef.current||steeringRef.current||saving||importing||!ready)return;
     if(pending && (pending!==item.taskId||!requestRef.current))return;
     if(queueEditing===item.id)return;
+    if(pending&&item.materials?.length){setNotice('带附件的消息将在当前回复结束后发送。');return;}
     queueSendingRef.current=true;setQueueSending(item.id);queueAutoPaused.current=false;
     try {
       if(pending && requestRef.current) {
@@ -433,7 +445,7 @@ function App() {
         // Stable message id makes recovery safe if the renderer was closed after saving.
         const messages=messagesFor(target);
         if(!messages.some(m=>m.id===item.id)) {
-          await respond({...target,messages:[...messages,{id:item.id,role:'user',content:item.content}]},false);
+          await respond({...target,materials:[...target.materials,...(item.materials||[])],messages:[...messages,{id:item.id,role:'user',content:item.content,materials:item.materials}]},false);
         }
         const saved=await window.ailo.read();
         if(saved.tasks.find(t=>t.id===item.taskId)?.messages?.some(m=>m.id===item.id))setQueued(previous=>previous.filter(m=>m.id!==item.id));
@@ -462,7 +474,6 @@ function App() {
     setImporting(true);
     try {
       if (files.length > 10) throw Error("一次最多添加 10 个材料文件。");
-      if (files.some(file => file.size > 20 * 1024 * 1024)) throw Error("单个材料文件请小于 20 MB。");
       const entries = await Promise.all(files.map(async file => ({ name: file.name || '粘贴图片.png', bytes: new Uint8Array(await file.arrayBuffer()) })));
       const imported = await window.ailo.pasteFiles(entries);
       setMaterials(previous => [...previous, ...imported]);
@@ -487,6 +498,7 @@ function App() {
     }
   }
   const progressAt=progressAnchor(task?.agentRun,task?messagesFor(task):[]);
+  const latestUserMessageId=task?messagesFor(task).filter(m=>m.role==='user').at(-1)?.id:undefined;
   const currentProgress=task && (task.agentRun && <TaskProgress task={task} onOpenArtifacts={()=>setRightPanel('artifacts')} busy={busy} showRecovery={messagesFor(task).at(-1)?.role !== 'user'} onContinue={() => {
                   if (messagesFor(task).at(-1)?.role === 'user') { void respond(task,false); return; }
                   const message: Message = {id:crypto.randomUUID(),role:"user",content:"请从已保存的任务状态继续，先检查已有成果，不重复执行已完成步骤。"};
@@ -494,12 +506,11 @@ function App() {
                 }} />);
   return (
     <div className="shell">
-      <aside className="sidebar">
-        <button className="brand brand-home" type="button" aria-label="Ailo 首页" title="返回首页" disabled={!ready || saving || importing} onClick={() => select(null)}>
-          Ailo
-        </button>
+      <SidebarLayout disabled={!ready || saving || importing} onHome={()=>select(null)}>
         <button
           className="new"
+          aria-label="新的对话"
+          title="新的对话"
           disabled={!ready || saving || importing}
           onClick={() => select(null)}
         >
@@ -507,52 +518,50 @@ function App() {
         </button>
         <nav>
           <CompanionNavigation state={companionState} count={attentionCount} selected={view === "assistant"} onSelect={()=>select(ASSISTANT_ID)}/>
-          <button className={view === "knowledge" ? "selected" : ""} onClick={()=>setView("knowledge")}><Icon name="book"/><span>知识库</span></button>
-          <button className={view === "schedules" ? "selected" : ""} onClick={()=>{setScheduleTarget(null);setView("schedules");}}><Icon name="clock"/><span>定时任务</span></button>
+          <button aria-label="知识库" title="知识库" className={view === "knowledge" ? "selected" : ""} onClick={()=>setView("knowledge")}><Icon name="book"/><span>知识库</span></button>
+          <button aria-label="定时任务" title="定时任务" className={view === "schedules" ? "selected" : ""} onClick={()=>{setScheduleTarget(null);setView("schedules");}}><Icon name="clock"/><span>定时任务</span></button>
           <button
             className={view === "extensions" ? "selected" : ""}
+            aria-label="扩展"
+            title="扩展"
             onClick={() => setView("extensions")}
           >
             <Icon name="grid" /><span>扩展</span>
           </button>
         </nav>
         <div className="sidebar-scroll">
-          <div className="label">
-            项目 <span>{data.projects.length || ""}</span>
-          </div>
-          <div className="project-list">
+          {!!pinnedTasks.length&&<section aria-label="置顶对话"><div className="label">置顶</div><div className="history">{pinnedTasks.map(t=><TaskNavigation key={t.id} task={t} selected={view==='chat'&&active===t.id} busy={saving||importing} onSelect={()=>select(t.id)} onPin={()=>toggleTaskPin(t)}>{sessions[t.id]&&<small>执行中</small>}</TaskNavigation>)}</div></section>}
+          <button className="label project-group-toggle" aria-expanded={projectsOpen} aria-controls="sidebar-projects" onClick={()=>setProjectsOpen(open=>!open)}>
+            <span>项目 {data.projects.length || ""}</span><Icon name="chevron-right"/>
+          </button>
+          {projectsOpen&&<div id="sidebar-projects" className="project-list">
             {data.projects.length === 0 ? (
               <p className="muted">在新对话中创建项目</p>
             ) : (
-              [...data.projects].sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned)).map(p=><ProjectNavigation key={p.id} project={p} expanded={!!expandedProjects[p.id]} selected={projectId===p.id} tasks={data.tasks.filter(t=>t.projectId===p.id)} active={view==='chat'?active:null} runningIds={Object.keys(sessions)} extensions={availableExtensions} busy={saving||importing} onExpand={()=>setExpandedProjects(v=>({...v,[p.id]:!v[p.id]}))} onOpen={()=>{select(null);selectProject(p.id);setView('project');}} onNew={()=>{select(null);selectProject(p.id);}} onSelect={select} onSave={async project=>{
+              [...data.projects].sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned)).map(p=><ProjectNavigation key={p.id} project={p} expanded={!!expandedProjects[p.id]} selected={projectId===p.id} tasks={data.tasks.filter(t=>t.projectId===p.id)} active={view==='chat'?active:null} runningIds={Object.keys(sessions)} extensions={availableExtensions} busy={saving||importing} onExpand={()=>setExpandedProjects(v=>({...v,[p.id]:!v[p.id]}))} onOpen={()=>{select(null);selectProject(p.id);setView('project');}} onNew={()=>{select(null);selectProject(p.id);}} onSelect={select} onPin={toggleTaskPin} onSave={async project=>{
                 if(data.projects.some(other=>other.id!==project.id&&other.name.toLowerCase()===project.name.toLowerCase())){setError('项目名称已存在，请换个名称。');return false;}
                 return commit({...data,projects:data.projects.map(old=>old.id===project.id?project:old)});
               }} onDelete={async()=>{try{if(await window.ailo.removeProject(p.id)){const latest=await window.ailo.read();setData(latest);if(projectId===p.id){select(null);setProjectId('');}}}catch(e){setError((e as Error).message);}}} onError={setError}/>)
             )}
-          </div>
+          </div>}
           <div className="label">最近的对话</div>
           <div className="history">
             {recentTasks.length === 0 ? (
               <p className="muted">从一件想完成的事开始</p>
             ) : (
               recentTasks.map((t) => (
-                <button
-                  key={t.id}
-                  disabled={saving || importing}
-                  className={(active === t.id ? "selected" : "") + (t.scheduledTaskId ? " scheduled-recent" : "")}
-                  onClick={() => select(t.id)}
-                >
-                  <span>{t.title}</span>{t.scheduledTaskId ? <small className="scheduled-recent-date">{new Date(t.scheduledAt||t.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})} · {sessions[t.id] ? (sessions[t.id].status.startsWith('等待执行')?'排队中':'执行中') : t.lastError || ['failed','blocked','waiting_permission','paused','waiting_user'].includes(t.agentRun?.status||'') || t.messages?.at(-1)?.clarification ? '待处理' : t.messages?.at(-1)?.role==='assistant' || t.answer ? '已有结果' : '等待结果'}</small> : sessions[t.id]&&<small className="session-status">{sessions[t.id].status.startsWith('等待执行')?'排队中':'执行中'}</small>}
-                </button>
+                <TaskNavigation key={t.id} task={t} selected={view==='chat'&&active===t.id} busy={saving||importing} onSelect={()=>select(t.id)} onPin={()=>toggleTaskPin(t)}>
+                  {t.scheduledTaskId ? <small className="scheduled-recent-date">{new Date(t.scheduledAt||t.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})} · {sessions[t.id] ? (sessions[t.id].status.startsWith('等待执行')?'排队中':'执行中') : t.lastError || ['failed','blocked','waiting_permission','paused','waiting_user'].includes(t.agentRun?.status||'') || t.messages?.at(-1)?.clarification ? '待处理' : t.messages?.at(-1)?.role==='assistant' || t.answer ? '已有结果' : '等待结果'}</small> : sessions[t.id]&&<small className="session-status">{sessions[t.id].status.startsWith('等待执行')?'排队中':'执行中'}</small>}
+                </TaskNavigation>
               ))
             )}
           </div>
         </div>
         <ProfileMenu user={user} ready={accountReady} onSelect={setView}/>
-      </aside>
+      </SidebarLayout>
       <main>
         <header>
-          <div>
+          <div className="workspace-heading">
             <strong>
               {view === "pets" ? "宠物与陪伴" : view === "appearance" ? "外观设置" : view === "assistant" ? "我的 Ailo" : view === "knowledge" ? "知识库" : view === "schedules" ? "定时任务" : view === "extensions" ? "扩展" : view === "about"
                 ? "关于 Ailo"
@@ -562,7 +571,7 @@ function App() {
                     ? "我的账号"
                     : view === "project" ? data.projects.find(p=>p.id===projectId)?.name || "项目" : task?.title || "你的个人助手"}
             </strong>
-            {(view !== "assistant" || !ready || saving) && <small>
+            {(view !== "assistant" || !ready || saving) && <small className={'workspace-status'+(ready&&!saving?' ready':'')}>
               <span className="dot" />
               {saving
                 ? "正在保存…"
@@ -580,19 +589,10 @@ function App() {
                   : "尚未回复"}
               </span>
             )}
-            {task && isConversation && (view !== "assistant" || task.materials.length > 0) && (
-              <button onClick={() => setRightPanel(showPanel?null:'materials')}>
-                {showPanel ? "收起材料" : "查看材料"}
-              </button>
-            )}
-            {task && isConversation && (view !== "assistant" || !!task.agentRun?.artifacts.length) && <button className="artifact-toggle" aria-label={rightPanel==='artifacts'?'收起产物':'查看产物'} aria-expanded={rightPanel==='artifacts'} aria-controls="artifact-panel" onClick={()=>setRightPanel(rightPanel==='artifacts'?null:'artifacts')}><Icon name="panel"/><span>产物{task.agentRun?.artifacts.length?` (${task.agentRun.artifacts.length})`:''}</span></button>}
+            {task && isConversation && <button ref={rightPanelToggle} className="artifact-toggle task-sidebar-toggle" title={rightPanel?'收起任务侧栏':'打开任务侧栏：产物、项目文件和材料'} aria-label={rightPanel?'收起任务侧栏':'打开任务侧栏'} aria-expanded={!!rightPanel} aria-controls="artifact-panel" onClick={()=>setRightPanel(rightPanel?null:'artifacts')}><Icon name="panel"/></button>}
           </div>
         </header>
-        <div
-          className={
-            "workspace " + (task && isConversation && rightPanel ? "split" : "")
-          }
-        >
+        <div className="workspace">
           <section className={"conversation" + (view === "assistant" ? " assistant-conversation" : "") + (isConversation && !task ? " conversation-home" : "")}>
             {view === "assistant" && <MyAilo compact={!!task} data={data} runningIds={Object.keys(sessions)} onOpen={select} onSchedules={()=>setView("schedules")} onPets={()=>setView("pets")} />}
             {view === "pets" ? <PetSettings/> : view === "appearance" ? <AppearanceSettings/> : view === "knowledge" ? <KnowledgeCenter onUse={id=>{select(null);setNewKnowledgeIds([id]);setView("chat");setNotice("已选择知识库，发送问题即可检索资料。");}}/> : view === "schedules" ? <Schedules key={scheduleTarget||"all"} initialId={scheduleTarget||undefined} focusHistory={!!scheduleTarget} onChanged={async()=>setData(await window.ailo.read())} tasks={data.tasks} models={models} defaultModelId={data.defaultModelId} onFeishu={()=>{setExtensionTab("connector");setView("extensions");}} onModels={()=>setView("models")} onOpen={async id=>{const latest=await window.ailo.read();if(!latest.tasks.some(t=>t.id===id))throw Error('对话已删除或尚未创建');setData(latest);select(id);const opened=latest.tasks.find(t=>t.id===id)!;setModelId(opened.modelId||latest.defaultModelId);setProjectId(opened.projectId||"");setExtensionIds(opened.extensionIds||[]);}}/> : view === "project" && data.projects.some(p=>p.id===projectId) ? <ProjectOverview key={projectId} project={data.projects.find(p=>p.id===projectId)!} tasks={data.tasks.filter(t=>t.projectId===projectId)} onSelect={select} onNew={()=>{const id=projectId;select(null);selectProject(id);}}/> : view === "extensions" ? (
@@ -602,9 +602,14 @@ function App() {
                 onMaterial={material=>{setMaterials(items=>[...items,material]);setView(active === ASSISTANT_ID ? "assistant" : "chat");setError("");}}
                 onSave={async items => { const ok = await commit({...data, extensions:items}); if (ok) setExtensionIds(ids => ids.filter(id => items.some(i => i.id === id && i.enabled))); return ok; }}
                 onUse={item => {
-                  const ids = item.kind === "expert" ? selectedIds.filter(id => availableExtensions.find(e => e.id === id)?.kind !== "expert") : selectedIds;
-                  if (!ids.includes(item.id) && item.kind === "skill" && ids.filter(id => availableExtensions.find(e => e.id === id)?.kind === "skill").length >= 5) { setError("最多选择 5 个技能，请先在聊天框移除一个。"); return; }
-                  setExtensionIds([...new Set([...ids,item.id])]); setView(active === ASSISTANT_ID ? "assistant" : "chat"); setError("");
+                  if (item.kind === "skill") {
+                    if (!turnIds.includes(item.id) && turnIds.filter(id => availableExtensions.find(e => e.id === id)?.kind === "skill").length >= 5) { setError("最多选择 5 个技能，请先在聊天框移除一个。"); return; }
+                    setTurnExtensions(previous => ({...previous,[connectionKey]:[...new Set([...turnIds,item.id])]}));
+                  } else {
+                    changeConversationExtensions([item.id]);
+                    setTurnExtensions(previous => ({...previous,[connectionKey]:turnIds.filter(id => availableExtensions.find(e => e.id === id)?.kind !== "expert")}));
+                  }
+                  setView(active === ASSISTANT_ID ? "assistant" : "chat"); setError("");
                 }} />
             ) : view === "account" ? (
               <AccountPage
@@ -664,8 +669,10 @@ function App() {
                 <p>开始一件独立的事；需要持续交流或安排任务，可以使用「我的 Ailo」。</p>
               </div>
             ) : (
+              <div className="conversation-stage">
               <div className="thread">
                 <ConversationNavigation messages={messagesFor(task)} conversationId={task.id}/>
+                <div className="thread-content">
                 <div className="day">
                   {new Date(task.created).toLocaleDateString("zh-CN")} ·{" "}
                   {data.projects.find((p) => p.id === task.projectId)?.name ||
@@ -673,7 +680,7 @@ function App() {
                 </div>
                 {task.agentRun?.history?.filter(r=>!messagesFor(task).some(m=>m.id===r.afterMessageId)).map((r,i)=><ExecutionHistory key={r.executionId||i} task={task} run={r} onOpenArtifacts={()=>setRightPanel('artifacts')}/>)}
                 {!progressAt && currentProgress && <details className="completed-execution"><summary>此前任务进度</summary>{currentProgress}</details>}
-                {messagesFor(task).map((message) => (
+                {messagesFor(task).map((message,index) => (
                   <div
                     key={message.id}
                     className={message.role === "user" ? "user-turn" : "reply"}
@@ -692,18 +699,16 @@ function App() {
                       }
                     >
                       {messageEdit?.taskId===task.id && messageEdit.messageId===message.id ? <div className="message-editor">
-                        <textarea autoFocus aria-label="编辑刚刚发送的消息" value={messageEdit.content} disabled={busy} onChange={e=>setMessageEdit({...messageEdit,content:e.target.value})}/>
+                        <textarea autoFocus aria-label="编辑最近一条消息" value={messageEdit.content} disabled={busy} onChange={e=>setMessageEdit({...messageEdit,content:e.target.value})}/>
+                        <p className="message-edit-note">重新发送后，将按新内容重新回复。原回复会备份，已生成的项目文件会保留。</p>
                         <div><button className="primary" disabled={busy||!messageEdit.content.trim()} onClick={()=>void resendEditedMessage()}>发送</button><button disabled={busy} onClick={()=>setMessageEdit(null)}>取消</button></div>
                       </div> : message.role === "assistant" ? <AssistantText content={message.content}/> : message.content}
                       {!!message.materials?.length && <div className="message-files" aria-label="消息附件">
                         {message.materials.map((material,i)=><span className="message-file" key={i} title={material.name}><Icon name="file"/><span>{material.name}</span></span>)}
                       </div>}
                     </div>
-                    {message.role==='user' && messagesFor(task).at(-1)?.id===message.id && !pending && messageEdit?.taskId!==task.id && (
-                      <div className="message-actions">
-                        <button type="button" title="编辑消息" aria-label="编辑消息" disabled={busy} onClick={()=>setMessageEdit({taskId:task.id,messageId:message.id,content:message.content})}><Icon name="edit"/></button>
-                      </div>
-                    )}
+                    {messageEdit?.taskId!==task.id&&<MessageActions message={message} createdAt={message.createdAt||(index===0&&message.role==='user'?task.created:undefined)} disabled={busy}
+                      onEdit={message.role==='user'&&latestUserMessageId===message.id&&!pending?()=>setMessageEdit({taskId:task.id,messageId:message.id,content:message.content}):undefined}/>}
                     {message.role === "assistant" && message.clarification && <ClarificationCard
                       messageId={message.id} value={message.clarification} disabled={busy}
                       active={messagesFor(task).at(-1)?.id === message.id}
@@ -750,6 +755,9 @@ function App() {
                 )}
 
                 <div ref={threadEnd} />
+                </div>
+              </div>
+              {isConversation && rightPanel && <ArtifactPanel key={task.id} task={task} materials={[...task.materials,...materials]} onAttach={()=>void attach()} attaching={busy || importing} onRequest={text=>setInput(text)} onClose={()=>{setRightPanel(null);rightPanelToggle.current?.focus({preventScroll:true});}}/>}
               </div>
             )}
             {isConversation && (
@@ -758,7 +766,7 @@ function App() {
                 {task && queued.some(m=>m.taskId===task.id) && <div className="message-queue" aria-label="待发送消息">
                   <p><Icon name="queue"/>待发送 · {queued.filter(m=>m.taskId===task.id).length}</p>
                   {queued.filter(m=>m.taskId===task.id).map(item=><div className="queued-message" key={item.id}>
-                    {queueEditing===item.id?<><textarea aria-label="编辑待发送消息" value={queueDraft} maxLength={20000} onChange={e=>setQueueDraft(e.target.value)}/><button type="button" title="保存" aria-label="保存" disabled={!queueDraft.trim()} onClick={()=>{setQueued(previous=>previous.map(m=>m.id===item.id?{...m,content:queueDraft.trim()}:m));setQueueEditing(undefined);}}><Icon name="check"/></button><button type="button" title="取消" aria-label="取消" onClick={()=>setQueueEditing(undefined)}><Icon name="close"/></button></>:<><i className="queued-state" title={queueSending===item.id?'正在处理':'队列中'} aria-label={queueSending===item.id?'正在处理':'队列中'}><Icon name="clock"/></i><span title={item.content}>{item.content}</span><div className="queued-actions"><button type="button" title="立即执行" aria-label="立即执行" disabled={!!queueSending||steeringSending} onClick={()=>void executeQueued(item)}><Icon name="play"/></button><button type="button" title="编辑" aria-label="编辑" disabled={queueSending===item.id} onClick={()=>{setQueueEditing(item.id);setQueueDraft(item.content);}}><Icon name="edit"/></button><button type="button" title="删除" aria-label="删除" disabled={queueSending===item.id} onClick={()=>setQueued(previous=>previous.filter(m=>m.id!==item.id))}><Icon name="trash"/></button></div></>}
+                    {queueEditing===item.id?<><textarea aria-label="编辑待发送消息" value={queueDraft} maxLength={20000} onChange={e=>setQueueDraft(e.target.value)}/><button type="button" title="保存" aria-label="保存" disabled={!hasMessageContent(queueDraft,item.materials)} onClick={()=>{setQueued(previous=>previous.map(m=>m.id===item.id?{...m,content:queueDraft.trim()}:m));setQueueEditing(undefined);}}><Icon name="check"/></button><button type="button" title="取消" aria-label="取消" onClick={()=>setQueueEditing(undefined)}><Icon name="close"/></button></>:<><i className="queued-state" title={queueSending===item.id?'正在处理':'队列中'} aria-label={queueSending===item.id?'正在处理':'队列中'}><Icon name="clock"/></i><span title={item.content||item.materials?.map(m=>m.name).join("、")}>{item.content||item.materials?.map(m=>m.name).join("、")}</span><div className="queued-actions"><button type="button" title="立即执行" aria-label="立即执行" disabled={!!queueSending||steeringSending} onClick={()=>void executeQueued(item)}><Icon name="play"/></button><button type="button" title="编辑" aria-label="编辑" disabled={queueSending===item.id} onClick={()=>{setQueueEditing(item.id);setQueueDraft(item.content);}}><Icon name="edit"/></button><button type="button" title="删除" aria-label="删除" disabled={queueSending===item.id} onClick={()=>setQueued(previous=>previous.filter(m=>m.id!==item.id))}><Icon name="trash"/></button></div></>}
                   </div>)}
                 </div>}
                 <form className="composer" onSubmit={submit}>
@@ -814,7 +822,7 @@ function App() {
                       onSelect={setModelId}
                       onConfigure={() => setView("models")}
                     />}
-                    {pending && !input.trim() ? (
+                    {pending && !hasMessageContent(input,materials) ? (
                       <button
                         type="button"
                         className="primary send stop-button"
@@ -828,7 +836,7 @@ function App() {
                       <button
                         className="primary send"
                         disabled={
-                          !input.trim() ||
+                          !hasMessageContent(input,materials) ||
                                               !ready ||
                           saving || importing ||
                           (!!pending && input.trim().length > 20000)
@@ -857,7 +865,7 @@ function App() {
                     />
                   ) : task?.projectId ? (
                     <span className="thread-project">
-                      ▱{" "}
+                      <Icon name="folder"/>
                       {data.projects.find((p) => p.id === task.projectId)
                         ?.name || "未归类"}
                     </span>
@@ -882,25 +890,6 @@ function App() {
               </p>
             )}
           </section>
-          {task && isConversation && rightPanel==='artifacts' && <ArtifactPanel key={task.id} task={task} onRequest={text=>setInput(text)} onClose={()=>setRightPanel(null)}/>}
-          {task && isConversation && showPanel && (
-            <aside className="inspector">
-              <h2>对话材料</h2>
-              {!task.materials.length ? (
-                <p className="muted">此对话没有附件。</p>
-              ) : (
-                task.materials.map((m, i) => (
-                  <details key={i}>
-                    <summary>{m.name}</summary>
-                    <small>
-                      {m.summary || (m.text !== null ? "文本材料" : isImageMaterial(m) ? "图片材料（由模型识别）" : "尚未解析")}
-                    </small>
-                    {m.text !== null && <pre>{m.text}</pre>}
-                  </details>
-                ))
-              )}
-            </aside>
-          )}
         </div>
       </main>
     </div>

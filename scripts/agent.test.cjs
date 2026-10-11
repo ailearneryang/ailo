@@ -10,6 +10,20 @@ const model={contextWindow:32768};
 const task={id:'t',projectId:'p',messages:[{role:'user',content:'制作交付文件',materials:[{name:'requirements.md',text:'必须包含晴天'}]}]};
 const plan={action:'plan',goal:'制作交付文件',decisions:['包含晴天'],acceptance:['文件存在且包含晴天'],steps:[{id:'make',title:'制作与验证',status:'pending'}]};
 async function setup(t){const base=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-agent-'));t.after(()=>fs.rm(base,{recursive:true,force:true}));return base;}
+test('large-capacity models externalize accumulated tools and preserve summaries with an independent budget',async t=>{
+ const base=await setup(t),largeModel={id:'large',contextWindow:1048576,maxOutputTokens:131072};
+ await runAgent(options(base,async()=>({content:JSON.stringify({action:'pause',text:'保存进度'})}),{model:largeModel}));
+ const w=await createWorkspace(base,task);
+ w.run.observations=Array.from({length:12},(_,i)=>({action:{action:'read_file',path:`part-${i}.txt`},response:{text:`retained-observation-${i}`}}));
+ const policy=require('../apps/desktop/agent/output-budget.cjs').createOutputBudget(largeModel,131072);policy.limited(8192);policy.limited(16384);policy.limited(32768);w.run.outputBudget=policy.snapshot();await w.save();
+ let calls=0;const memory='已完整保留十二次文件读取的结论和来源，下一步根据当前用户要求继续推进并验证。';
+ await runAgent(options(base,async(messages,budget)=>{
+  const s=JSON.parse(messages.at(-1).content);
+  if(calls++===0){assert.equal(s.requiredAction,'checkpoint');assert.ok(!JSON.stringify(messages).includes('retained-observation-0'));assert.match((await w.observation(s.externalMemory.recent[0].id)).text,/retained-observation-0/);assert.ok(JSON.stringify(messages).includes('retained-observation-11'));assert.equal(budget,8192);return {content:JSON.stringify({action:'checkpoint',text:memory})};}
+  assert.equal(s.workingMemory,memory);assert.equal(s.toolResults.length,0);assert.ok(!JSON.stringify(messages).includes('retained-observation-0'));return {content:JSON.stringify({action:'pause',text:'摘要已保存'})};
+ },{model:largeModel,executeTool:()=>assert.fail('no tool should be replayed')}));
+ assert.equal((await createWorkspace(base,task)).run.workingMemory,memory);
+});
 function options(base,ask,rest={}){let first=true;return {base,task,model,signal:new AbortController().signal,ask:async (...args)=>{if(first){first=false;return {content:JSON.stringify({action:'route',kind:rest.intent||'task'})};}return ask(...args);}, ...rest};}
 test('ordinary conversation needs no plan and runs no tools',async t=>{
  const base=await setup(t);const result=await runAgent(options(base,async()=>({content:JSON.stringify({action:'reply',text:'你好'})}),{intent:'chat',executeTool:()=>assert.fail('no tools')}));
@@ -157,7 +171,7 @@ test('checkpoint is required before old observations are removed and planning fo
  const longTask={...task,messages:[{role:'user',content:'开发',materials:[{name:'requirements.md',text:'x'.repeat(12000)}]}]};
  await runAgent(options(base,async messages=>{
   const s=JSON.parse(messages.at(-1).content);let action;
-  if(s.requiredAction==='checkpoint'){assert.equal(reads,6);assert.ok(messages.some(m=>m.role==='assistant'));checkpoint=true;action={action:'checkpoint',text:'需求来源 requirements.md，目前已读前八个片段，尚未读完；下一步建立开发与验证计划。'};}
+  if(s.requiredAction==='checkpoint'){assert.equal(reads,6);assert.ok(!messages.some(m=>m.role==='assistant'));assert.ok(s.externalMemory.recent.every(r=>r.id));checkpoint=true;action={action:'checkpoint',text:'需求来源 requirements.md，目前已读前八个片段，尚未读完；下一步建立开发与验证计划。'};}
   else if(s.requiredAction==='plan_or_clarify'){assert.ok(checkpoint);planned=true;action=plan;}
   else if(planned)action={action:'pause',text:'计划已保存'};
   else action={action:'read_material',id:s.materials[0].id,offset:reads++*1000,limit:1000};
@@ -334,7 +348,7 @@ test('thinking truncation learns budget across actions and manual continuation',
   return {content:JSON.stringify({action:'pause',text:'已保存'})};
  },{model:{id:'m',contextWindow:100000,maxOutputTokens:65536}}));
  assert.deepEqual(budgets,[8192,16384,16384]);
- const w=await createWorkspace(base,task);assert.equal(w.run.outputBudget.preferred,16384);
+ const w=await createWorkspace(base,task);assert.equal(w.run.outputBudget.stages.action.preferred,16384);
  assert.match(w.run.events.find(e=>e.type==='output_limit').detail.message,/思考.*16384/);
  await runAgent(options(base,async(messages,budget)=>{assert.equal(budget,16384);return {content:JSON.stringify({action:'pause',text:'保持进度'})};},{model:{id:'m',contextWindow:100000,maxOutputTokens:65536}}));
 });

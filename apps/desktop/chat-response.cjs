@@ -1,12 +1,14 @@
 // Decode OpenAI-compatible SSE without exposing provider errors or reasoning text.
-async function readCompletion(response, { signal, onActivity, onText, onThinking, onToolActivity }) {
+async function readCompletion(response, { signal, onActivity, onText, onThinking, onToolActivity, onChunk, onCleanup }) {
   const reader = response.body?.getReader();
   if (!reader) throw Error('模型未返回内容，请重试。');
   const streaming = /text\/event-stream/i.test(response.headers.get('content-type') || '');
   const decoder = new TextDecoder();
   const calls = new Map();
   let buffer = '', content = '', usage, finish, doneEvent = false, size = 0, reasoningChars = 0, completionTokens, reasoningTokens;
-  const abort = () => { void reader.cancel().catch(() => {}); };
+  let cancellation;
+  const cancel=()=>cancellation ||= reader.cancel();
+  const abort = () => { void cancel().catch(() => {}); };
   signal.addEventListener('abort', abort, { once: true });
   const textOf = value => typeof value === 'string' ? value : Array.isArray(value) ? value.filter(x => x.type === 'text' && typeof x.text === 'string').map(x => x.text).join('') : '';
   function consume(data) {
@@ -62,9 +64,10 @@ async function readCompletion(response, { signal, onActivity, onText, onThinking
   try {
     if (signal.aborted) throw Error('aborted');
     while (!doneEvent) {
-      const { value, done } = await reader.read();
+      const { value, done } = await require('./model-request.cjs').abortable(reader.read(),signal);
       if (signal.aborted) throw Error('aborted');
       if (done) break;
+      onChunk?.(value.byteLength);
       size += value.byteLength;
       if (size > 8388608) throw Error('模型回复过长，请缩小问题范围后重试。');
       buffer += decoder.decode(value, { stream: true });
@@ -78,11 +81,17 @@ async function readCompletion(response, { signal, onActivity, onText, onThinking
     if (finish === 'content_filter') throw Object.assign(Error('模型服务过滤了本次响应，未执行动作。请检查输入或服务商策略。'),{code:'MODEL_CONTENT_FILTER'});
     if (finish === 'length') throw Object.assign(Error('模型输出达到长度上限，请要求更简短的回复后重试。'), { code: 'MODEL_OUTPUT_LIMIT', partialContent: content, diagnostics:{finishReason:finish,promptTokens:usage,completionTokens,reasoningTokens,reasoningChars,contentChars:content.length,toolCalls:calls.size,toolArgumentChars:[...calls.values()].reduce((n,c)=>n+c.function.arguments.length,0)} });
     if (!content.trim() && !calls.size) throw Object.assign(Error(reasoningChars ? '模型只返回了思考数据，没有返回正文或可执行动作。任务和材料已保留，可重试。' : '模型本次返回空响应，没有正文或可执行动作。任务和材料已保留，可重试。'),{code:'MODEL_EMPTY_RESPONSE',diagnostics:{finishReason:finish||'missing',promptTokens:usage,completionTokens,reasoningTokens,reasoningChars,contentChars:content.length,toolCalls:0}});
-    return { content, usage, providerUsage:{inputTokens:usage,outputTokens:completionTokens,reasoningTokens}, ...(calls.size ? {toolCalls:[...calls.entries()].sort((a,b)=>a[0]-b[0]).map(([,call])=>call)} : {}) };
+    return { content, usage, finishReason:finish, providerUsage:{inputTokens:usage,outputTokens:completionTokens,reasoningTokens}, ...(calls.size ? {toolCalls:[...calls.entries()].sort((a,b)=>a[0]-b[0]).map(([,call])=>call)} : {}) };
+  } catch(error) {
+    if(content)error.partialContent=content;
+    if(!error.code&&/流意外中断/.test(error.message))error.code='MODEL_STREAM_INTERRUPTED';
+    throw error;
   } finally {
     signal.removeEventListener('abort', abort);
-    await reader.cancel().catch(() => {});
-    reader.releaseLock();
+    let timer;
+    const cancelled=await Promise.race([cancel().then(()=>true,()=>false),new Promise(resolve=>{timer=setTimeout(()=>resolve(false),1000);})]);
+    clearTimeout(timer);onCleanup?.(cancelled);
+    try{reader.releaseLock();}catch{}
   }
 }
 module.exports = { readCompletion };

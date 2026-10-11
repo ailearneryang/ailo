@@ -9,39 +9,37 @@ export function ExtensionCenter({ initialTab='expert', items, busy, onSave, onUs
   const [query, setQuery] = useState('');
   const [draft, setDraft] = useState<Extension | null>(null);
   const [error, setError] = useState('');
+  const [importing, setImporting] = useState(false);
   const file = useRef<HTMLInputElement>(null);
   function create() { setError(''); setDraft({ id: crypto.randomUUID(), kind: tab === 'expert' ? 'expert' : 'skill', name: '', description: '', instructions: '', enabled: true }); }
   async function importSkill(f?: File) {
-    if (!f) return;
+    if (!f || importing) return;
     setError('');
+    setImporting(true);
     try {
-      if (!/\.md$/i.test(f.name) || f.size > 80000) throw Error('请选择小于 80 KB 的 SKILL.md 或 Markdown 文件。');
-      const text = (await f.text()).replace(/^\uFEFF/, '');
-      if (text.includes('\u0000') || text.includes('\uFFFD')) throw Error('请使用 UTF-8 编码的 Markdown 文件。');
-      const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-      const metadata = match?.[1] || '';
-      const field = (name: string) => (metadata.match(new RegExp('^' + name + ':\\s*(.+)$','m'))?.[1] || '').trim().replace(/^['"]|['"]$/g,'');
-      const body = text.slice(match?.[0].length || 0).trim();
-      if (!body || body.length > 20000) throw Error('技能正文需要包含 1–20000 个字符。');
-      setDraft({ id: crypto.randomUUID(), kind: 'skill', name: (field('display_name') || field('name') || f.name.replace(/\.md$/i,'')).slice(0,60), description: field('description').slice(0,300), instructions: body, enabled: true });
+      if (!/\.(md|zip)$/i.test(f.name)) throw Error('请选择 SKILL.md、Markdown 或 ZIP 技能包。');
+      if (f.size > (/\.zip$/i.test(f.name) ? 20 * 1024 * 1024 : 80000)) throw Error(/\.zip$/i.test(f.name) ? '技能 ZIP 不能超过 20 MB。' : 'SKILL.md 不能超过 80 KB。');
+      setDraft(await window.ailo.importSkill({name:f.name,buffer:await f.arrayBuffer()}));
     } catch(e) { setError(String(e).replace(/^Error: /,'')); }
+    finally { setImporting(false); }
   }
   return <div className="extension-center">
     <div className="extension-heading"><div><span className="eyebrow">让 Ailo 更懂你的工作</span><h1>扩展</h1><p>选择专业角色，复用熟悉的工作方法。</p></div></div>
-    <div className="extension-tabs" role="tablist" aria-label="扩展分类">{([['expert','专家'],['skill','技能'],['connector','应用连接']] as const).map(([id,label]) => <button key={id} role="tab" aria-selected={tab === id} onClick={() => { setTab(id); setDraft(null); setError(''); }}>{label}</button>)}</div>
+    <div className="extension-tabs" role="tablist" aria-label="扩展分类">{([['expert','专家'],['skill','技能'],['connector','应用连接']] as const).map(([id,label]) => <button key={id} role="tab" disabled={importing} aria-selected={tab === id} onClick={() => { setTab(id); setDraft(null); setError(''); }}>{label}</button>)}</div>
     {tab === 'connector' ? <FeishuCliConnection onTry={onTryConnection}><details className="feishu-legacy"><summary>高级：使用自建应用凭证导入文档</summary><FeishuConnection busy={busy} onMaterial={onMaterial} onImporting={onImporting} /></details></FeishuCliConnection> : <>
-      <div className="extension-toolbar"><input aria-label="搜索扩展" placeholder="搜索名称或用途…" value={query} onChange={e => setQuery(e.target.value)} /><button disabled={busy} onClick={create}>＋ 新建{tab === 'expert' ? '专家' : '技能'}</button>{tab === 'skill' && <><button disabled={busy} onClick={() => file.current?.click()}>导入 Markdown</button><input ref={file} type="file" accept=".md" hidden onChange={e => { void importSkill(e.target.files?.[0]); e.target.value = ''; }} /></>}</div>
-      {tab === 'skill' && <p className="extension-note">支持导入 SKILL.md。导入后可检查和编辑指令；这一版仅使用文字指令，不运行脚本或加载引用文件。</p>}
-      {draft && <form className="extension-editor" onSubmit={async e => { e.preventDefault(); if (busy) return; const next = items.some(i => i.id === draft.id) ? items.map(i => i.id === draft.id ? draft : i) : [...items,draft]; if (await onSave(next)) setDraft(null); }}>
+      <div className="extension-toolbar"><input aria-label="搜索扩展" placeholder="搜索名称或用途…" value={query} onChange={e => setQuery(e.target.value)} /><button disabled={busy || importing} onClick={create}>＋ 新建{tab === 'expert' ? '专家' : '技能'}</button>{tab === 'skill' && <><button disabled={busy || importing} onClick={() => file.current?.click()}>{importing ? '正在导入…' : '导入技能'}</button><input ref={file} type="file" accept=".md,.zip" hidden onChange={e => { void importSkill(e.target.files?.[0]); e.target.value = ''; }} /></>}</div>
+      {tab === 'skill' && <p className="extension-note">支持 SKILL.md、Markdown 和含 SKILL.md 的 ZIP 技能包。导入后可检查和编辑指令；选用技能时，按需读取包内引用文档、模板和脚本。</p>}
+      {draft && <form className="extension-editor" onSubmit={async e => { e.preventDefault(); if (busy || importing) return; const next = items.some(i => i.id === draft.id) ? items.map(i => i.id === draft.id ? draft : i) : [...items,draft]; if (await onSave(next)) setDraft(null); }}>
         <h2>{items.some(i => i.id === draft.id) ? '编辑' : '新建'}{draft.kind === 'expert' ? '专家' : '技能'}</h2>
+        {draft.package && <p className="extension-note">ZIP 技能包 · 已保留 {draft.package.files} 个文件（含 SKILL.md）</p>}
         <label>名称<input aria-label="扩展名称" required maxLength={60} value={draft.name} onChange={e => setDraft({...draft,name:e.target.value})} /></label>
         <label>用途说明<input aria-label="扩展用途" maxLength={300} value={draft.description} onChange={e => setDraft({...draft,description:e.target.value})} placeholder="一句话说明它能帮你完成什么" /></label>
         <label>工作指令<textarea aria-label="扩展指令" required maxLength={20000} rows={8} value={draft.instructions} onChange={e => setDraft({...draft,instructions:e.target.value})} placeholder="描述角色、工作步骤与输出要求…" /></label>
-        <div className="extension-actions"><button className="primary" disabled={busy || !draft.name.trim() || !draft.instructions.trim()}>保存扩展</button><button type="button" disabled={busy} onClick={() => setDraft(null)}>取消</button></div>
+        <div className="extension-actions"><button className="primary" disabled={busy || importing || !draft.name.trim() || !draft.instructions.trim()}>保存扩展</button><button type="button" disabled={busy || importing} onClick={() => setDraft(null)}>取消</button></div>
       </form>}
       {error && <p className="error" role="alert">{error}</p>}
       <div className="extension-grid">{items.filter(i => i.kind === tab && (i.name + i.description).toLowerCase().includes(query.toLowerCase())).map(item => <article className={'extension-card ' + (!item.enabled ? 'extension-disabled' : '')} key={item.id}>
-        <div className="extension-card-top"><span className="extension-symbol"><Icon name={item.kind === 'expert' ? 'user' : 'sparkles'}/></span><small>{item.enabled ? '已启用' : '已停用'}</small></div><h2>{item.name}</h2><p>{item.description || '自定义工作指令'}</p><div className="extension-actions"><button className="primary" disabled={busy || !item.enabled} onClick={() => onUse(item)}>在对话中使用</button><button disabled={busy} onClick={() => setDraft({...item})}>编辑</button><button disabled={busy} onClick={() => void onSave(items.map(i => i.id === item.id ? {...i,enabled:!i.enabled} : i))}>{item.enabled ? '停用' : '启用'}</button></div>
+        <div className="extension-card-top"><span className="extension-symbol"><Icon name={item.kind === 'expert' ? 'user' : 'sparkles'}/></span><small>{item.enabled ? '已启用' : '已停用'}</small></div><h2>{item.name}</h2><p>{item.description || '自定义工作指令'}</p><div className="extension-actions"><button className="primary" disabled={busy || importing || !item.enabled} onClick={() => onUse(item)}>在对话中使用</button><button disabled={busy || importing} onClick={() => setDraft({...item})}>编辑</button><button disabled={busy || importing} onClick={() => void onSave(items.map(i => i.id === item.id ? {...i,enabled:!i.enabled} : i))}>{item.enabled ? '停用' : '启用'}</button></div>
       </article>)}</div>
       {!items.some(i => i.kind === tab && (i.name+i.description).toLowerCase().includes(query.toLowerCase())) && <p className="extension-empty">没有匹配的扩展，试试其他关键词或创建一个。</p>}
     </>}

@@ -74,7 +74,15 @@ async function createWorkspace(base, task) {
     item.textHash=key(parsed.text);item.aliases ||= [];
     item.visual=!!item.sourceId && /\.(png|jpe?g|webp|gif)$/i.test(item.name);
     if(item.sourceId) {
-      try {item.sourceHash=key(await fs.readFile(path.join(project,'originals',item.sourceId)));}
+      try {
+        const original=path.join(project,'originals',item.sourceId);
+        item.sourceHash=key(await fs.readFile(original));
+        const suffix=path.extname(item.name);const extension=/^\.[a-zA-Z0-9_-]{1,20}$/.test(suffix)?suffix:'';
+        item.sourcePath='.ailo-materials/'+item.sourceId+extension;
+        const target=await resolveFile(files,item.sourcePath,true);
+        await fs.mkdir(path.dirname(target),{recursive:true,mode:0o700});
+        try{await fs.copyFile(original,target,fs.constants.COPYFILE_EXCL);await fs.chmod(target,0o600);}catch(e){if(e.code!=='EEXIST')throw e;}
+      }
       catch(e){if(e.code!=='ENOENT')throw e;delete item.sourceId;delete item.sourceHash;}
     }
   }
@@ -100,6 +108,27 @@ async function createWorkspace(base, task) {
   const lookup=id=>catalog.find(m=>m.id===id||m.aliases?.includes(id));
   async function save() {run.updatedAt=new Date().toISOString();await writeJson(runFile,run);}
   return {files,project,catalog,run,save,lookup,
+    async archiveObservation(action,response){
+      const id=randomUUID(),directory=runFile+'.observations';
+      await fs.mkdir(directory,{recursive:true,mode:0o700});
+      await writeJson(path.join(directory,id+'.json'),{id,executionId:run.executionId,at:new Date().toISOString(),action,response});
+      await fs.appendFile(runFile+'.memory.jsonl',JSON.stringify({...require('./working-context.cjs').receipt({action,response,observationId:id}),executionId:run.executionId})+'\n',{mode:0o600});
+      return id;
+    },
+    async observation(id,offset=0,limit=10000){
+      if(!Number.isInteger(offset)||offset<0)throw Error('记录读取位置无效');
+      if(!Number.isSafeInteger(limit)||limit<1||limit>12000)throw Error('记录读取长度必须为 1–12000 的整数');
+      let text;
+      if(id==='observations'){
+        try{text=await fs.readFile(runFile+'.memory.jsonl','utf8');}catch(e){if(e.code!=='ENOENT')throw e;text=JSON.stringify(run.observationIndex||[]);}
+      }
+      else if(id==='state')text=JSON.stringify(run);
+      else {
+        if(typeof id!=='string'||! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id))throw Error('工具记录 ID 无效');
+        text=await fs.readFile(path.join(runFile+'.observations',id+'.json'),'utf8');
+      }
+      return {id,offset,total:text.length,text:text.slice(offset,offset+limit),next:offset+limit<text.length?offset+limit:null};
+    },
     async images(materials) {
       const {isImageMaterial} = await import('../attachments.mjs');
       const ids = new Set(materials.filter(isImageMaterial).map(material => key(JSON.stringify([material.name, material.sourceId]))));
@@ -121,10 +150,11 @@ async function createWorkspace(base, task) {
       const result=await readSource(path.join(project,'originals',material.sourceId),material.name,entry);
       return {id:material.id,name:material.name,entry:result.entry ?? entry,kind:result.kind,total:result.text.length,offset,text:result.text.slice(offset,offset+10000),next:offset+10000<result.text.length?offset+10000:null};
     },
-    async execution(offset=0) {
+    async execution(offset=0,limit=6000) {
       if(!Number.isInteger(offset)||offset<0)throw Error('记录读取位置无效');
+      if(!Number.isSafeInteger(limit)||limit<1||limit>12000)throw Error('记录读取长度必须为 1–12000 的整数');
       let text;try{text=await fs.readFile(runFile+'.jsonl','utf8');}catch(e){if(e.code!=='ENOENT')throw e;text=JSON.stringify(run.events);}
-      return {offset,total:text.length,text:text.slice(offset,offset+6000),next:offset+6000<text.length?offset+6000:null};
+      return {offset,total:text.length,text:text.slice(offset,offset+limit),next:offset+limit<text.length?offset+limit:null};
     },
     async inspect(id,entry,pointer,offset=0,query) {
       const material=lookup(id);

@@ -3,7 +3,8 @@ const { selectedExtensions } = require("./extensions.cjs");
 // Requests run in the main process. Credentials never enter the renderer.
 function createChat(storage, fetchImpl = fetch, timeouts = {}) {
   const { readCompletion } = require("./chat-response.cjs");
-  const limits = typeof timeouts === "number" ? { first: timeouts, idle: timeouts, text: timeouts, decision: timeouts, total: timeouts * 10 } : { first: 180000, idle: 90000, text: 180000, decision: 600000, total: 900000, ...timeouts };
+  const {abortable,recoverRequest,requestId,cancelBody}=require('./model-request.cjs');
+  const limits = typeof timeouts === "number" ? { connect: timeouts, headerStep:0, retryDelay:0, first: timeouts, idle: timeouts, text: timeouts, decision: timeouts, total: timeouts * 10 } : { connect:60000, headerStep:timeouts.connect===undefined?30000:0, first:60000, retries:2, retryDelay:500, idle: 90000, text: 180000, decision: 600000, total: 900000, ...timeouts };
   const pending = new Map();
   const scheduler=require('./chat-scheduler.cjs').createScheduler(3);
   const steering = new Map();
@@ -13,7 +14,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
       const session=steering.get(id);
       if(!session || session.taskId!==taskId || !session.accepting || pending.get(id)?.signal.aborted)throw Error('当前任务已停止，请作为新消息发送。');
       if(typeof content!=='string'||!content.trim()||content.length>20000)throw Error('补充指令须为 1–20000 字符');
-      const message={id:require('node:crypto').randomUUID(),role:'user',content:content.trim()};
+      const message={id:require('node:crypto').randomUUID(),role:'user',content:content.trim(),createdAt:new Date().toISOString()};
       const save=session.saving.then(async()=>{
         const state=await storage.readWorkspace();
         const task=state.tasks.find(t=>t.id===taskId);
@@ -31,23 +32,9 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
     },
     cancelAll() { for (const controller of pending.values()) controller.abort(); },
     async complete(input) {
-      if (
-        !input ||
-        typeof input.id !== "string" ||
-        typeof input.modelId !== "string" ||
-        !Array.isArray(input.messages) ||
-        !input.messages.length ||
-        input.messages.length > 10000 ||
-        JSON.stringify(input.messages).length > 1000000 ||
-        input.messages.some(
-          (m) =>
-            !m ||
-            !["user", "assistant"].includes(m.role) ||
-            typeof m.content !== "string" ||
-            !m.content.trim(),
-        )
-      )
-        throw Error("对话内容无效或过长，请新建对话。");
+      // Reserve synchronously so a stop immediately after complete() is not lost
+      // while loading attachment validation or credentials.
+      if(!input||typeof input.id!=="string")throw Error("对话内容无效或过长，请新建对话。");
       if (pending.has(input.id)||[...steering.values()].some(s=>s.taskId && s.taskId===input.taskId)) throw Error('此会话正在执行或排队，请补充消息或等待完成。');
       const controller = new AbortController();
       pending.set(input.id, controller);
@@ -55,25 +42,38 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
       steering.set(input.id,session);
       const callbacks=input;
       input={...input,onStatus:message=>{session.status=message;session.updatedAt=new Date().toISOString();callbacks.onStatus?.(message);},onText:content=>{session.content=content;session.updatedAt=new Date().toISOString();callbacks.onText?.(content);}};
-      let timeoutMessage = "";
+      let timeoutMessage = "", timeoutCode;
       let timer, totalTimer, textTimer;
       let replyStartedAt;
       let phase = "连接模型服务";
-      function armTimer(ms, reason, onTimeout) {
+      function armTimer(ms, onTimeout) {
         clearTimeout(timer);
-        timer = setTimeout(() => {
-          if (onTimeout) { onTimeout(); return; }
-          timeoutMessage = `${phase}超时：${reason}（${Math.round(ms / 1000)} 秒）。可以重试或检查模型服务。`;
-          controller.abort();
-        }, ms);
+        timer = setTimeout(onTimeout, ms);
       }
       let release;
       try {
+        const {hasMessageContent}=await import('./attachments.mjs');
+        if (
+          !input ||
+          typeof input.id !== "string" ||
+          typeof input.modelId !== "string" ||
+          !Array.isArray(input.messages) ||
+          !input.messages.length ||
+          input.messages.length > 10000 ||
+          JSON.stringify(input.messages).length > 1000000 ||
+          input.messages.some(
+            (m) =>
+              !m ||
+              !["user", "assistant"].includes(m.role) ||
+              typeof m.content !== "string" ||
+              !hasMessageContent(m.content,m.role==='user'?m.materials:[]),
+          )
+        )
+          throw Error("对话内容无效或过长，请新建对话。");
         const schedulingState=input.taskId && storage.readWorkspace ? await storage.readWorkspace() : {tasks:[]};
         const schedulingTask=schedulingState.tasks?.find(t=>t.id===input.taskId);
         release=await scheduler.acquire(schedulingTask?.projectId || input.taskId || input.id,controller.signal,input.onStatus);
         input.onStatus?.('正在执行…');
-        armTimer(limits.first, "未收到模型内容");
         const selected = input.extensionIds?.length ? selectedExtensions((await storage.readWorkspace()).extensions || [], input.extensionIds) : [];
         const model = await storage.modelCredentials(input.modelId);
         const reasoning = reasoningParameters(model,input.reasoningEffort);
@@ -92,7 +92,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           throw Error("模型 API 地址无效，请检查配置。");
         if (!url.pathname.replace(/\/$/, "").endsWith("/chat/completions"))
           url.pathname = url.pathname.replace(/\/$/, "") + "/chat/completions";
-        async function ask(messages, maxTokens, showReply = false, prefix = "", requestPhase, format = {}) {
+        async function askOnce(messages, maxTokens, showReply = false, prefix = "", requestPhase, format = {}, attempt=0) {
           if (controller.signal.aborted) throw Error("已停止回复。");
           phase = requestPhase || (showReply ? "等待模型回复" : "整理历史");
           const startedAt = Date.now();
@@ -103,7 +103,12 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           const requestController = new AbortController();
           const cancelRequest = () => requestController.abort();
           controller.signal.addEventListener('abort', cancelRequest, {once:true});
-          let idleTimedOut = false;
+          let requestFailure;
+          const diagnostic={id:require('node:crypto').randomUUID(),modelId:input.modelId,taskId:input.taskId,attempt,phase,startedAt:new Date(startedAt).toISOString(),transport:fetchImpl.transport||'node-fetch',chunks:0,bytes:0,maxChunkGapMs:0};
+          let lastChunkAt;
+          let proxyTimer;
+          const networkContext=Promise.race([Promise.resolve().then(()=>storage.modelNetworkContext?.(url)).catch(()=>undefined),new Promise(resolve=>{proxyTimer=setTimeout(()=>resolve(undefined),250);})]).then(context=>{clearTimeout(proxyTimer);if(['direct','configured','unknown'].includes(context?.systemProxyMode))diagnostic.systemProxyMode=context.systemProxyMode;});
+          const requestTimeout=(code,message)=>{requestFailure=Object.assign(Error(message),{code});requestController.abort(requestFailure);};
           const outputWait = isDecision ? limits.decision : limits.text;
           let hasText = false, lastThinkingStatus = -Infinity;
           // Reasoning deltas count as network activity, but must not postpone
@@ -113,69 +118,73 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
             timeoutMessage = isDecision
               ? `任务决策超时：${Math.round(outputWait / 1000)} 秒内未开始返回下一步动作。任务进度、项目文件和材料已保留，可重试当前步骤。`
               : `${phase}超时：${Math.round(outputWait / 1000)} 秒内未生成正文（思考数据不算正文）。可重试或切换模型；原始对话和材料已保留。`;
-            controller.abort();
+            timeoutCode='MODEL_OUTPUT_TIMEOUT';controller.abort();
           }, Math.max(0, outputWait - (Date.now() - textStartedAt)));
-          armTimer(limits.first, "未收到模型内容");
+          // Response headers can be delayed by gateway queueing or model prefill;
+          // this is not a TCP/TLS connection timer. Retries allow more queue time.
+          const headerWait=Math.min(limits.connect+attempt*limits.headerStep,Math.max(limits.connect,120000));
+          diagnostic.responseHeadersTimeoutMs=headerWait;
+          armTimer(headerWait,()=>{diagnostic.timeoutStage='response_headers';requestTimeout('MODEL_CONNECT_TIMEOUT',`${phase}超时：模型服务尚未返回响应头（已等待 ${Math.round(headerWait/1000)} 秒，可能仍在排队或处理上下文）。`);});
           clearTimeout(totalTimer);
           totalTimer = setTimeout(() => {
             timeoutMessage = `${phase}超时：已达到单次请求最长等待时间（${Math.round(limits.total / 60000)} 分钟）。`;
-            controller.abort();
+            timeoutCode='MODEL_TOTAL_TIMEOUT';controller.abort();
           }, limits.total);
           try {
-          const response = await fetchImpl(url, {
+          const requestBody=JSON.stringify({model:model.model,stream:true,max_tokens:Math.min(maxTokens,model.maxOutputTokens||maxTokens),messages,...format,...reasoning});
+          diagnostic.requestBytes=Buffer.byteLength(requestBody);
+          diagnostic.messageCount=messages.length;
+          diagnostic.requestedOutputTokens=Math.min(maxTokens,model.maxOutputTokens||maxTokens);
+          const response = await abortable(fetchImpl(url, {
             method: "POST",
             redirect: "error",
             signal: requestController.signal,
             headers: {
               "Content-Type": "application/json",
+              "X-Ailo-Request-Id": diagnostic.id,
               ...(model.apiKey
                 ? { Authorization: `Bearer ${model.apiKey}` }
                 : {}),
             },
-            body: JSON.stringify({
-              model: model.model,
-              stream: true,
-              max_tokens: Math.min(maxTokens,model.maxOutputTokens || maxTokens),
-              messages,
-              ...format,
-              ...reasoning,
-            }),
-          }).catch(error=>{throw require('./network-error.cjs').networkError(error,true);});
+            body: requestBody,
+          }),requestController.signal,response=>response.body?.cancel()).catch(error=>{throw require('./network-error.cjs').networkError(error,true);});
+          diagnostic.headersMs=Date.now()-startedAt;diagnostic.providerRequestId=requestId(response.headers);diagnostic.httpStatus=response.status;
+          if(model.apiKey&&diagnostic.providerRequestId?.includes(model.apiKey))delete diagnostic.providerRequestId;
+          armTimer(limits.first,()=>requestTimeout('MODEL_FIRST_CONTENT_TIMEOUT',`${phase}超时：未收到模型内容（${Math.round(limits.first/1000)} 秒；已收到响应头）。`));
           if (!response.ok) {
             if ([400,422].includes(response.status) && (format.tools || format.response_format)) {
               let detail = '';
               const reader = response.body?.getReader();
               try {
                 while (reader && detail.length < 8192) {
-                  const {value,done} = await reader.read();
+                  const {value,done} = await abortable(reader.read(),requestController.signal);
                   if (done) break;
                   detail += new TextDecoder().decode(value).slice(0,8192-detail.length);
                 }
-              } finally { await reader?.cancel().catch(()=>{}); reader?.releaseLock(); }
+              } finally { await cancelBody(reader); try{reader?.releaseLock();}catch{} }
               if(format.parallel_tool_calls===false && /parallel_tool_calls/i.test(detail) && /not.support|unsupported|not.allowed|unknown|unrecognized|不支持/i.test(detail))
                 throw Object.assign(Error('模型接口不支持并行动作开关。'),{code:'MODEL_PARALLEL_UNSUPPORTED'});
               const feature = format.tools ? /tools|tool_choice|function.call/i : /response_format|json_object/i;
               if (feature.test(detail) && /not.support|unsupported|not.allowed|unknown|unrecognized|不支持/i.test(detail))
                 throw Object.assign(Error('模型接口不支持所请求的结构化能力。'),{code:'MODEL_FORMAT_UNSUPPORTED'});
             }
-            await response.body?.cancel();
+            await cancelBody(response.body);
             const messages = {
               401: "API Key 无效或已过期，请检查模型配置。",
               403: "服务商拒绝访问，请检查密钥权限和模型权限。",
               404: "未找到接口或模型，请检查 API 地址和模型 ID。",
               429: "请求限流或额度不足，请稍后重试并检查服务商额度。",
             };
-            throw Error(
+            throw Object.assign(Error(
               messages[response.status] ||
                 `模型服务返回错误（HTTP ${response.status}），请稍后重试。`,
-            );
+            ),{code:[502,503,504].includes(response.status)?'MODEL_HTTP_TRANSIENT':'MODEL_HTTP_ERROR'});
           }
-          return await readCompletion(response, {
+          const result=await readCompletion(response, {
             signal: requestController.signal,
-            onActivity: () => armTimer(limits.idle, "模型内容已停止更新", isDecision ? () => {
-              idleTimedOut = true;
-              requestController.abort();
-            } : undefined),
+            onChunk: bytes=>{const now=Date.now();diagnostic.chunks++;diagnostic.bytes+=bytes;if(lastChunkAt!==undefined)diagnostic.maxChunkGapMs=Math.max(diagnostic.maxChunkGapMs,now-lastChunkAt);lastChunkAt=now;diagnostic.firstByteMs??=now-startedAt;},
+            onCleanup: cancelled=>{diagnostic.streamCancelled=cancelled;},
+            onActivity: () => {diagnostic.firstContentMs??=Date.now()-startedAt;armTimer(limits.idle,()=>requestTimeout(isDecision?'MODEL_DECISION_IDLE_TIMEOUT':'MODEL_STREAM_IDLE_TIMEOUT',`${phase}超时：模型内容已停止更新（${Math.round(limits.idle/1000)} 秒）。`));},
             onToolActivity: () => {
               hasText = true; clearTimeout(textTimer);
               if (isDecision && Date.now()-lastThinkingStatus>=1000) {
@@ -196,16 +205,31 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
               input.onStatus?.(`模型正在思考 · 已等待 ${Math.floor((now - replyStartedAt) / 1000)} 秒 · 已收到 ${chars.toLocaleString()} 字思考数据，尚未生成正文…`);
             } : undefined,
           });
+          diagnostic.outcome='completed';return result;
           } catch (error) {
-            if (idleTimedOut && !controller.signal.aborted)
-              throw Object.assign(Error(`任务决策超时：模型内容已停止更新（${Math.round(limits.idle / 1000)} 秒）。`), {code:'MODEL_DECISION_IDLE_TIMEOUT'});
-            throw error;
+            const failure=requestFailure||require('./network-error.cjs').networkError(error);
+            failure.hasVisibleOutput=showReply&&hasText;
+            if(showReply&&error.partialContent)failure.partialContent=(error.code==='MODEL_OUTPUT_LIMIT'?'':prefix)+error.partialContent;
+            else delete failure.partialContent;
+            diagnostic.outcome=controller.signal.aborted?'cancelled':'failed';diagnostic.errorCode=controller.signal.aborted?(timeoutCode||'MODEL_CANCELLED'):(failure.code||'MODEL_RESPONSE_ERROR');
+            if(failure.networkCode)diagnostic.networkCode=failure.networkCode;
+            failure.requestDiagnostics=diagnostic;
+            if(diagnostic.providerRequestId)failure.message+=` 请求标识：${diagnostic.providerRequestId}。`;
+            throw failure;
           } finally {
+            diagnostic.abortRequested=true;
+            requestController.abort();
+            diagnostic.durationMs=Date.now()-startedAt;
             controller.signal.removeEventListener('abort', cancelRequest);
             clearTimeout(timer);
             clearTimeout(totalTimer);
             clearTimeout(textTimer);
+            await networkContext;
+            try{await storage.recordModelRequest?.(diagnostic);}catch{}
           }
+        }
+        async function ask(messages,maxTokens,showReply=false,prefix='',requestPhase,format={}){
+          return recoverRequest(attempt=>askOnce(messages,maxTokens,showReply,prefix,requestPhase,format,attempt),{signal:controller.signal,retries:limits.retries??2,retryDelay:limits.retryDelay??500,onRetry:(attempt,total)=>input.onStatus?.(`模型响应暂时停顿，正在自动重试当前${requestPhase==='任务决策'?'决策':'请求'}（${attempt}/${total}）…`)});
         }
         const { parseClarification } = await import("./clarification.mjs");
         if (storage.agentDirectory && input.taskId) {
@@ -216,7 +240,6 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           const { tool,allowedActions,actionTools } = require("./agent/protocol.cjs");
           let formatMode = 'tools', parallelControl = true, namedActions = false;
           async function askAgent(messages,budget,onContext) {
-            let idleRetries = 0;
             const state=JSON.parse(messages.at(-1).content);
             if(state.protocolRecovery && formatMode==='tools') {
               if(!namedActions){namedActions=true;input.onStatus?.('正在适配模型动作格式，改用具名工具…');}
@@ -250,11 +273,6 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
                 const d=error.diagnostics;
                 const providerUsage=d?{inputTokens:d.promptTokens,outputTokens:d.completionTokens,reasoningTokens:d.reasoningTokens}:undefined;
                 await onContext?.({...stats,status:'failed',completedAt:new Date().toISOString(),providerUsage});
-                if(error.code==='MODEL_DECISION_IDLE_TIMEOUT' && !controller.signal.aborted) {
-                  if (idleRetries >= 2) throw Object.assign(Error(error.message+' 已自动重试 2 次仍未恢复。任务进度、项目文件和材料已保留，可重试当前步骤或检查模型服务。'), {code:error.code});
-                  input.onStatus?.(`模型响应暂时停顿，正在自动重试当前决策（${++idleRetries}/2）…`);
-                  continue;
-                }
                 if(error.code==='MODEL_PARALLEL_UNSUPPORTED' && parallelControl){parallelControl=false;continue;}
                 if (error.code !== 'MODEL_FORMAT_UNSUPPORTED' || formatMode === 'text') throw error;
                 formatMode = formatMode === 'tools' ? 'json' : 'text';
@@ -263,9 +281,18 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
             }
           }
           session.accepting=true;
+          let savedTitle=task.titleGenerated?task.title:'';
           const result = await runAgent({ getSteering:async()=>{await session.saving;return session.queue.splice(0);}, base: storage.agentDirectory, task, model, projectMemoryContext:task.projectId?await require('./project-memory.cjs').readMemory(storage.agentDirectory,state.projects?.find(p=>p.id===task.projectId)||{id:task.projectId},state.tasks||[]):null, projectContext:state.projects?.find(p=>p.id===task.projectId)?.description, personalAssistant:task.id===require('./personal-assistant.cjs').ASSISTANT_ID?storage.personalAssistant:undefined, knowledge:storage.knowledge?.scope(task.knowledgeIds||[]),mcp:storage.mcpConnections?.scope(input.mcpConnectionIds||[]),amap:input.amapEnabled===false?undefined:storage.amap, webSearch:input.searchEnabled===true?storage.webSearch:undefined, android:storage.androidManager, authorizeBuild:storage.authorizeBuild,directoryAccess:storage.directoryAccess,feishuCli:input.feishuEnabled===false?{execute:async()=>{throw Object.assign(Error('当前对话已关闭飞书，请在输入框 ＋ → 应用连接中开启后再试。'),{code:'FEISHU_DECLINED'});}}:storage.feishuCli,
-            signal: controller.signal, ask: askAgent, extensions: selected,
-            onStatus: input.onStatus, onRun: input.onRun });
+            signal: controller.signal, ask: askAgent, extensions: selected, skillPackages: storage.skillPackages,
+            onStatus: input.onStatus, onRun: async run=>{
+              if(run.conversationTitle&&run.conversationTitle!==savedTitle&&storage.setGeneratedTitle){
+                const title=await storage.setGeneratedTitle(task.id,run.conversationTitle);
+                if(title)savedTitle=title;
+                run={...run,conversationTitle:title||undefined};
+              }
+              if(task.scheduledTaskId||task.id===require("./personal-assistant.cjs").ASSISTANT_ID)run={...run,conversationTitle:undefined};
+              input.onRun?.(run);
+            } });
           return { ...result, modelName: model.name };
         }
         const { prepareContext, countMessages, capacity } = await import("./context.mjs");
@@ -305,11 +332,11 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
         }
       } catch (error) {
         if (controller.signal.aborted)
-          throw Error(
+          throw Object.assign(Error(
             timeoutMessage
               ? timeoutMessage
               : "已停止回复，可重新发送。",
-          );
+          ),{code:timeoutCode||'MODEL_CANCELLED',requestDiagnostics:error.requestDiagnostics,partialContent:error.partialContent});
         throw require('./network-error.cjs').networkError(error);
       } finally {
         clearTimeout(timer);

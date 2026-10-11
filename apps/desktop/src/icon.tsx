@@ -1,6 +1,6 @@
 import React from 'react';
 // A single stroke weight and viewbox keep navigation icons optically consistent.
-export function Icon({ name }: { name: 'settings' | 'book' | 'sparkles' | 'plug' | 'chevron-right' | 'plus' | 'arrow-up' | 'compose' | 'chat' | 'grid' | 'folder' | 'info' | 'user' | 'chevron' | 'paperclip' | 'panel' | 'expand' | 'file' | 'queue' | 'play' | 'edit' | 'trash' | 'check' | 'close' | 'clock' }) {
+export function Icon({ name }: { name: 'settings' | 'book' | 'sparkles' | 'plug' | 'chevron-right' | 'plus' | 'arrow-up' | 'compose' | 'chat' | 'grid' | 'folder' | 'folder-open' | 'info' | 'user' | 'chevron' | 'paperclip' | 'panel' | 'expand' | 'file' | 'queue' | 'play' | 'edit' | 'trash' | 'check' | 'close' | 'clock' | 'refresh' | 'copy' | 'search' | 'more' | 'pin' }) {
   const shapes = {
     settings: <><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></>,
     book: <><path d="M12 5v16M12 5C9 3 5 3 2 4v15c3-1 7-1 10 2 3-3 7-3 10-2V4c-3-1-7-1-10 1Z"/></>,
@@ -14,8 +14,13 @@ export function Icon({ name }: { name: 'settings' | 'book' | 'sparkles' | 'plug'
     edit: <><path d="m15 4 5 5M4 20l5-1L21 7a2 2 0 0 0-4-4L5 15Z"/><path d="M13 21h8"/></>,
     trash: <><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></>,
     check: <path d="m5 12 4 4L19 6"/>,
+    copy: <><rect x="8" y="8" width="12" height="13" rx="3"/><path d="M16 8V6a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h2"/></>,
+    search: <><circle cx="10.5" cy="10.5" r="7.5"/><path d="m16 16 5 5"/></>,
+    more: <><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></>,
+    pin: <><path d="M16 3H8l1 6-4 4v3h14v-3l-4-4Z"/><path d="M12 16v6"/></>,
     close: <path d="m6 6 12 12M6 18 18 6"/>,
     clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
+    refresh: <><path d="M20 7v5h-5M4 17v-5h5M19 7a8 8 0 0 0-14 1M5 17a8 8 0 0 0 14-1"/></>,
     panel: <><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/></>,
     expand: <><path d="M14 3h7v7M21 3l-7 7M10 21H3v-7M3 21l7-7"/></>,
     file: <><path d="M14 3H5v18h14V8Z"/><path d="M14 3v5h5M8 12h8M8 16h6"/></>,
@@ -23,6 +28,7 @@ export function Icon({ name }: { name: 'settings' | 'book' | 'sparkles' | 'plug'
     chat: <path d="M20 11.5a8 8 0 0 1-8 8H4l1.5-4A8 8 0 1 1 20 11.5Z" />,
     grid: <><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></>,
     folder: <path d="M3 7V5a2 2 0 0 1 2-2h5l3 4h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>,
+    'folder-open': <><path d="M3 20V6a2 2 0 0 1 2-2h4l3 3h7a2 2 0 0 1 2 2v3"/><path d="m3 20 3-8h15a1 1 0 0 1 .95 1.32L19 20Z"/></>,
     info: <><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></>,
     user: <><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></>,
     chevron: <path d="m7 14 5-5 5 5"/>,

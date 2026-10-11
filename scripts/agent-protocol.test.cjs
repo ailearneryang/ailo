@@ -62,7 +62,7 @@ test('native length response preserves phase, increases budget and never execute
   if(calls===2)return new Response(JSON.stringify({usage:{prompt_tokens:100,completion_tokens:8192,completion_tokens_details:{reasoning_tokens:8000}},choices:[{message:{content:null,tool_calls:[{id:'bad',type:'function',function:{name:'ailo_action',arguments:'{"action":"write_file",'}}]},finish_reason:'length'}]}));
   const state=JSON.parse(body.messages.at(-1).content);assert.equal(state.phase,'chat');assert.match(state.recovery,/截断/);assert.ok(!body.tools[0].function.parameters.properties.action.enum.includes('write_file'));
   return native({action:'reply',text:'恢复成功'});
- });assert.equal((await chat.complete(input)).content,'恢复成功');assert.deepEqual(budgets,[8192,8192,16384]);
+ });assert.equal((await chat.complete(input)).content,'恢复成功');assert.deepEqual(budgets,[4096,8192,16384]);
  const {createWorkspace}=require('../apps/desktop/agent/workspace.cjs');const w=await createWorkspace(storage.agentDirectory,(await storage.readWorkspace()).tasks[0]);
  const event=w.run.events.find(e=>e.type==='output_limit');assert.equal(event.detail.reasoningTokens,8000);assert.equal(event.detail.toolCalls,1);assert.deepEqual(await fs.readdir(w.files),[]);
 });
@@ -105,6 +105,23 @@ test('unambiguous action envelopes normalize without guessing unknown operations
  assert.deepEqual(decodeAction({toolCalls:[{function:{name:'read_file',arguments:'{"path":"app/main.kt"}'}}]}),expected);
  for(const value of [{action:'unknown'},{path:'app/main.kt'},[expected],{action:'read_file',arguments:{action:'write_file',path:'x'}}])assert.throws(()=>decodeAction({content:JSON.stringify(value)}),e=>e.code==='AGENT_PROTOCOL');
  assert.throws(()=>decodeAction({toolCalls:[{function:{name:'read_file',arguments:'{"action":"write_file"}'}}]}),e=>e.reason==='conflicting_action');
+});
+test('decimal pagination strings normalize across content, wrappers and native tools',()=>{
+ const expected={action:'read_execution',id:'record',offset:6000};
+ for(const action of ['read_execution','read_history','read_file','read_material','read_source','inspect_source','knowledge']) {
+  assert.equal(decodeAction({content:JSON.stringify({action,offset:'0'})}).offset,0);
+ }
+ for(const value of [{...expected,offset:'6000'},{action:{...expected,offset:'6000'}},{action:'read_execution',arguments:{id:'record',offset:'6000'}}])assert.deepEqual(decodeAction({content:JSON.stringify(value)}),expected);
+ for(const name of ['ailo_action','read_execution'])assert.deepEqual(decodeAction({toolCalls:[{function:{name,arguments:JSON.stringify({...expected,offset:'6000'})}}]}),expected);
+ assert.deepEqual(decodeAction({content:'{"action":"read_material","id":"m","offset":" 3000 ","limit":"6000"}'}),{action:'read_material',id:'m',offset:3000,limit:6000});
+ const mcp={action:'mcp',operation:'call',params:{offset:'6000',limit:'10'}};
+ assert.deepEqual(decodeAction({content:JSON.stringify(mcp)}),mcp);
+});
+test('invalid pagination is rejected before execution without loose coercion',()=>{
+ for(const offset of ['', ' ',null,true,{},[], -1,1.5,'-1','1.5','1e3','0x10','Infinity','9007199254740993',9007199254740992]) {
+  assert.throws(()=>decodeAction({content:JSON.stringify({action:'read_execution',offset})}),e=>e.code==='AGENT_PROTOCOL'&&e.reason==='invalid_parameter'&&e.diagnostics.field==='offset');
+ }
+ for(const action of ['read_material','read_file','read_execution','read_history'])for(const limit of [0,'0',12001,'12001',null,false])assert.throws(()=>decodeAction({content:JSON.stringify({action,limit})}),e=>e.reason==='invalid_parameter'&&e.diagnostics.field==='limit');
 });
 test('invalid action feedback states the actual problem and allowed actions without fake assistant actions',async t=>{
  const storage=await fixture(t);let count=0;
@@ -205,6 +222,10 @@ test('named tools still reject conflicts and cannot infer unnamed actions from c
  assert.deepEqual(decodeAction({toolCalls:[{function:{name:'run_command',arguments:'{"command":"pwd","purpose":"检查"}'}}]}),{action:'run_command',command:'pwd',purpose:'检查'});
  assert.throws(()=>decodeAction({toolCalls:[{function:{name:'run_command',arguments:'{"action":"write_file","path":"x"}'}}]}),e=>e.reason==='conflicting_action');
  assert.throws(()=>decodeAction({content:'{"command":"pwd","purpose":"检查"}'}),e=>e.diagnostics.issue==='missing_action');
+});
+test('invalid JSON diagnostics identify response channel without retaining model text',()=>{
+ assert.throws(()=>decodeAction({content:'{action:"reply",text:"secret"}',finishReason:'stop'}),e=>e.reason==='invalid_json'&&e.diagnostics.jsonIssue==='syntax'&&e.diagnostics.responseChannel==='content'&&e.diagnostics.finishReason==='stop'&&!JSON.stringify(e.diagnostics).includes('secret'));
+ assert.throws(()=>decodeAction({toolCalls:[{function:{name:'ailo_action',arguments:'{"action":"reply"'}}],finishReason:'tool_calls'}),e=>e.reason==='invalid_json'&&e.diagnostics.jsonIssue==='incomplete'&&e.diagnostics.responseChannel==='tool_arguments');
 });
 
 test('accepted tools with prose responses switch to named tools then JSON, with consistent recovery instructions',async t=>{
