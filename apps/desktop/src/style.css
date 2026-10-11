@@ -1807,8 +1807,9 @@ select:focus-visible {
 .project-nav-row:hover { background:transparent; }
 .project-list button, .project-conversations > button { background:transparent; }
 .project-list .project-nav-row button { width: auto; margin: 0; padding: 7px 3px; border-radius: 6px; }
-.project-list .project-expand { width: 24px; flex-shrink: 0; }
-.project-list .project-nav-name { display: flex; gap: 7px; align-items: center; min-width: 0; flex: 1; text-align: left; }
+.project-list .project-nav-name { display: flex; gap: 0; align-items: center; min-width: 0; flex: 1; text-align: left; }
+.project-folder-icon { display:inline-flex; align-items:center; justify-content:center; width:24px; flex:0 0 24px; color:var(--muted); }
+.project-nav-name > small { margin-left:7px; }
 .project-nav-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-nav-name > small { font-size:calc(10px * var(--font-scale, 1)); color: var(--ui-839077, #839077); }
 .project-nav-actions { display: flex; opacity: 0; flex-shrink: 0; }
@@ -1958,8 +1959,7 @@ select:focus-visible {
 .message-actions button { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; padding:6px; border:0; border-radius:6px; background:transparent; color:var(--muted,#7a7f87); }
 .message-actions button > .ui-icon { width:16px; height:16px; }
 .project-popover .ui-icon, .project-trigger .ui-icon, .project-menu-dialog .ui-icon, .project-edit-heading .ui-icon, .project-overview .ui-icon, .task-nav-menu .ui-icon { width:16px; height:16px; }
-.project-list .project-expand { display:inline-flex; align-items:center; justify-content:center; }
-.project-expand .ui-icon { width:16px; height:16px; }
+.project-folder-icon .ui-icon { width:16px; height:16px; }
 .project-nav-name > small .ui-icon { width:12px; height:12px; }
 .sidebar-project-threads .project-new-thread, .project-overview-actions button, .task-nav-menu { display:flex; align-items:center; gap:7px; }
 .project-new-thread .ui-icon { width:16px; height:16px; }
