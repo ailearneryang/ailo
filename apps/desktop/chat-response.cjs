@@ -83,6 +83,7 @@ async function readCompletion(response, { signal, onActivity, onText, onThinking
     if (!content.trim() && !calls.size) throw Object.assign(Error(reasoningChars ? '模型只返回了思考数据，没有返回正文或可执行动作。任务和材料已保留，可重试。' : '模型本次返回空响应，没有正文或可执行动作。任务和材料已保留，可重试。'),{code:'MODEL_EMPTY_RESPONSE',diagnostics:{finishReason:finish||'missing',promptTokens:usage,completionTokens,reasoningTokens,reasoningChars,contentChars:content.length,toolCalls:0}});
     return { content, usage, finishReason:finish, providerUsage:{inputTokens:usage,outputTokens:completionTokens,reasoningTokens}, ...(calls.size ? {toolCalls:[...calls.entries()].sort((a,b)=>a[0]-b[0]).map(([,call])=>call)} : {}) };
   } catch(error) {
+    error.providerUsage={inputTokens:usage,outputTokens:completionTokens,reasoningTokens};
     if(content)error.partialContent=content;
     if(!error.code&&/流意外中断/.test(error.message))error.code='MODEL_STREAM_INTERRUPTED';
     throw error;

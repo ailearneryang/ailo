@@ -6,6 +6,7 @@ const {
   dialog,
   safeStorage,
   shell,
+  nativeImage,
 } = require("electron");
 app.setName("Ailo");
 const { readMaterial, importPastedMaterials } = require("./materials.cjs");
@@ -139,8 +140,7 @@ function trusted(e) {
   if (e.sender !== win?.webContents || e.senderFrame?.url !== page)
     throw Error("Untrusted caller");
 }
-ipcMain.handle("state:read", async (e) => {
-  trusted(e);
+async function workspaceState(){
   const state = await storage.readWorkspace();
   for (const task of state.tasks) {
 
@@ -149,7 +149,11 @@ ipcMain.handle("state:read", async (e) => {
   }
   state.tasks=require('./scheduled-records.cjs').associateScheduledRecords(state.tasks,await schedules.list());
   return state;
-});
+}
+ipcMain.handle("state:read", async (e) => {trusted(e);return workspaceState();});
+ipcMain.handle('profile:read',e=>{trusted(e);return storage.profile();});
+ipcMain.handle('profile:save',async(e,input)=>{trusted(e);return storage.saveProfile(input,await workspaceState());});
+ipcMain.handle('profile:pickAvatar',async e=>{trusted(e);return require('./profile-avatar.cjs').pickAvatar(dialog,win,nativeImage);});
 ipcMain.handle('project:openFolder',async(e,id)=>{
  trusted(e);const state=await storage.readWorkspace();const project=state.projects.find(p=>p.id===id);if(!project)throw Error('项目不存在');
  const root=await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,{id:'project-folder',projectId:project.id});

@@ -119,6 +119,8 @@ export type Workspace = {
   defaultModelId: string;
 };
 export type User = { id: string; name: string; email: string };
+export type ProfileSettings={name:string;bio:string;color:string;avatar?:string;featured:{taskId:string;path:string}[]};
+export type ProfileData={settings:ProfileSettings;user:User|null;stats:{startedAt:string;days:Record<string,{inputTokens:number;outputTokens:number;requests:number;reportedRequests:number}>;activeDates:string[];inputTokens:number;outputTokens:number;totalTokens:number;peakDayTokens:number;requests:number;reportedRequests:number;longestExecutionMs:number;longestStreak:number;currentStreak:number;executionCount:number;reasoning:Record<string,number>;skills:Record<string,number>;connections:Record<string,number>}};
 export const demoModel: Model = {
   id: "demo",
   name: "选择模型",
@@ -212,6 +214,9 @@ declare global {
       pasteFiles: (entries: { name: string; bytes: Uint8Array }[]) => Promise<Material[]>;
       pick: () => Promise<Material[]>;
       account: () => Promise<User | null>;
+      profile:()=>Promise<ProfileData>;
+      saveProfile:(input:ProfileSettings)=>Promise<{settings:ProfileSettings;user:User|null}>;
+      pickProfileAvatar:()=>Promise<string|null>;
       register: (credentials: {
         name: string;
         email: string;

@@ -52,7 +52,22 @@ function createStorage(directory, safeStorage) {
   }
   return {
     skillPackages,
+    async profile(){
+      await writes.catch(()=>{});
+      const accounts=await read('accounts',{users:[]}),user=accounts.users.find(u=>u.id===accounts.currentUserId);
+      const preferences=await read('profiles',{}),settings=preferences[user?.id||'local']||{name:user?.name||'Ailo 用户',bio:'',color:'#b29154',featured:[]};
+      const usage=await read('usage',require('./profile.cjs').emptyUsage()),state=await read('workspace',{tasks:[]});
+      return {settings,user:publicUser(user),stats:require('./profile.cjs').summarize(usage,state.tasks||[])};
+    },
+    saveProfile(input,state){return queue(async()=>{
+      const settings=require('./profile.cjs').validateProfile(input,state);
+      const accounts=await read('accounts',{users:[]}),user=accounts.users.find(u=>u.id===accounts.currentUserId);
+      const profiles=await read('profiles',{});profiles[user?.id||'local']=settings;await write('profiles',profiles);
+      if(user){user.name=settings.name;await write('accounts',accounts);}return {settings,user:publicUser(user)};
+    });},
+    recordExecution(record){return queue(async()=>{const usage=await read('usage',require('./profile.cjs').emptyUsage());if(require('./profile.cjs').recordExecution(usage,record))await write('usage',usage);});},
     recordModelRequest(record){return queue(async()=>{
+      const usage=await read('usage',require('./profile.cjs').emptyUsage());if(require('./profile.cjs').recordRequest(usage,record))await write('usage',usage);
       const fields=['id','modelId','taskId','attempt','phase','startedAt','transport','headersMs','responseHeadersTimeoutMs','timeoutStage','requestBytes','messageCount','requestedOutputTokens','providerRequestId','httpStatus','chunks','bytes','maxChunkGapMs','firstByteMs','firstContentMs','streamCancelled','outcome','errorCode','abortRequested','durationMs','systemProxyMode'];
       fields.push('networkCode');
       const safe=Object.fromEntries(fields.filter(k=>['string','number','boolean'].includes(typeof record[k])).map(k=>[k,typeof record[k]==='string'?record[k].slice(0,128):record[k]]));

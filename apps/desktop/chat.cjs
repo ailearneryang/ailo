@@ -50,7 +50,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
         clearTimeout(timer);
         timer = setTimeout(onTimeout, ms);
       }
-      let release;
+      let release,executionStarted,executionExtensions=[],requestUsage=true;
       try {
         const {hasMessageContent}=await import('./attachments.mjs');
         if (
@@ -73,8 +73,10 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
         const schedulingState=input.taskId && storage.readWorkspace ? await storage.readWorkspace() : {tasks:[]};
         const schedulingTask=schedulingState.tasks?.find(t=>t.id===input.taskId);
         release=await scheduler.acquire(schedulingTask?.projectId || input.taskId || input.id,controller.signal,input.onStatus);
+        executionStarted=Date.now();
         input.onStatus?.('正在执行…');
         const selected = input.extensionIds?.length ? selectedExtensions((await storage.readWorkspace()).extensions || [], input.extensionIds) : [];
+        executionExtensions=selected;
         const model = await storage.modelCredentials(input.modelId);
         const reasoning = reasoningParameters(model,input.reasoningEffort);
         const url = new URL(model.baseUrl);
@@ -131,7 +133,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
             timeoutCode='MODEL_TOTAL_TIMEOUT';controller.abort();
           }, limits.total);
           try {
-          const requestBody=JSON.stringify({model:model.model,stream:true,max_tokens:Math.min(maxTokens,model.maxOutputTokens||maxTokens),messages,...format,...reasoning});
+          const requestBody=JSON.stringify({model:model.model,stream:true,max_tokens:Math.min(maxTokens,model.maxOutputTokens||maxTokens),messages,...format,...reasoning,...(requestUsage?{stream_options:{include_usage:true}}:{})});
           diagnostic.requestBytes=Buffer.byteLength(requestBody);
           diagnostic.messageCount=messages.length;
           diagnostic.requestedOutputTokens=Math.min(maxTokens,model.maxOutputTokens||maxTokens);
@@ -152,7 +154,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           if(model.apiKey&&diagnostic.providerRequestId?.includes(model.apiKey))delete diagnostic.providerRequestId;
           armTimer(limits.first,()=>requestTimeout('MODEL_FIRST_CONTENT_TIMEOUT',`${phase}超时：未收到模型内容（${Math.round(limits.first/1000)} 秒；已收到响应头）。`));
           if (!response.ok) {
-            if ([400,422].includes(response.status) && (format.tools || format.response_format)) {
+            if ([400,422].includes(response.status) && (format.tools || format.response_format || requestUsage)) {
               let detail = '';
               const reader = response.body?.getReader();
               try {
@@ -162,6 +164,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
                   detail += new TextDecoder().decode(value).slice(0,8192-detail.length);
                 }
               } finally { await cancelBody(reader); try{reader?.releaseLock();}catch{} }
+              if(requestUsage && /stream_options|include_usage/i.test(detail) && /not.support|unsupported|not.allowed|unknown|unrecognized|unexpected|not.permitted|不支持/i.test(detail))throw Object.assign(Error('模型接口不支持流式用量统计。'),{code:'MODEL_USAGE_UNSUPPORTED'});
               if(format.parallel_tool_calls===false && /parallel_tool_calls/i.test(detail) && /not.support|unsupported|not.allowed|unknown|unrecognized|不支持/i.test(detail))
                 throw Object.assign(Error('模型接口不支持并行动作开关。'),{code:'MODEL_PARALLEL_UNSUPPORTED'});
               const feature = format.tools ? /tools|tool_choice|function.call/i : /response_format|json_object/i;
@@ -205,8 +208,9 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
               input.onStatus?.(`模型正在思考 · 已等待 ${Math.floor((now - replyStartedAt) / 1000)} 秒 · 已收到 ${chars.toLocaleString()} 字思考数据，尚未生成正文…`);
             } : undefined,
           });
-          diagnostic.outcome='completed';return result;
+          diagnostic.providerUsage=result.providerUsage;diagnostic.outcome='completed';return result;
           } catch (error) {
+            diagnostic.providerUsage=error.providerUsage;
             const failure=requestFailure||require('./network-error.cjs').networkError(error);
             failure.hasVisibleOutput=showReply&&hasText;
             if(showReply&&error.partialContent)failure.partialContent=(error.code==='MODEL_OUTPUT_LIMIT'?'':prefix)+error.partialContent;
@@ -229,7 +233,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           }
         }
         async function ask(messages,maxTokens,showReply=false,prefix='',requestPhase,format={}){
-          return recoverRequest(attempt=>askOnce(messages,maxTokens,showReply,prefix,requestPhase,format,attempt),{signal:controller.signal,retries:limits.retries??2,retryDelay:limits.retryDelay??500,onRetry:(attempt,total)=>input.onStatus?.(`模型响应暂时停顿，正在自动重试当前${requestPhase==='任务决策'?'决策':'请求'}（${attempt}/${total}）…`)});
+          for(;;){try{return await recoverRequest(attempt=>askOnce(messages,maxTokens,showReply,prefix,requestPhase,format,attempt),{signal:controller.signal,retries:limits.retries??2,retryDelay:limits.retryDelay??500,onRetry:(attempt,total)=>input.onStatus?.(`模型响应暂时停顿，正在自动重试当前${requestPhase==='任务决策'?'决策':'请求'}（${attempt}/${total}）…`)});}catch(error){if(error.code==='MODEL_USAGE_UNSUPPORTED'&&requestUsage){requestUsage=false;continue;}throw error;}}
         }
         const { parseClarification } = await import("./clarification.mjs");
         if (storage.agentDirectory && input.taskId) {
@@ -347,6 +351,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
         steering.delete(input.id);
         pending.delete(input.id);
         release?.();
+        if(executionStarted!==undefined)try{await storage.recordExecution?.({id:input.id,durationMs:Date.now()-executionStarted,reasoningEffort:input.reasoningEffort,skills:executionExtensions.filter(e=>e.kind==='skill').map(e=>e.id),connections:[...(input.mcpConnectionIds||[]),...(input.feishuEnabled?['feishu']:[]),...(input.amapEnabled?['amap']:[]),...(input.searchEnabled?['search']:[])]});}catch{}
       }
     },
   };

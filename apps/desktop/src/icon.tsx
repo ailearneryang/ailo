@@ -1,8 +1,16 @@
 import React from 'react';
 // A single stroke weight and viewbox keep navigation icons optically consistent.
-export function Icon({ name }: { name: 'settings' | 'book' | 'sparkles' | 'plug' | 'chevron-right' | 'plus' | 'arrow-up' | 'compose' | 'chat' | 'grid' | 'folder' | 'folder-open' | 'info' | 'user' | 'chevron' | 'paperclip' | 'panel' | 'expand' | 'file' | 'queue' | 'play' | 'edit' | 'trash' | 'check' | 'close' | 'clock' | 'refresh' | 'copy' | 'search' | 'more' | 'pin' }) {
+export function Icon({ name }: { name: 'gauge' | 'pet' | 'sliders' | 'palette' | 'help' | 'logout' | 'lock' | 'globe' | 'settings' | 'book' | 'sparkles' | 'plug' | 'chevron-right' | 'plus' | 'arrow-up' | 'compose' | 'chat' | 'grid' | 'folder' | 'folder-open' | 'info' | 'user' | 'chevron' | 'paperclip' | 'panel' | 'expand' | 'file' | 'queue' | 'play' | 'edit' | 'trash' | 'check' | 'close' | 'clock' | 'refresh' | 'copy' | 'search' | 'more' | 'pin' }) {
   const shapes = {
-    settings: <><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></>,
+    gauge: <><path d="M5 19a9 9 0 1 1 14 0M16 8l-4 4"/><circle cx="12" cy="12" r="2"/><path d="M5 12H3M12 5V3M19 12h2"/></>,
+    pet: <><path d="M5 16c0-5 3-12 7-12s7 7 7 12c0 4-3 5-7 5s-7-1-7-5Z"/><path d="M9 12v2M15 12v2M10 17h4"/></>,
+    sliders: <><path d="M4 6h3M11 6h9M4 12h9M17 12h3M4 18h3M11 18h9"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="9" cy="18" r="2"/></>,
+    palette: <><path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1.4-3.4 2 2 0 0 1 1.4-3.4H18c2 0 3-1.8 3-4.2a9 9 0 0 0-9-7Z"/><path d="M7 10h.01M10 7h.01M15 7h.01M7 15h.01"/></>,
+    help: <><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="m6 6 3 3m6 6 3 3M6 18l3-3m6-6 3-3"/></>,
+    logout: <><path d="M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h5M9 12h12m-4-4 4 4-4 4"/></>,
+    lock: <><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></>,
+    globe: <><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></>,
+    settings: <><path d="M10 3h4l.6 2.4 1.8 1.1 2.4-.7 2 3.4-1.8 1.7v2.2l1.8 1.7-2 3.4-2.4-.7-1.8 1.1L14 21h-4l-.6-2.4-1.8-1.1-2.4.7-2-3.4L5 13.1v-2.2L3.2 9.2l2-3.4 2.4.7 1.8-1.1Z"/><circle cx="12" cy="12" r="3"/></>,
     book: <><path d="M12 5v16M12 5C9 3 5 3 2 4v15c3-1 7-1 10 2 3-3 7-3 10-2V4c-3-1-7-1-10 1Z"/></>,
     sparkles: <><path d="m10 3 2.4 6.6L19 12l-6.6 2.4L10 21l-2.4-6.6L1 12l6.6-2.4Z"/><path d="M19 2v6M16 5h6"/></>,
     plug: <><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0V8ZM12 17v4"/></>,
