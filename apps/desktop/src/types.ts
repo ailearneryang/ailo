@@ -1,3 +1,4 @@
+import type {CompanionData,CompanionInput,CompanionBackup,CompanionSummary} from './companion-types';
 export type MCPPermission='ask'|'read'|'disabled';
 export type MCPTool={name:string;description:string;inputSchema:Record<string,unknown>;readOnly:boolean;permission:MCPPermission;fingerprint:string};
 export type MCPConnection={id:string;name:string;description:string;url:string;authType:'none'|'token'|'oauth';headerName:string;clientId:string;hasCredential:boolean;enabled:boolean;connected:boolean;verifiedAt:string|null;error:string;authorizing:boolean;pendingCalls:{id:string;tool:string;purpose:string;params:Record<string,unknown>;at:string}[];tools:MCPTool[]};
@@ -10,7 +11,7 @@ export type KnowledgeLibrary={id:string;name:string;description:string;createdAt
 export type KnowledgeHit={libraryId:string;libraryName:string;documentId:string;name:string;chunk:number;offset:number;end:number;text:string;citation:string};
 export type KnowledgePage={libraryId:string;documentId:string;name:string;text:string;offset:number;total:number;next:number|null;citation:string};
 export type AMapState={configured:boolean;connected:boolean;verifiedAt:string|null;tools:string[];endpoint:string};
-export type ScheduleInput={id?:string;title:string;prompt:string;modelId:string;frequency:'once'|'daily'|'weekly';at?:string;time?:string;weekday?:number;searchEnabled?:boolean;feishuEnabled?:boolean};
+export type ScheduleInput={projectId?:string;contextMode?:'continuity'|'independent';id?:string;title:string;prompt:string;modelId:string;frequency:'once'|'daily'|'weekly';at?:string;time?:string;weekday?:number;searchEnabled?:boolean;feishuEnabled?:boolean};
 export type Schedule=ScheduleInput & {id:string;enabled:boolean;nextAt:string|null;runs:{id:string;taskId:string;at:string;startedAt?:string;status:'queued'|'running'|'completed'|'failed';error?:string}[]};
 export type SearchState={configured:boolean;connected:boolean;provider:"baidu"|"tavily";limit:number;used:number;verifiedAt:string|null};
 export type FeishuConnectionState = {installed:boolean;enabled:boolean;connected:boolean;configured?:boolean;name?:string;phase:string;url?:string;message:string};
@@ -60,6 +61,7 @@ export type Task = {
   petReadToken?: string;
   knowledgeIds?:string[];
   scheduledTaskId?: string;
+  scheduledContextMode?: 'continuity'|'independent';
   scheduledRunId?: string;
   scheduledAt?: string;
   scheduledArchived?: boolean;
@@ -97,6 +99,8 @@ export type RequestContextUsage = {
   providerUsage?: {inputTokens?:number;outputTokens?:number;reasoningTokens?:number};
 };
 export type AgentRun = {
+  acceptanceCriteria?:{id:string;text:string;status:'passed'|'pending'}[];
+  recoverySummary?:{retried:number;recovered:number;unknown:number};
   conversationTitle?: string;
   executionId?: string;
   afterMessageId?: string;
@@ -214,6 +218,11 @@ declare global {
       pasteFiles: (entries: { name: string; bytes: Uint8Array }[]) => Promise<Material[]>;
       pick: () => Promise<Material[]>;
       account: () => Promise<User | null>;
+      companionRead:(owner:string)=>Promise<CompanionData>;
+      companionUpdate:(owner:string,input:CompanionInput)=>Promise<CompanionData>;
+      companionExport:(owner:string,format:'json'|'html',period?:string)=>Promise<boolean>;
+      companionImportPreview:(owner:string)=>Promise<{backup:CompanionBackup;summary:CompanionSummary}|null>;
+      onCompanionChanged:(callback:(owner:string)=>void)=>()=>void;
       profile:()=>Promise<ProfileData>;
       saveProfile:(input:ProfileSettings)=>Promise<{settings:ProfileSettings;user:User|null}>;
       pickProfileAvatar:()=>Promise<string|null>;

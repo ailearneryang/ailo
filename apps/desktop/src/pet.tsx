@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import "./pet.css";
 import { petStateLabels, type PetState } from "./pet-state";
 import { Icon } from "./icon";
-import { usePetPreferences } from "./pet-preferences";
+import { interact, usePetInteraction, usePetPreferences } from "./pet-preferences";
 
 /** Full-body animated Shiba, sharing the app icon’s face and palette. */
 export function Pet({
@@ -19,7 +19,9 @@ export function Pet({
   state?: PetState;
 }) {
   const preferences = usePetPreferences();
-  const activity = state || (thinking ? "thinking" : "idle");
+  const requested = state || (thinking ? "thinking" : "idle");
+  const activity = requested==='completed'&&!preferences.celebrations||requested==='attention'&&!preferences.reminders?'idle':requested;
+  const sharedInteraction=usePetInteraction();
   const label = petStateLabels[activity].replace("Ailo", preferences.name);
   const [happy, setHappy] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -32,9 +34,10 @@ export function Pet({
   function greet() {
     if (timer.current) clearTimeout(timer.current);
     setHappy(true);
+    if(!preview)void interact('pat').catch(()=>{});
     timer.current = setTimeout(() => setHappy(false), 1800);
   }
-  const className = `ailo-pet pet-${size} ${activity === "thinking" ? "is-thinking" : ""} is-${activity} ${happy ? "is-happy" : ""} ${preferences.animated ? "" : "is-quiet"}`;
+  const className = `ailo-pet pet-${size} ${activity === "thinking" ? "is-thinking" : ""} is-${activity} ${happy || (!preview&&sharedInteraction) ? "is-happy" : ""} ${preferences.animated&&preferences.style!=="quiet" ? "" : "is-quiet"}`;
   if (!preferences.visible && !preview) return <span className={`ailo-pet pet-${size} pet-fallback`} role="img" aria-label={label} title={label}><Icon name="chat" /></span>;
   const artwork = (
     <>
@@ -64,7 +67,12 @@ export function Pet({
           </g>
           <path d="M59 108Q78 116 97 108L91 121L78 127L64 120Z" fill="#C4D6BE" />
           <circle cx="78" cy="117" r="2.2" fill="#38654F" />
+          {preferences.accessory==='scarf'&&<path d="M58 109Q78 119 98 109L92 124L79 131L73 122L64 132L59 121Z" fill="#D99750"/>}
+          {preferences.accessory==='star'&&<path d="m78 112 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1Z" fill="#DDAE47"/>}
+          {preferences.accessory==='crown'&&<path d="m62 37-5-17 13 8 8-15 9 15 13-8-5 17Z" fill="#DDAE47" stroke="#B48B31" strokeWidth="2"/>}
         </g>
+        {!preview&&sharedInteraction?.kind==='feed'&&<g><ellipse cx="79" cy="137" rx="20" ry="5" fill="#D99750"/><path d="M59 136h40l-7 12H66Z" fill="#729262"/></g>}
+        {!preview&&sharedInteraction?.kind==='play'&&<circle cx="130" cy="130" r="10" fill="#729262" stroke="#FFF4DF" strokeWidth="3"/>}
         <g className="pet-thoughts" fill="#729262">
           <circle cx="127" cy="49" r="2.5" /><circle cx="136" cy="39" r="3" /><circle cx="145" cy="28" r="4" />
         </g>

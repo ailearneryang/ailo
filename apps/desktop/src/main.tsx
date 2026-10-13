@@ -1,3 +1,5 @@
+import {initializeCompanion} from './pet-preferences';
+import {CompanionResultAction} from './pet-settings';
 import {supportsReasoning} from "../reasoning.cjs";
 import {CompanionNavigation} from './companion-navigation';
 import {PetSettings} from './pet-settings';
@@ -67,6 +69,7 @@ function App() {
   const rightPanelToggle=useRef<HTMLButtonElement>(null);
   const [user, setUser] = useState<User | null>(null);
   const [accountReady, setAccountReady] = useState(false);
+  useEffect(()=>{if(accountReady)void initializeCompanion(user?.id||'local');},[accountReady,user?.id]);
   const [projectId, setProjectId] = useState("");
   const [projectMenuAnchor,setProjectMenuAnchor]=useState<HTMLButtonElement|null>(null);
   const [modelId, setModelId] = useState("demo");
@@ -500,7 +503,7 @@ function App() {
   }
   const progressAt=progressAnchor(task?.agentRun,task?messagesFor(task):[]);
   const latestUserMessageId=task?messagesFor(task).filter(m=>m.role==='user').at(-1)?.id:undefined;
-  const currentProgress=task && (task.agentRun && <TaskProgress task={task} onOpenArtifacts={()=>setRightPanel('artifacts')} busy={busy} showRecovery={messagesFor(task).at(-1)?.role !== 'user'} onContinue={() => {
+  const currentProgress=task && (task.agentRun && <TaskProgress task={task} onOpenArtifacts={()=>setRightPanel('artifacts')} busy={!ready || busy || messageEdit?.taskId===task.id} onContinue={() => {
                   if (messagesFor(task).at(-1)?.role === 'user') { void respond(task,false); return; }
                   const message: Message = {id:crypto.randomUUID(),role:"user",content:"请从已保存的任务状态继续，先检查已有成果，不重复执行已完成步骤。"};
                   void respond({...task,messages:[...messagesFor(task),message]},false);
@@ -531,7 +534,7 @@ function App() {
           </button>
         </nav>
         <div className="sidebar-scroll">
-          {!!pinnedTasks.length&&<section aria-label="置顶对话"><div className="label">置顶</div><div className="history">{pinnedTasks.map(t=><TaskNavigation key={t.id} task={t} selected={view==='chat'&&active===t.id} busy={saving||importing} onSelect={()=>select(t.id)} onPin={()=>toggleTaskPin(t)}>{sessions[t.id]&&<small>执行中</small>}</TaskNavigation>)}</div></section>}
+          {!!pinnedTasks.length&&<section aria-label="置顶对话"><div className="label">置顶</div><div className="history">{pinnedTasks.map(t=><TaskNavigation key={t.id} task={t} running={!!sessions[t.id]} selected={view==='chat'&&active===t.id} busy={saving||importing} onSelect={()=>select(t.id)} onPin={()=>toggleTaskPin(t)}>{sessions[t.id]&&<small>执行中</small>}</TaskNavigation>)}</div></section>}
           <button className="label project-group-toggle" aria-expanded={projectsOpen} aria-controls="sidebar-projects" onClick={()=>setProjectsOpen(open=>!open)}>
             <span>项目 {data.projects.length || ""}</span><Icon name="chevron-right"/>
           </button>
@@ -551,7 +554,7 @@ function App() {
               <p className="muted">从一件想完成的事开始</p>
             ) : (
               recentTasks.map((t) => (
-                <TaskNavigation key={t.id} task={t} selected={view==='chat'&&active===t.id} busy={saving||importing} onSelect={()=>select(t.id)} onPin={()=>toggleTaskPin(t)}>
+                <TaskNavigation key={t.id} task={t} running={!!sessions[t.id]} selected={view==='chat'&&active===t.id} busy={saving||importing} onSelect={()=>select(t.id)} onPin={()=>toggleTaskPin(t)}>
                   {t.scheduledTaskId ? <small className="scheduled-recent-date">{new Date(t.scheduledAt||t.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})} · {sessions[t.id] ? (sessions[t.id].status.startsWith('等待执行')?'排队中':'执行中') : t.lastError || ['failed','blocked','waiting_permission','paused','waiting_user'].includes(t.agentRun?.status||'') || t.messages?.at(-1)?.clarification ? '待处理' : t.messages?.at(-1)?.role==='assistant' || t.answer ? '已有结果' : '等待结果'}</small> : sessions[t.id]&&<small className="session-status">{sessions[t.id].status.startsWith('等待执行')?'排队中':'执行中'}</small>}
                 </TaskNavigation>
               ))
@@ -564,7 +567,7 @@ function App() {
         <header>
           <div className="workspace-heading">
             <strong>
-              {view === "profile" ? "个人资料" : view === "pets" ? "宠物与陪伴" : view === "appearance" ? "外观设置" : view === "assistant" ? "我的 Ailo" : view === "knowledge" ? "知识库" : view === "schedules" ? "定时任务" : view === "extensions" ? "扩展" : view === "about"
+              {view === "profile" ? "个人资料" : view === "pets" ? "陪伴与成长" : view === "appearance" ? "外观设置" : view === "assistant" ? "我的 Ailo" : view === "knowledge" ? "知识库" : view === "schedules" ? "定时任务" : view === "extensions" ? "扩展" : view === "about"
                 ? "关于 Ailo"
                 : view === "models"
                   ? "偏好设置"
@@ -596,7 +599,7 @@ function App() {
         <div className="workspace">
           <section className={"conversation" + (view === "assistant" ? " assistant-conversation" : "") + (isConversation && !task ? " conversation-home" : "")}>
             {view === "assistant" && <MyAilo compact={!!task} data={data} runningIds={Object.keys(sessions)} onOpen={select} onSchedules={()=>setView("schedules")} onPets={()=>setView("pets")} />}
-            {view === "profile" ? <PersonalProfile onUser={setUser} onWorkspace={setData} onOpen={select} onCreate={text=>{select(null);setInput(text);}} onFeedback={(id,text)=>{select(id);setInput(text);}} onConnections={()=>{setExtensionTab("connector");setView("extensions");}}/> : view === "pets" ? <PetSettings/> : view === "appearance" ? <AppearanceSettings/> : view === "knowledge" ? <KnowledgeCenter onUse={id=>{select(null);setNewKnowledgeIds([id]);setView("chat");setNotice("已选择知识库，发送问题即可检索资料。");}}/> : view === "schedules" ? <Schedules key={scheduleTarget||"all"} initialId={scheduleTarget||undefined} focusHistory={!!scheduleTarget} onChanged={async()=>setData(await window.ailo.read())} tasks={data.tasks} models={models} defaultModelId={data.defaultModelId} onFeishu={()=>{setExtensionTab("connector");setView("extensions");}} onModels={()=>setView("models")} onOpen={async id=>{const latest=await window.ailo.read();if(!latest.tasks.some(t=>t.id===id))throw Error('对话已删除或尚未创建');setData(latest);select(id);const opened=latest.tasks.find(t=>t.id===id)!;setModelId(opened.modelId||latest.defaultModelId);setProjectId(opened.projectId||"");setExtensionIds(opened.extensionIds||[]);}}/> : view === "project" && data.projects.some(p=>p.id===projectId) ? <ProjectOverview key={projectId} project={data.projects.find(p=>p.id===projectId)!} tasks={data.tasks.filter(t=>t.projectId===projectId)} onSelect={select} onNew={()=>{const id=projectId;select(null);selectProject(id);}}/> : view === "extensions" ? (
+            {view === "profile" ? <PersonalProfile onUser={setUser} onWorkspace={setData} onOpen={select} onCreate={text=>{select(null);setInput(text);}} onFeedback={(id,text)=>{select(id);setInput(text);}} onConnections={()=>{setExtensionTab("connector");setView("extensions");}}/> : view === "pets" ? <PetSettings workspace={data} runningIds={Object.keys(sessions)} onOpen={select} onFeedback={(id,text)=>{select(id);setInput(text);}} onProject={id=>{setProjectId(id);setView("project");}}/> : view === "appearance" ? <AppearanceSettings/> : view === "knowledge" ? <KnowledgeCenter onUse={id=>{select(null);setNewKnowledgeIds([id]);setView("chat");setNotice("已选择知识库，发送问题即可检索资料。");}}/> : view === "schedules" ? <Schedules projects={data.projects} key={scheduleTarget||"all"} initialId={scheduleTarget||undefined} focusHistory={!!scheduleTarget} onChanged={async()=>setData(await window.ailo.read())} tasks={data.tasks} models={models} defaultModelId={data.defaultModelId} onFeishu={()=>{setExtensionTab("connector");setView("extensions");}} onModels={()=>setView("models")} onOpen={async id=>{const latest=await window.ailo.read();if(!latest.tasks.some(t=>t.id===id))throw Error('对话已删除或尚未创建');setData(latest);select(id);const opened=latest.tasks.find(t=>t.id===id)!;setModelId(opened.modelId||latest.defaultModelId);setProjectId(opened.projectId||"");setExtensionIds(opened.extensionIds||[]);}}/> : view === "project" && data.projects.some(p=>p.id===projectId) ? <ProjectOverview key={projectId} project={data.projects.find(p=>p.id===projectId)!} tasks={data.tasks.filter(t=>t.projectId===projectId)} onSelect={select} onNew={()=>{const id=projectId;select(null);selectProject(id);}}/> : view === "extensions" ? (
               <ExtensionCenter initialTab={extensionTab} items={availableExtensions} busy={busy || !ready}
                 onTryConnection={(text,connector)=>{if(typeof connector==='object')changeMCPConnections([...new Set([...mcpConnectionIds,connector.mcpId])]);else if(connector==='amap')setAMapChoices(v=>({...v,[connectionKey]:true}));else setConnectionChoices(v=>({...v,[connectionKey]:true}));setView(active === ASSISTANT_ID ? "assistant" : "chat");setInput(text);setError("");}}
                 onImporting={setImporting}
@@ -696,7 +699,7 @@ function App() {
                     )}
                     <div
                       className={
-                        message.role === "user" ? "bubble" : "assistant-text"
+                        message.role === "user" ? `bubble${message.clarificationReplyTo ? ' clarification-reply' : ''}` : "assistant-text"
                       }
                     >
                       {messageEdit?.taskId===task.id && messageEdit.messageId===message.id ? <div className="message-editor">
@@ -710,14 +713,15 @@ function App() {
                     </div>
                     {messageEdit?.taskId!==task.id&&<MessageActions message={message} createdAt={message.createdAt||(index===0&&message.role==='user'?task.created:undefined)} disabled={busy}
                       onEdit={message.role==='user'&&latestUserMessageId===message.id&&!pending?()=>setMessageEdit({taskId:task.id,messageId:message.id,content:message.content}):undefined}/>}
+                    {message.role==='assistant'&&index===messagesFor(task).length-1&&!busy&&<CompanionResultAction task={task}/>}
+                    {view === "assistant" && data.tasks.filter(t=>(t.parentAssistantId === ASSISTANT_ID && t.parentMessageId === message.id) || task.assistantReferences?.[message.id]?.includes(t.id)).map(linked=><button key={linked.id} className="assistant-linked-task" onClick={()=>select(linked.id)}><Icon name="folder"/><span><strong>{linked.title}</strong><small>{sessions[linked.id] ? sessions[linked.id].status : linked.assistantPaused ? "已暂停" : linked.lastError ? "需要处理" : linked.agentRun?.status === "completed" ? "成果已准备好" : linked.messages?.at(-1)?.clarification ? "需要补充信息" : linked.messages?.at(-1)?.role === "assistant" ? "已有结果" : "查看任务进度"}{linked.agentRun?.artifacts.length ? ` · ${linked.agentRun.artifacts.length} 项成果` : ""}</small></span><span>查看任务 ↗</span></button>)}
+                    {view === "assistant" && task.assistantScheduleLinks?.filter(link=>link.messageId===message.id).map(link=><button key={link.id} className="assistant-linked-task" onClick={()=>setView("schedules")}><Icon name="clock"/><span><strong>{link.title}</strong><small>已保存到定时任务</small></span><span>查看安排 ↗</span></button>)}
+                    {progressAt===message.id && currentProgress}
                     {message.role === "assistant" && message.clarification && <ClarificationCard
                       messageId={message.id} value={message.clarification} disabled={busy}
                       active={messagesFor(task).at(-1)?.id === message.id}
                       completed={messagesFor(task).find(m => m.clarificationReplyTo === message.id)?.clarificationAnswers}
                       onSubmit={(answers, attached) => answerQuestions(message, answers, attached)} />}
-                    {view === "assistant" && data.tasks.filter(t=>(t.parentAssistantId === ASSISTANT_ID && t.parentMessageId === message.id) || task.assistantReferences?.[message.id]?.includes(t.id)).map(linked=><button key={linked.id} className="assistant-linked-task" onClick={()=>select(linked.id)}><Icon name="folder"/><span><strong>{linked.title}</strong><small>{sessions[linked.id] ? sessions[linked.id].status : linked.assistantPaused ? "已暂停" : linked.lastError ? "需要处理" : linked.agentRun?.status === "completed" ? "成果已准备好" : linked.messages?.at(-1)?.clarification ? "需要补充信息" : linked.messages?.at(-1)?.role === "assistant" ? "已有结果" : "查看任务进度"}{linked.agentRun?.artifacts.length ? ` · ${linked.agentRun.artifacts.length} 项成果` : ""}</small></span><span>查看任务 ↗</span></button>)}
-                    {view === "assistant" && task.assistantScheduleLinks?.filter(link=>link.messageId===message.id).map(link=><button key={link.id} className="assistant-linked-task" onClick={()=>setView("schedules")}><Icon name="clock"/><span><strong>{link.title}</strong><small>已保存到定时任务</small></span><span>查看安排 ↗</span></button>)}
-                    {progressAt===message.id && currentProgress}
                     {task.agentRun?.history?.filter(r=>r.afterMessageId===message.id).map((r,i)=><ExecutionHistory key={r.executionId||i} task={task} run={r} onOpenArtifacts={()=>setRightPanel('artifacts')}/>)}
                   </div>
                 ))}

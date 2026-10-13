@@ -1,0 +1,7 @@
+export type PetPreferences = {visible:boolean; animated:boolean; name:string; style:'quiet'|'warm'|'work'; greetings:boolean; celebrations:boolean; reminders:boolean; accessory:string};
+export type CompanionMemory = {id:string;kind:'growth'|'anniversary'|'result'|'project';title?:string;note?:string;createdAt:string;taskId?:string;projectId?:string;path?:string;hidden?:boolean;deleted?:boolean};
+export type CompanionRecord = {version:1;firstMet:string;preferences:PetPreferences;activeDates:string[];seen:string[];adopted:string[];projects:string[];memories:CompanionMemory[];interactions:Record<'pat'|'feed'|'play',string[]>;visits:string[]};
+export type CompanionSummary = {calendarDays:number;activeDays:number;stage:string;next:{days:number;label:string}|null;results:number;projectCount:number;unlocks:string[];visitDays:number;interactionDays:number};
+export type CompanionData = {owner:string;record:CompanionRecord;summary:CompanionSummary};
+export type CompanionBackup = {format:'ailo-companion';version:1;exportedAt:string;record:CompanionRecord};
+export type CompanionInput = {action:'preferences';value:PetPreferences}|{action:'adopt';taskId:string;path?:string}|{action:'project';projectId:string}|{action:'memory';id:string;actionType?:string;[key:string]:unknown}|{action:'visit'}|{action:'interaction';kind:'pat'|'feed'|'play'}|{action:'restore';backup:CompanionBackup;applyPreferences:boolean};

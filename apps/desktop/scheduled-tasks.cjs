@@ -14,7 +14,9 @@ function nextTime(task, after) {
 }
 function validate(input, now) {
   if(!input||typeof input.title!=='string'||!input.title.trim()||input.title.length>80||typeof input.prompt!=='string'||!input.prompt.trim()||input.prompt.length>20000||typeof input.modelId!=='string'||!input.modelId||!['once','daily','weekly'].includes(input.frequency))throw Error('请填写任务名称、指令、模型和执行周期。');
-  const value={title:input.title.trim(),prompt:input.prompt.trim(),modelId:input.modelId,frequency:input.frequency,searchEnabled:input.searchEnabled===true,feishuEnabled:input.feishuEnabled===true};
+  if(input.contextMode!==undefined&&!['continuity','independent'].includes(input.contextMode))throw Error('上下文模式无效');
+  if(input.projectId!==undefined&&(typeof input.projectId!=='string'||!input.projectId))throw Error('项目无效');
+  const value={projectId:input.projectId,title:input.title.trim(),prompt:input.prompt.trim(),modelId:input.modelId,frequency:input.frequency,contextMode:input.contextMode||'continuity',searchEnabled:input.searchEnabled===true,feishuEnabled:input.feishuEnabled===true};
   if(input.frequency==='once'){
     const date=new Date(input.at);if(!Number.isFinite(date.getTime())||date.getTime()<=now)throw Error('请选择未来的执行时间。');value.at=date.toISOString();value.nextAt=value.at;
   }else{
@@ -63,7 +65,7 @@ function createScheduledTasks({directory,execute,cancel=()=>{},notify=()=>{},now
   return {
     list:()=>queue(read),
     async save(input){const value=validate(input,now());return mutate(tasks=>{
-      if(input.id){const task=tasks.find(t=>t.id===input.id);if(!task)throw Error('任务不存在');if(active.has(task.id))throw Error('请等待当前执行结束后编辑');Object.assign(task,value);return task;}
+      if(input.id){const task=tasks.find(t=>t.id===input.id);if(!task)throw Error('任务不存在');if(active.has(task.id))throw Error('请等待当前执行结束后编辑');if(task.runs.length&&(task.projectId||'')!==(value.projectId||''))throw Error('已有执行记录的任务不能更换文件空间，请新建定时任务');Object.assign(task,value);return task;}
       if(tasks.length>=100)throw Error('最多创建 100 个定时任务');
       const task={...value,id:randomUUID(),enabled:true,runs:[]};tasks.unshift(task);return task;
     });},

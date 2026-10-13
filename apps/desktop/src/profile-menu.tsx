@@ -38,13 +38,13 @@ export function ProfileMenu({user,ready,onSelect,onLogout}:{user:User|null;ready
       </button>
       <div className="profile-menu-divider" role="separator"/>
       <button role="menuitem" onClick={()=>select('profile')}><Icon name="gauge"/><span>使用情况</span><small className="profile-menu-detail">{tokens}</small></button>
-      <button role="menuitemcheckbox" aria-checked={pet.visible} onClick={()=>{setError(setPetPreferences({...pet,visible:!pet.visible})?'':'宠物设置未能保存，请重试。');}}><Icon name="pet"/><span>显示宠物</span><span className="profile-menu-detail profile-menu-check">{pet.visible&&<Icon name="check"/>}</span></button>
+      <button role="menuitemcheckbox" aria-checked={pet.visible} onClick={async()=>{setError(await setPetPreferences({...pet,visible:!pet.visible})?'':'宠物设置未能保存，请重试。');}}><Icon name="pet"/><span>显示宠物</span><span className="profile-menu-detail profile-menu-check">{pet.visible&&<Icon name="check"/>}</span></button>
       <button ref={settings} role="menuitem" aria-expanded={settingsOpen} aria-controls="profile-settings-options" onClick={()=>setSettingsOpen(v=>!v)} onKeyDown={e=>{if(e.key==='ArrowRight'){e.preventDefault();setSettingsOpen(true);}}}><Icon name="settings"/><span>设置</span><Icon name="chevron-right"/></button>
       {settingsOpen&&<div id="profile-settings-options" className="profile-menu-settings" role="group" aria-label="设置选项">
         <button role="menuitem" onClick={()=>select('account')}><Icon name="user"/><span>{user?'我的账号':'登录 / 注册'}</span></button>
         <button role="menuitem" onClick={()=>select('models')}><Icon name="sliders"/><span>模型设置</span></button>
         <button role="menuitem" onClick={()=>select('appearance')}><Icon name="palette"/><span>外观设置</span></button>
-        <button role="menuitem" onClick={()=>select('pets')}><Icon name="pet"/><span>宠物与陪伴</span></button>
+        <button role="menuitem" onClick={()=>select('pets')}><Icon name="pet"/><span>陪伴与成长</span></button>
       </div>}
       <div className="profile-menu-divider" role="separator"/>
       <button role="menuitem" onClick={()=>select('about')}><Icon name="help"/><span>帮助与关于</span><Icon name="chevron-right"/></button>

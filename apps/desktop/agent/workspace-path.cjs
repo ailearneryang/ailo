@@ -19,6 +19,7 @@ async function workspaceFiles(base,task){
   let grant;try{grant=JSON.parse(await fs.readFile(rootGrant(base,task.projectId),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}
   if(grant){const root=await fs.realpath(grant.root);if(root!==grant.root||!(await fs.stat(root)).isDirectory())throw Error('本地项目目录已变更，请重新打开文件夹');return root;}
  }
+ if(!task.projectId&&task.scheduledTaskId)return path.join(base,'schedules',createHash('sha256').update(task.scheduledTaskId).digest('hex'),'files');
  return path.join(workspacePath(base,task),'files');
 }
 module.exports.workspaceFiles=workspaceFiles;

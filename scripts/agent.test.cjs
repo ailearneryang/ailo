@@ -35,7 +35,7 @@ test('full task writes actual file, registers artifact, checks evidence, and per
   const snapshot=JSON.parse(messages.at(-1).content);
   const actions=[plan,{action:'write_file',path:'weather.txt',content:'晴天'},{action:'run_command',command:'test -f weather.txt',purpose:'文件检查'},{action:'artifact',path:'weather.txt',label:'天气说明'},{...plan,steps:plan.steps.map(s=>({...s,status:'done'}))}];
   if(call===4)assert.equal(snapshot.recentEvents.find(e=>e.type==='run_command').detail.result.exitCode,0,JSON.stringify(snapshot.recentEvents));
-  const action=actions[call++]||{action:'finish',text:'已生成天气说明并检查文件',evidence:[snapshot.recentEvents.find(e=>e.type==='run_command').id]};
+  const action=actions[call++]||(!snapshot.acceptanceCriteria.every(c=>c.check?.status==='passed')?{action:'verify',checks:snapshot.acceptanceCriteria.map(c=>({criterionId:c.id,kind:'text_contains',path:'weather.txt',contains:['晴天'],reason:'文件存在且包含晴天'}))}:{action:'finish',text:'已生成天气说明并检查文件',evidence:[snapshot.recentEvents.find(e=>e.type==='run_command').id]});
   return {content:JSON.stringify(action)};
  }),);
  assert.equal(result.agentRun.status,'completed');
@@ -408,4 +408,102 @@ test('unassigned conversations can chat and keep files and materials isolated',a
  const a=await createWorkspace(base,aTask),b=await createWorkspace(base,bTask),p=await createWorkspace(base,{...task,projectId:'loose-a'});
  assert.notEqual(a.files,b.files);assert.notEqual(a.files,p.files);await fs.writeFile(path.join(a.files,'private.txt'),'a');await assert.rejects(fs.readFile(path.join(b.files,'private.txt')),/ENOENT/);await assert.rejects(b.material(a.catalog[0].id),/不属于/);
  const result=await runAgent(options(base,async()=>({content:JSON.stringify({action:'reply',text:'你好'})}),{task:aTask,intent:'chat'}));assert.equal(result.content,'你好');
+});
+
+test('resumed completed plan redirects repeated directory scans and finishes with archived evidence',async t=>{
+ const base=await setup(t);let n=0;
+ await runAgent(options(base,async()=>({content:JSON.stringify([plan,{action:'write_file',path:'weather.txt',content:'晴天'},{action:'run_command',command:'test -f weather.txt',purpose:'验证文件'},{action:'artifact',path:'weather.txt',label:'天气说明'},{...plan,steps:plan.steps.map(s=>({...s,status:'done'}))},{action:'pause',text:'暂停后继续收尾'}][n++])})));
+ const w=await createWorkspace(base,task);
+ const evidence=w.run.events.find(e=>e.type==='run_command').id;
+ for(let i=0;i<10;i++)await w.event('note',{message:'历史记录'});
+ let calls=0;
+ const result=await runAgent(options(base,async messages=>{
+  const s=JSON.parse(messages.at(-1).content);
+  assert.equal(s.requiredAction,'finish_review');
+  assert.ok(s.completionEvidence.some(e=>e.id===evidence));
+  assert.ok(!s.recentEvents.some(e=>e.id===evidence));
+  if(calls++<3)return {content:JSON.stringify({action:'list_files',path:'course'})};
+  if(!s.acceptanceCriteria.every(c=>c.check?.status==='passed'))assert.equal(s.toolResults.at(-1).notExecuted,true);
+  return {content:JSON.stringify(!s.acceptanceCriteria.every(c=>c.check?.status==='passed')?{action:'verify',checks:s.acceptanceCriteria.map(c=>({criterionId:c.id,kind:'text_contains',path:'weather.txt',contains:['晴天'],reason:'核验晴天文件'}))}:{action:'finish',text:'已核验并交付',evidence:[evidence]})};
+ },{executeTool:()=>assert.fail('repeated exploration must not execute')}));
+ assert.equal(result.agentRun.status,'completed');
+});
+test('completed steps without actual artifacts and evidence cannot bypass finish validation',async t=>{
+ const base=await setup(t);let calls=0;
+ const result=await runAgent(options(base,async messages=>{
+  const s=JSON.parse(messages.at(-1).content);
+  if(calls++===0)return {content:JSON.stringify({...plan,steps:plan.steps.map(step=>({...step,status:'done'}))})};
+  assert.equal(s.requiredAction,'finish_review');
+  if(calls===2)return {content:JSON.stringify({action:'finish',text:'完成',evidence:['fake']})};
+  assert.match(s.toolResults.at(-1).error,/实际成果/);
+  return {content:JSON.stringify({action:'blocked',text:'缺少实际成果与验收证据'})};
+ }));
+ assert.equal(result.agentRun.status,'blocked');
+});
+test('complete short progress files survive checkpoint and resume without another read',async t=>{
+ const base=await setup(t),w=await createWorkspace(base,task);await fs.writeFile(path.join(w.files,'progress.json'),'{"next":"KV Cache"}');let calls=0;
+ await runAgent(options(base,async messages=>{
+  const s=JSON.parse(messages.at(-1).content);
+  if(calls++===0)return {content:JSON.stringify({action:'read_file',path:'progress.json'})};
+  assert.equal(s.knownFileContents[0].text,'{"next":"KV Cache"}');
+  if(calls===2)return {content:JSON.stringify({action:'checkpoint',text:'已完整读取课程进度，下一课 KV Cache，直接根据此进度推进。'})};
+  assert.equal(s.toolResults.length,0);return {content:JSON.stringify({action:'pause',text:'保存进度'})};
+ }));
+ await runAgent(options(base,async messages=>{
+  assert.equal(JSON.parse(messages.at(-1).content).knownFileContents[0].text,'{"next":"KV Cache"}');
+  return {content:JSON.stringify({action:'pause',text:'无需重读'})};
+ }));
+ await fs.writeFile(path.join(w.files,'progress.json'),'{"next":"Quantization"}');
+ await runAgent(options(base,async messages=>{
+  assert.deepEqual(JSON.parse(messages.at(-1).content).knownFileContents,[]);
+  return {content:JSON.stringify({action:'pause',text:'文件已更新，需要读取新版'})};
+ }));
+});
+test('repeat correction restores actual cached content and model can advance instead of pausing',async t=>{
+ const base=await setup(t),w=await createWorkspace(base,task);await fs.writeFile(path.join(w.files,'progress.json'),'{"next":"KV Cache"}');let calls=0,reads=0;
+ const execute=require('../apps/desktop/agent/tools.cjs').execute;
+ const result=await runAgent(options(base,async messages=>{
+  const s=JSON.parse(messages.at(-1).content);
+  if(calls++<3)return {content:JSON.stringify({action:'read_file',path:'progress.json'})};
+  assert.equal(s.toolResults.at(-1).notExecuted,true);assert.match(s.toolResults.at(-1).result.text,/KV Cache/);
+  return {content:JSON.stringify({action:'reply',text:'下一课 KV Cache，已使用缓存进度'})};
+ },{intent:'chat',executeTool:async(...args)=>{if(args[1].action==='read_file')reads++;return execute(...args);}}));
+ assert.equal(reads,2);assert.equal(result.agentRun.status,'idle');assert.match(result.content,/KV Cache/);
+});
+test('large static context does not force checkpoint after every single read',async t=>{
+ const base=await setup(t),w=await createWorkspace(base,task);await fs.writeFile(path.join(w.files,'progress.json'),'short');let calls=0;
+ await runAgent(options(base,async messages=>{
+  const s=JSON.parse(messages.at(-1).content);
+  if(calls++===0)return {content:JSON.stringify({action:'read_file',path:'progress.json'})};
+  assert.notEqual(s.requiredAction,'checkpoint');
+  return {content:JSON.stringify({action:'reply',text:'利用现有文件继续'})};
+ },{intent:'chat',model:{contextWindow:100000},projectContext:'背景信息'.repeat(7000)}));
+});
+
+test('changed artifact errors identify every file and successful repairs reset finish failure counters',async t=>{
+ const base=await setup(t);let call=0,repairs=0;const repairQueue=[];let checkedGate=false;let savedError;
+ const w=await createWorkspace(base,task);
+ const initial=[plan,{action:'write_file',path:'weather.txt',content:'晴天'},{action:'write_file',path:'extra.txt',content:'extra'},{action:'run_command',command:'test -f weather.txt',purpose:'检查成果'},{action:'artifact',path:'weather.txt',label:'天气'},{action:'artifact',path:'extra.txt',label:'附录'},{...plan,steps:plan.steps.map(s=>({...s,status:'done'}))}];
+ const result=await runAgent(options(base,async messages=>{
+  const s=JSON.parse(messages.at(-1).content);
+  if(call<initial.length)return {content:JSON.stringify(initial[call++])};
+  if(s.requiredAction==='checkpoint'){savedError=s.toolResults.at(-1)?.error||savedError;return {content:JSON.stringify({action:'checkpoint',text:'已制作天气和附录，外部修改导致旧登记失效；正在逐个重新登记最终内容，之后核验并完成。'+call+'-'+repairs})};}
+  if(s.toolResults.at(-1)?.notExecuted&&repairs===1){assert.deepEqual(s.pendingArtifactUpdates,['weather.txt','extra.txt']);checkedGate=true;}
+  if(repairQueue.length)return {content:JSON.stringify(repairQueue.shift())};
+  const error=s.toolResults.at(-1)?.error||savedError;savedError=undefined;
+  if(error){
+   assert.match(error,/weather\.txt/);assert.match(error,/extra\.txt/);assert.match(error,/不要直接重复 finish/);
+   repairs++;
+   assert.deepEqual(s.pendingArtifactUpdates,['weather.txt','extra.txt']);
+   if(repairs===1){repairQueue.push({action:'artifact',path:'weather.txt',label:'天气'},{action:'artifact',path:'extra.txt',label:'附录'});return {content:JSON.stringify({action:'verify',checks:s.acceptanceCriteria.map(c=>({criterionId:c.id,kind:'file_exists',path:'weather.txt',reason:'不能跳过登记'}))})};}
+   repairQueue.push({action:'artifact',path:'extra.txt',label:'附录'});
+   return {content:JSON.stringify({action:'artifact',path:'weather.txt',label:'天气'})};
+  }
+  if(repairs<3){
+   await fs.writeFile(path.join(w.files,'weather.txt'),'晴天 '+repairs);
+   await fs.writeFile(path.join(w.files,'extra.txt'),'extra '+repairs);
+  }else if(!s.acceptanceCriteria.every(c=>c.check?.status==='passed'))return {content:JSON.stringify({action:'verify',checks:s.acceptanceCriteria.map(c=>({criterionId:c.id,kind:'text_contains',path:'weather.txt',contains:['晴天'],reason:'最终文件包含晴天'}))})};
+  return {content:JSON.stringify({action:'finish',text:'完成',evidence:[s.completionEvidence[0].id]})};
+ }));
+ assert.equal(checkedGate,true);assert.equal(result.agentRun.status,'completed',JSON.stringify(result));assert.equal(repairs,3);
 });

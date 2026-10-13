@@ -104,14 +104,20 @@ ipcMain.handle("chat:complete", async (e, input) => {
     send({finished:!chat.sessions().some(s=>s.taskId===input.taskId)});throw error;
   }
 });
-ipcMain.handle("task:edit-last-message", (e, {id,messageId,content}) => {
+ipcMain.handle("task:edit-last-message", async (e, {id,messageId,content}) => {
   trusted(e);
   if(chat.sessions().some(s=>s.taskId===id))throw Error('请先停止回复再编辑消息');
-  return storage.editLastMessage(id,messageId,content);
+  const owner=(await storage.account())?.id||'local';
+  const task=await storage.editLastMessage(id,messageId,content);
+  await companion.activity(task,[task.messages.at(-1)],owner).catch(error=>console.error('陪伴记录保存失败',error.message));return task;
 });
-ipcMain.handle("task:patch", (e, {id,patch,append}) => { trusted(e); return storage.patchTask(id,patch,append); });
+ipcMain.handle("task:patch", (e, {id,patch,append}) => {trusted(e);return companionModule.patchUserTask(storage,companion,id,patch,append);});
 ipcMain.handle("task:pin", (e, {id,pinned}) => { trusted(e); return storage.setTaskPinned(id,pinned); });
-ipcMain.handle("chat:steer", (e, input) => { trusted(e); return chat.steer(input); });
+ipcMain.handle("chat:steer", async (e, input) => {
+  trusted(e);const owner=(await storage.account())?.id||'local';const message=await chat.steer(input);
+  const task=(await storage.readWorkspace()).tasks.find(t=>t.id===input.taskId);
+  if(task)await companion.activity(task,[message],owner).catch(error=>console.error('陪伴记录保存失败',error.message));return message;
+});
 ipcMain.handle("chat:cancel", (e, id) => {
   trusted(e);
   chat.cancel(id);
@@ -120,7 +126,7 @@ const schedules=require('./scheduled-tasks.cjs').createScheduledTasks({
   directory:app.getPath('userData'),cancel:id=>chat.cancel(id),
   execute:async(task,run)=>{
     const prompt=task.prompt+'\n\n[定时执行时间：'+new Date().toLocaleString('zh-CN')+'。请直接完成任务并报告结果；缺少信息或权限时请说明，不要假装已经完成。]';
-    await storage.patchTask(run.taskId,{scheduledTaskId:task.id,scheduledRunId:run.id,scheduledAt:run.at,title:'定时 · '+task.title,request:prompt,materials:[],created:new Date().toISOString(),modelId:task.modelId,feishuEnabled:task.feishuEnabled===true,searchEnabled:task.searchEnabled},[{id:run.id+'-user',role:'user',content:prompt}]);
+    await storage.patchTask(run.taskId,{projectId:task.projectId,scheduledTaskId:task.id,scheduledContextMode:task.contextMode||'continuity',scheduledRunId:run.id,scheduledAt:run.at,title:'定时 · '+task.title,request:prompt,materials:[],created:new Date().toISOString(),modelId:task.modelId,feishuEnabled:task.feishuEnabled===true,searchEnabled:task.searchEnabled},[{id:run.id+'-user',role:'user',content:prompt}]);
     try{
       const result=await chat.complete({id:run.id,taskId:run.taskId,modelId:task.modelId,feishuEnabled:task.feishuEnabled===true,searchEnabled:task.searchEnabled,messages:[{role:'user',content:prompt}]});
       await storage.patchTask(run.taskId,{modelName:result.modelName,contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens},[{id:run.id+'-assistant',role:'assistant',content:result.content,modelName:result.modelName,clarification:result.clarification}]);
@@ -134,7 +140,7 @@ const schedules=require('./scheduled-tasks.cjs').createScheduledTasks({
   },
 });
 storage.personalAssistant=require('./personal-assistant.cjs').createPersonalAssistant({storage,chat,schedules,notify:value=>{if(win&&!win.isDestroyed())win.webContents.send('chat:status',value);}});
-for(const method of ['list','save','toggle','remove','run'])ipcMain.handle('schedules:'+method,(e,input)=>{trusted(e);return schedules[method](input);});
+for(const method of ['list','save','toggle','remove','run'])ipcMain.handle('schedules:'+method,async(e,input)=>{trusted(e);if(method==='save'&&input.projectId&&!(await storage.readWorkspace()).projects.some(p=>p.id===input.projectId))throw Error('项目不存在');return schedules[method](input);});
 const page = pathToFileURL(path.join(__dirname, "dist/index.html")).href;
 function trusted(e) {
   if (e.sender !== win?.webContents || e.senderFrame?.url !== page)
@@ -152,7 +158,18 @@ async function workspaceState(){
 }
 ipcMain.handle("state:read", async (e) => {trusted(e);return workspaceState();});
 ipcMain.handle('profile:read',e=>{trusted(e);return storage.profile();});
-ipcMain.handle('profile:save',async(e,input)=>{trusted(e);return storage.saveProfile(input,await workspaceState());});
+ipcMain.handle('profile:save',async(e,input)=>{trusted(e);const state=await workspaceState(),owner=(await storage.account())?.id||'local';const result=await storage.saveProfile(input,state);await companion.featured(state.tasks.filter(t=>!chat.sessions().some(s=>s.taskId===t.id)),result.settings.featured,owner).catch(error=>console.error('成果回忆保存失败',error.message));return result;});
+const companionModule=require('./companion.cjs');
+const companion=companionModule.createCompanion(app.getPath('userData'),()=>storage.account(),owner=>{if(win&&!win.isDestroyed())win.webContents.send('companion:changed',owner);});
+ipcMain.handle('companion:read',(e,owner)=>{trusted(e);return companion.read(owner);});
+ipcMain.handle('companion:update',async(e,{owner,input})=>{
+  trusted(e);if(!input||JSON.stringify(input).length>5*1024*1024)throw Error('陪伴操作无效');
+  if(input.action==='adopt'&&chat.sessions().some(s=>s.taskId===input.taskId))throw Error('请等待任务完成后再采纳');
+  if(input.action==='project'){const state=await storage.readWorkspace();if(state.tasks.some(t=>t.projectId===input.projectId&&chat.sessions().some(s=>s.taskId===t.id)))throw Error('项目仍有任务正在执行');}
+  return companion.update(owner,input,await workspaceState());
+});
+ipcMain.handle('companion:export',(e,input)=>{trusted(e);return require('./companion-files.cjs').exportFile({dialog,win,store:companion,owner:input.owner,format:input.format,period:input.period});});
+ipcMain.handle('companion:importPreview',(e,owner)=>{trusted(e);return require('./companion-files.cjs').importPreview({dialog,win,store:companion,owner});});
 ipcMain.handle('profile:pickAvatar',async e=>{trusted(e);return require('./profile-avatar.cjs').pickAvatar(dialog,win,nativeImage);});
 ipcMain.handle('project:openFolder',async(e,id)=>{
  trusted(e);const state=await storage.readWorkspace();const project=state.projects.find(p=>p.id===id);if(!project)throw Error('项目不存在');
@@ -191,7 +208,8 @@ ipcMain.handle("agent:reveal", async (e, {taskId, artifactPath, projectFile = fa
   if (artifactPath) {
     if (projectFile) await require("./agent/project-files.cjs").projectFile(await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task),artifactPath);
     else if (!run?.artifacts.some(a => a.path === artifactPath)) throw Error("成果不属于此任务");
-    shell.showItemInFolder(await resolveFile(await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task),artifactPath));
+    const root=projectFile?await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task):await require('./schedule-context.cjs').scheduleArtifactRoot(storage.agentDirectory,task,artifactPath);
+    shell.showItemInFolder(await resolveFile(root,artifactPath));
   } else {
     const error = await shell.openPath(await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task));
     if (error) throw Error(error);
@@ -209,7 +227,7 @@ ipcMain.handle("agent:preview", async (e, {taskId, artifactPath, projectFile = f
   const run=await json(path.join(project,'runs',key(task.id)+'.json'),null);
   if(projectFile)await require('./agent/project-files.cjs').projectFile(await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task),artifactPath);
   else if(!run?.artifacts.some(a=>a.path===artifactPath))throw Error('成果不属于当前任务');
-  const root=await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task);
+  const root=projectFile?await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task):await require('./schedule-context.cjs').scheduleArtifactRoot(storage.agentDirectory,task,artifactPath);
   const file=await resolveFile(root,artifactPath);
   return require('./artifact-edit.cjs').previewFile(file,root);
 });

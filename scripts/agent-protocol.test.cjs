@@ -9,6 +9,22 @@ const {decodeAction}=require('../apps/desktop/agent/protocol.cjs');
 function native(action){return new Response(JSON.stringify({choices:[{message:{content:null,tool_calls:[{id:'call1',type:'function',function:{name:'ailo_action',arguments:JSON.stringify(action)}}]},finish_reason:'tool_calls'}]}));}
 async function fixture(t){const base=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-protocol-'));t.after(()=>fs.rm(base,{recursive:true,force:true}));const task={id:'task',projectId:'project',request:'你好',materials:[],messages:[{role:'user',content:'你好'}]};return {agentDirectory:base,modelCredentials:async()=>({baseUrl:'https://example.com/v1',name:'mock',model:'mock'}),readWorkspace:async()=>({tasks:[task]})};}
 const input={id:'r',modelId:'m',taskId:'task',messages:[{role:'user',content:'你好'}]};
+test('scheduled chat loads previous run context and can read its saved progress',async t=>{
+ const storage=await fixture(t),task={id:'task',scheduledTaskId:'daily-course',request:'继续课程',materials:[],created:new Date().toISOString(),messages:[{role:'user',content:'继续课程'}]},old={...task,id:'yesterday',created:new Date(Date.now()-86400000).toISOString(),messages:[{role:'assistant',content:'Transformer 已完成，下一期 KV Cache'}]};
+ storage.readWorkspace=async()=>({tasks:[task,old]});
+ const {workspacePath}=require('../apps/desktop/agent/workspace-path.cjs');
+ const legacy=path.join(workspacePath(storage.agentDirectory,old),'files');await fs.mkdir(legacy,{recursive:true});await fs.writeFile(path.join(legacy,'progress.md'),'已学 Transformer，下一课 KV Cache');
+ let calls=0;
+ const chat=createChat(storage,async(url,options)=>{
+  const body=JSON.parse(options.body),state=JSON.parse(body.messages.at(-1).content);
+  assert.equal(state.scheduledContext.historyStatus,'available');assert.equal(state.scheduledContext.previousRunCount,1);assert.match(state.scheduledContext.recentRuns[0].summary,/Transformer/);
+  if(calls++===0)return native({action:'route',kind:'chat'});
+  if(calls===2)return native({action:'read_file',path:'progress.md'});
+  assert.match(JSON.stringify(state.toolResults),/KV Cache/);
+  return native({action:'reply',text:'历史进度已读取，下一课 KV Cache'});
+ });
+ assert.match((await chat.complete({...input,messages:task.messages})).content,/KV Cache/);
+});
 test('native streaming tool arguments are assembled without leaking into chat text',async()=>{
  const chunks=[{tool_calls:[{index:0,id:'c',type:'function',function:{name:'ailo_action',arguments:'{"action":"reply",'}}]},{tool_calls:[{index:0,function:{arguments:'"text":"你好"}'}}]}];
  const source=chunks.map(delta=>'data: '+JSON.stringify({choices:[{index:0,delta}]})+'\n\n').join('')+'data: '+JSON.stringify({choices:[{index:0,delta:{},finish_reason:'tool_calls'}]})+'\n\ndata: [DONE]\n\n';

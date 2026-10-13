@@ -1,6 +1,15 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const {createScheduledTasks,nextTime,validate}=require('../apps/desktop/scheduled-tasks.cjs');
 const input={title:'每天计划',prompt:'制定计划',modelId:'test',frequency:'daily',time:'09:00'};
+test('context mode defaults to continuity and rejects unknown modes',()=>{
+ const now=new Date(2026,9,1,8).getTime();assert.equal(validate(input,now).contextMode,'continuity');assert.equal(validate({...input,contextMode:'independent'},now).contextMode,'independent');assert.throws(()=>validate({...input,contextMode:'invalid'},now),/上下文模式/);
+});
+test('file space binding is fixed after first run while context mode remains editable',async t=>{
+ const {service}=await setup(t);const task=await service.save({...input,projectId:'p'});
+ await service.run(task.id);await finished(service);
+ await assert.rejects(service.save({...task,projectId:'other'}),/不能更换文件空间/);
+ assert.equal((await service.save({...task,contextMode:'independent'})).contextMode,'independent');
+});
 async function setup(t,execute=async()=>{}){const directory=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-schedules-'));let time=new Date(2026,9,1,8).getTime();const service=createScheduledTasks({directory,execute,now:()=>time});t.after(async()=>{service.stop();await fs.rm(directory,{recursive:true,force:true});});return {service,directory,setTime:value=>time=value};}
 async function finished(service){for(let i=0;i<100;i++){const rows=await service.list();if(!rows.some(t=>t.runs.some(r=>['running','queued'].includes(r.status))))return rows;await new Promise(r=>setTimeout(r,5));}assert.fail('execution did not finish');}
 test('next run respects local calendar boundaries and weekly day',()=>{const now=new Date(2026,9,1,9).getTime();assert.equal(new Date(nextTime(input,now)).getDate(),2);const next=new Date(nextTime({...input,frequency:'weekly',weekday:1},now));assert.equal(next.getDay(),1);assert.equal(next.getHours(),9);assert.equal(nextTime({frequency:'once'},now),null);assert.throws(()=>validate({...input,time:'29:99'},now));assert.throws(()=>validate({...input,frequency:'once',at:new Date(now-1).toISOString()},now));});

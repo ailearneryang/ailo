@@ -56,7 +56,7 @@ test('standard build evidence supports finish without a fake shell verification'
  const base=await temp(t);let n=0;
  const plan={action:'plan',goal:'构建',decisions:[],acceptance:['构建成功'],steps:[{id:'s',title:'构建',status:'pending'}]};
  const actions=[{action:'route',kind:'task'},plan,{action:'write_file',path:'app.apk',content:'fixture'},{action:'build_android',tasks:[':app:assembleDebug']},{action:'artifact',path:'app.apk',label:'测试产物'},{...plan,steps:[{id:'s',title:'构建',status:'done'}]}];
- const result=await runAgent({base,task:{id:'t',projectId:'p',request:'构建'},model:{contextWindow:32768},signal:new AbortController().signal,ask:async messages=>({content:JSON.stringify(actions[n++]||{action:'finish',text:'已构建',evidence:[JSON.parse(messages.at(-1).content).recentEvents.find(e=>e.type==='build_android').id]})}),executeTool:async(w,a,s)=>a.action==='build_android'?{exitCode:0,output:'BUILD SUCCESSFUL'}:require('../apps/desktop/agent/tools.cjs').execute(w,a,s)});
+ const result=await runAgent({base,task:{id:'t',projectId:'p',request:'构建'},model:{contextWindow:32768},signal:new AbortController().signal,ask:async messages=>({content:JSON.stringify(actions[n++]||(()=>{const s=JSON.parse(messages.at(-1).content),evidenceId=s.recentEvents.find(e=>e.type==='build_android').id;return s.acceptanceCriteria.every(c=>c.check?.status==='passed')?{action:'finish',text:'已构建',evidence:[evidenceId]}:{action:'verify',checks:s.acceptanceCriteria.map(c=>({criterionId:c.id,kind:'command',evidenceId,reason:'标准构建成功'}))};})())}),executeTool:async(w,a,s)=>a.action==='build_android'?{exitCode:0,output:'BUILD SUCCESSFUL'}:require('../apps/desktop/agent/tools.cjs').execute(w,a,s)});
  assert.equal(result.agentRun.status,'completed');
 });
 
