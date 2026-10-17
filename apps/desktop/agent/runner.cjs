@@ -24,7 +24,7 @@ const acceptanceChecks=require('./acceptance.cjs');
 const actionJournal=require('./action-journal.cjs');
 const {validatePlan}=require('./plan.cjs');
 function publicRun(run) {
-  return {conversationTitle:run.conversationTitle,progressInputId:run.progressInputId,executionId:run.executionId,history:run.history||[],inFlight:run.inFlight,contextUsage:run.contextUsage,acceptanceCriteria:acceptanceChecks.criteria(run).map(({id,text,check})=>({id,text,status:check?.status==='passed'&&check.revision===run.revision?'passed':'pending'})),recoverySummary:{retried:(run.actionJournal||[]).filter(e=>e.retries>0).length,recovered:(run.actionJournal||[]).filter(e=>e.recovered).length,unknown:(run.actionJournal||[]).filter(e=>e.status==='unknown').length},status:run.status,mode:run.mode,goal:run.goal,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,artifacts:run.artifacts,updatedAt:run.updatedAt,events:run.events.slice(-12).map(e=>({id:e.id,type:e.type,at:e.at,detail:{purpose:e.detail.purpose,exitCode:e.detail.result?.exitCode,path:e.detail.path,name:e.detail.name,offset:e.detail.offset,entry:e.detail.entry,pointer:e.detail.pointer,message:e.detail.message,output:['run_command','build_android','android_device','feishu'].includes(e.type)?e.detail.result?.output?.slice(-2000):undefined}}))};
+  return {loadedExtensions:run.loadedExtensions,conversationTitle:run.conversationTitle,progressInputId:run.progressInputId,executionId:run.executionId,history:run.history||[],inFlight:run.inFlight,contextUsage:run.contextUsage,acceptanceCriteria:acceptanceChecks.criteria(run).map(({id,text,check})=>({id,text,status:check?.status==='passed'&&check.revision===run.revision?'passed':'pending'})),recoverySummary:{retried:(run.actionJournal||[]).filter(e=>e.retries>0).length,recovered:(run.actionJournal||[]).filter(e=>e.recovered).length,unknown:(run.actionJournal||[]).filter(e=>e.status==='unknown').length},status:run.status,mode:run.mode,goal:run.goal,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,artifacts:run.artifacts,updatedAt:run.updatedAt,events:run.events.slice(-12).map(e=>({id:e.id,type:e.type,at:e.at,detail:{purpose:e.detail.purpose,exitCode:e.detail.result?.exitCode,path:e.detail.path,name:e.detail.name,offset:e.detail.offset,entry:e.detail.entry,pointer:e.detail.pointer,message:e.detail.message,output:['run_command','build_android','android_device','feishu'].includes(e.type)?e.detail.result?.output?.slice(-2000):undefined}}))};
 }
 async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[],skillPackages,android,authorizeBuild,directoryAccess,feishuCli,webSearch,amap,mcp,knowledge,personalAssistant,projectContext,projectMemoryContext,scheduledContext,maxSteps=240,batchSize=48,maxDurationMs=2*60*60*1000,now=Date.now,executeTool=execute,getSteering=async()=>[]}) {
   for(const value of [maxSteps,batchSize,maxDurationMs])if(!Number.isSafeInteger(value)||value<=0)throw Error('执行预算必须为正整数');
@@ -33,6 +33,9 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
   await actionJournal.reconcile(workspace);
   if (skillPackages) extensions = await skillPackages.prepare(workspace, extensions);
   require('./execution-rounds.cjs').beginRound(run,task,publicRun);
+  // Report only extensions whose resources were successfully prepared.
+  run.loadedExtensions=extensions.filter(e=>e.enabled!==false).map(({id,name,kind})=>({id,name,kind}));
+  if(run.loadedExtensions.length)run.progressInputId=run.inputKey;
   const savedProjectMemory=projectMemoryContext!==undefined?projectMemoryContext:task.projectId?await (async()=>{const root=require('./workspace-path.cjs').workspacePath(base,task),path=require('node:path');const saved=await require('./workspace.cjs').json(path.join(root,'memory.json'),{notes:''});let files=[];try{files=(await fs.readdir(path.join(root,'runs'))).filter(n=>/^[a-f0-9]{64}\.json$/.test(n)).slice(0,100);}catch(e){if(e.code!=='ENOENT')throw e;}const records=[];for(const name of files){const r=await require('./workspace.cjs').json(path.join(root,'runs',name),null);if(r&&r.taskId!==task.id&&!(saved.hiddenTaskIds||[]).includes(r.taskId))records.push({taskId:r.taskId,goal:r.goal,status:r.status,decisions:r.decisions,steps:r.steps,updatedAt:r.updatedAt});}records.sort((a,b)=>(b.updatedAt||'').localeCompare(a.updatedAt||''));return {...saved,records:records.slice(0,10)};})():null;
   const previousStatus=run.status;
   const {AGENT_PROMPT:PROMPT}=await import('./prompt.mjs');
@@ -128,6 +131,11 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
   }
 
   if (!run.steps.length) run.status='understanding';
+  if(run.loadedExtensions.length) {
+    const message='本轮已加载：'+run.loadedExtensions.map(e=>(e.kind==='skill'?'技能 · ':'专家 · ')+e.name).join('、');
+    await workspace.event('extensions_loaded',{message});
+    onStatus?.(message);
+  }
   await notify();
   try {
     for(let turn=0;turn<maxSteps;turn++) {
@@ -295,7 +303,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
           validatePlan(action);
           if(JSON.stringify(run.steps.map(({id,status})=>({id,status})))!==JSON.stringify(action.steps.map(({id,status})=>({id,status}))))markProgress({steps:action.steps.map(({id,status})=>({id,status}))});
           if(action.steps.filter(s=>s.status==='done').length>run.steps.filter(s=>s.status==='done').length)advanceReads({completed:action.steps.filter(s=>s.status==='done').map(s=>s.id).sort()});
-          run.mode='task';run.goal=action.goal;run.decisions=action.decisions;run.acceptance=action.acceptance;run.steps=action.steps.map(({id,title,status})=>({id,title,status}));run.status='running';
+          run.mode='task';run.goal=action.goal;run.decisions=action.decisions;run.acceptance=action.acceptance;run.steps=action.steps.map(({id,title,status,detail,summary,requiresConfirmation})=>({id,title,status,...(detail?{detail}:{}),...(summary?{summary}:{}),...(requiresConfirmation!==undefined?{requiresConfirmation}:{})}));run.status='running';
           run.actionsSincePlan=0;
           invalid=0;await workspace.event('plan',{goal:run.goal,steps:run.steps});await notify();await record(action,{ok:true,action:'plan'});continue;
         }

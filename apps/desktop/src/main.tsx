@@ -143,7 +143,8 @@ function App() {
   },[]);
   const cancelledRef = useRef<string | null>(null);
   const threadEnd = useRef<HTMLDivElement>(null);
-  const busy = saving || !!pending || importing;
+  const composerBusy = saving || importing;
+  const busy = composerBusy || !!pending;
   const messagesFor = (t: Task): Message[] =>
     t.messages || [
       {
@@ -376,6 +377,7 @@ function App() {
   }
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (!ready || composerBusy) return;
     if(pending && task?.id===pending && requestRef.current) {
       if(!hasMessageContent(input,materials)||input.trim().length>20000)return;
       setQueued(previous=>[...previous,{id:crypto.randomUUID(),taskId:task.id,content:input.trim(),materials}]);
@@ -474,7 +476,7 @@ function App() {
       }
   }
   async function pasteFiles(files: File[]) {
-    if (busy || !ready) return;
+    if (composerBusy || !ready) return;
     setImporting(true);
     try {
       if (files.length > 10) throw Error("一次最多添加 10 个材料文件。");
@@ -489,7 +491,7 @@ function App() {
     }
   }
   async function attach() {
-    if (busy) return;
+    if (composerBusy || !ready) return;
     setImporting(true);
     try {
       const m = await window.ailo.pick();
@@ -782,7 +784,7 @@ function App() {
                           type="button"
                           title={m.summary || m.name}
                           key={i}
-                          disabled={busy}
+                          disabled={composerBusy}
                           onClick={() =>
                             setMaterials((s) => s.filter((_, j) => j !== i))
                           }
@@ -798,7 +800,7 @@ function App() {
                     key={connectionKey}
                     value={input} onChange={setInput}
                     placeholder={view === "assistant" ? "" : pending ? "补充指令…" : "告诉 Ailo 你想做什么… @ 引用对话文件，/ 调用专家和技能"}
-                    disabled={!ready || busy}
+                    disabled={!ready || composerBusy}
                     files={[...(task?.materials || []), ...materials]}
                     materials={materials} extensions={availableExtensions} selectedIds={effectiveIds}
                     turnIds={turnIds} onRemoveExtension={id=>setTurnExtensions(previous=>({...previous,[connectionKey]:turnIds.filter(value=>value!==id)}))}
@@ -809,7 +811,7 @@ function App() {
                   />
                   <div className="composerbar">
                     <KnowledgePicker openFrom={knowledgeMenuAnchor} onClose={()=>setKnowledgeMenuAnchor(null)} key={'knowledge-'+(task?.id||view)} value={task?(task.knowledgeIds||[]):newKnowledgeIds} disabled={!ready||busy||!!pending} onManage={()=>setView('knowledge')} onChange={ids=>{if(task)void window.ailo.patchTask(task.id,{knowledgeIds:ids}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,knowledgeIds:ids}:t)}))).catch(e=>setError(String(e)));else setNewKnowledgeIds(ids);}}/>
-                  <ComposerAdd mcpConnectionIds={mcpConnectionIds} setMCPConnectionIds={changeMCPConnections} amap={useAMap===true} setAMap={enabled=>{setAMapChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{amapEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,amapEnabled:enabled}:t)})));}} onKnowledge={setKnowledgeMenuAnchor} searchEnabled={useSearch} setSearchEnabled={enabled=>{setSearchChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{searchEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,searchEnabled:enabled}:t)})));}} onProject={!task && view !== "assistant"?setProjectMenuAnchor:undefined} feishu={useFeishu} setFeishu={enabled=>{setConnectionChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{feishuEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,feishuEnabled:enabled}:t)})));}} key={task?.id || projectId || "new"} items={availableExtensions} value={[...selectedIds,...turnIds.filter(id=>availableExtensions.find(e=>e.id===id)?.kind==='skill')]} disabled={!ready || busy} onChange={changeAddedExtensions} onManage={tab => {setExtensionTab(tab);setView("extensions");}} onAttach={attach} importing={importing}
+                  <ComposerAdd mcpConnectionIds={mcpConnectionIds} setMCPConnectionIds={changeMCPConnections} amap={useAMap===true} setAMap={enabled=>{setAMapChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{amapEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,amapEnabled:enabled}:t)})));}} onKnowledge={setKnowledgeMenuAnchor} searchEnabled={useSearch} setSearchEnabled={enabled=>{setSearchChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{searchEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,searchEnabled:enabled}:t)})));}} onProject={!task && view !== "assistant"?setProjectMenuAnchor:undefined} feishu={useFeishu} setFeishu={enabled=>{setConnectionChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{feishuEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,feishuEnabled:enabled}:t)})));}} key={task?.id || projectId || "new"} items={availableExtensions} value={[...selectedIds,...turnIds.filter(id=>availableExtensions.find(e=>e.id===id)?.kind==='skill')]} disabled={!ready || composerBusy} onChange={changeAddedExtensions} onManage={tab => {setExtensionTab(tab);setView("extensions");}} onAttach={attach} importing={importing}
                     onDefault={(task?.projectId || projectId) ? () => { const id = task?.projectId || projectId; void commit({...data, projects:data.projects.map(p => p.id === id ? {...p,extensionIds:selectedIds} : p)}).then(ok => { if(ok) setNotice("已保存为项目默认扩展，将用于该项目的新对话。"); }); } : undefined} />
                     {currentModel.id !== "demo" && <ContextMeter
                       messages={[...(task ? messagesFor(task) : []), ...(input || materials.length ? [{ role: "user" as const, content: input, materials }] : [])]}

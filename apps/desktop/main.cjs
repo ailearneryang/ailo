@@ -7,6 +7,7 @@ const {
   safeStorage,
   shell,
   nativeImage,
+  powerMonitor,
 } = require("electron");
 app.setName("Ailo");
 const { readMaterial, importPastedMaterials } = require("./materials.cjs");
@@ -367,8 +368,11 @@ app.whenReady().then(async () => {
   }
   create();
   await schedules.start();
+  const checkSchedules=()=>schedules.tick().catch(error=>console.error('Scheduled task check failed:',error.message));
+  powerMonitor.on('resume',checkSchedules);
   app.on("activate", () => {
     if (!BrowserWindow.getAllWindows().length) create();
+    checkSchedules();
   });
 });
 let quitting=false;

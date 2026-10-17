@@ -99,6 +99,7 @@ export type RequestContextUsage = {
   providerUsage?: {inputTokens?:number;outputTokens?:number;reasoningTokens?:number};
 };
 export type AgentRun = {
+  loadedExtensions?: {id:string;name:string;kind:"skill"|"expert"}[];
   acceptanceCriteria?:{id:string;text:string;status:'passed'|'pending'}[];
   recoverySummary?:{retried:number;recovered:number;unknown:number};
   conversationTitle?: string;
@@ -109,7 +110,7 @@ export type AgentRun = {
   inFlight?: {action:string;path?:string;purpose?:string;name?:string;entry?:string;at:string};
   contextUsage?: RequestContextUsage;
   status: string; mode: 'chat' | 'task'; goal: string;
-  steps: {id:string;title:string;status:string}[];
+  steps: {id:string;title:string;status:string;detail?:string;summary?:string;requiresConfirmation?:boolean}[];
   decisions: string[]; acceptance: string[];
   artifacts: {path:string;label:string;size:number;sha256:string}[];
   events: {id:string;type:string;at:string;detail:{purpose?:string;exitCode?:number;path?:string;name?:string;entry?:string;offset?:number;message?:string;output?:string}}[];

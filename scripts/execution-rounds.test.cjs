@@ -47,3 +47,42 @@ test('ordinary chat preserves paused task anchor and actual blocked status',asyn
  assert.equal(result.agentRun.progressInputId,'u1');assert.equal(result.agentRun.status,'blocked');assert.equal(result.agentRun.steps.length,1);
  const saved=await createWorkspace(base,task);assert.equal(saved.run.progressInputId,'u1');
 });
+
+test('loaded skills are reported before the first decision, persisted, and scoped to their execution',async t=>{
+ const base=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-skills-visible-'));t.after(()=>fs.rm(base,{recursive:true,force:true}));
+ const task={id:'skill-task',request:'整理书稿',messages:[{id:'u1',role:'user',content:'整理书稿'}]};
+ const extension={id:'book',name:'book-writing-workspace',kind:'skill',enabled:true,instructions:'按章节整理书稿'};
+ const updates=[],statuses=[];let prepared=false;
+ const execute=extensions=>runAgent({base,task,model:{contextWindow:32768},signal:new AbortController().signal,extensions,
+  skillPackages:{prepare:async(w,selected)=>{prepared=true;return selected;}},
+  onRun:run=>updates.push(structuredClone(run)),onStatus:status=>statuses.push(status),
+  ask:async messages=>{
+   assert.ok(prepared);
+   assert.ok(updates.length,'load receipt is published before asking the model');
+   if(extensions.length){assert.deepEqual(updates.at(-1).loadedExtensions,[{id:'book',name:'book-writing-workspace',kind:'skill'}]);assert.match(messages[0].content,/按章节整理书稿/);}
+   const state=JSON.parse(messages.at(-1).content);
+   return {content:JSON.stringify(state.phase==='route'?{action:'route',kind:'chat'}:{action:'reply',text:'已整理'})};
+  }});
+ const first=await execute([extension]);
+ assert.equal(first.agentRun.progressInputId,'u1');assert.match(statuses[0],/本轮已加载：技能 · book-writing-workspace/);
+ assert.ok(first.agentRun.events.some(e=>e.type==='extensions_loaded'));
+ assert.equal((await createWorkspace(base,task)).run.loadedExtensions[0].id,'book');
+ task.messages.push({id:'a1',role:'assistant',content:first.content},{id:'u2',role:'user',content:'你好'});
+ const second=await execute([]);
+ assert.deepEqual(second.agentRun.loadedExtensions,[]);
+ assert.equal(second.agentRun.progressInputId,undefined);
+ assert.equal(second.agentRun.history.length,1);
+ assert.equal(second.agentRun.history[0].afterMessageId,'a1');
+ assert.equal(second.agentRun.history[0].loadedExtensions[0].name,'book-writing-workspace');
+ assert.ok(!second.agentRun.events.some(e=>e.type==='extensions_loaded'));
+});
+
+test('failed skill preparation never reports a skill as loaded',async t=>{
+ const base=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-skills-failed-'));t.after(()=>fs.rm(base,{recursive:true,force:true}));
+ const updates=[],statuses=[];
+ await assert.rejects(runAgent({base,task:{id:'failure',request:'写书'},model:{contextWindow:32768},signal:new AbortController().signal,
+  extensions:[{id:'book',kind:'skill',name:'book',enabled:true,instructions:'write'}],
+  skillPackages:{prepare:async()=>{throw Error('技能包已损坏');}},
+  onRun:run=>updates.push(run),onStatus:s=>statuses.push(s),ask:()=>assert.fail('should not ask model')}),/技能包已损坏/);
+ assert.equal(updates.length,0);assert.equal(statuses.length,0);
+});

@@ -1,6 +1,6 @@
 // One contract for provider tool schemas and runtime validation.
 const limits={goal:1000,items:12,item:800,steps:12,id:40,title:200};
-const statuses=['pending','running','done','blocked'];
+const statuses=['pending','running','waiting_sync','done','blocked'];
 const nonempty=max=>({type:'string',minLength:1,maxLength:max,pattern:'\\S'});
 const fields={
  goal:nonempty(limits.goal),
@@ -8,7 +8,7 @@ const fields={
  acceptance:{type:'array',minItems:1,maxItems:limits.items,items:nonempty(limits.item)},
  steps:{type:'array',minItems:1,maxItems:limits.steps,items:{type:'object',additionalProperties:false,required:['id','title','status'],properties:{
   id:{type:'string',minLength:1,maxLength:limits.id,pattern:'^[a-zA-Z0-9_-]+$'},
-  title:nonempty(limits.title),status:{type:'string',enum:statuses},
+  title:nonempty(limits.title),detail:nonempty(limits.item),summary:nonempty(160),requiresConfirmation:{type:'boolean'},status:{type:'string',enum:statuses},
  }}},
 };
 function validatePlan(action) {
@@ -26,6 +26,7 @@ function validatePlan(action) {
  if(!Array.isArray(action.steps)||!action.steps.length||action.steps.length>limits.steps)errors.push(`steps 必须包含 1–${limits.steps} 个步骤`);
  else {
   const ids=new Set();
+  if(action.steps.filter(s=>s?.status==='running').length>1)errors.push('步骤按顺序执行，只能有一个 running；等待后续同步的步骤使用 waiting_sync，不能据此标记 done');
   action.steps.forEach((s,i)=>{
    const field=`steps[${i}]（第 ${i+1} 步）`;
    if(!s||typeof s!=='object'||Array.isArray(s)){errors.push(`${field} 必须是步骤对象`);return;}
@@ -33,6 +34,9 @@ function validatePlan(action) {
    else if(ids.has(s.id))errors.push(`${field}.id 重复，步骤 id 必须唯一`);
    ids.add(s.id);
    checkText(s.title,`${field}.title`,limits.title);
+   if(s.summary!==undefined)checkText(s.summary,`${field}.summary`,160);
+   if(s.detail!==undefined)checkText(s.detail,`${field}.detail`,limits.item);
+   if(s.requiresConfirmation!==undefined&&typeof s.requiresConfirmation!=='boolean')errors.push(`${field}.requiresConfirmation 必须是布尔值`);
    if(!statuses.includes(s.status))errors.push(`${field}.status 必须是 ${statuses.join(' / ')}`);
   });
  }

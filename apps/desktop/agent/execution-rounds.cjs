@@ -12,11 +12,11 @@ function beginRound(run,task,snapshot) {
   const newInput=run.inputKey ? run.inputKey!==trigger : messages.at(-1)?.role==='user';
   run.history ||= [];
   if(newInput && (terminal || task.editedInputId===trigger)) {
-    if(run.mode==='task') {
+    if(run.mode==='task' || run.loadedExtensions?.length) {
       const anchor=messages.slice(0,index).findLast(m=>m.role==='assistant');
       run.history.push({...snapshot(run),history:undefined,afterMessageId:anchor?.id});
     }
-    Object.assign(run,{progressInputId:undefined,executionId:randomUUID(),status:'understanding',mode:'chat',goal:'',steps:[],decisions:[],acceptance:[],events:[],observations:[],observationIndex:[],checkpointObservationCount:0,actionsSincePlan:0,inFlight:undefined,contextUsage:undefined,question:undefined,acceptanceResults:{},actionJournal:[],pendingArtifactUpdates:[]});
+    Object.assign(run,{loadedExtensions:[],progressInputId:undefined,executionId:randomUUID(),status:'understanding',mode:'chat',goal:'',steps:[],decisions:[],acceptance:[],events:[],observations:[],observationIndex:[],checkpointObservationCount:0,actionsSincePlan:0,inFlight:undefined,contextUsage:undefined,question:undefined,acceptanceResults:{},actionJournal:[],pendingArtifactUpdates:[]});
     if(task.editedInputId===trigger)run.workingMemory='';
   }
   run.executionId ||= randomUUID();

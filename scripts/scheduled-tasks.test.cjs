@@ -17,6 +17,20 @@ test('overdue recurring task runs once, concurrent ticks cannot duplicate it',as
 test('one-time task disables after execution, manual runs preserve its schedule',async t=>{let count=0;const {service,setTime}=await setup(t,async()=>count++);const at=new Date(2026,9,1,10).toISOString();const task=await service.save({...input,frequency:'once',at});await service.run(task.id);await finished(service);assert.equal((await service.list())[0].nextAt,at);setTime(Date.parse(at)+1);await service.tick();const [done]=await finished(service);assert.equal(count,2);assert.equal(done.enabled,false);assert.equal(done.nextAt,null);await service.tick();assert.equal(count,2);});
 test('pause, resume, deletion and failures are persisted',async t=>{const {service,directory,setTime}=await setup(t,async()=>{throw Error('模型不可用');});const task=await service.save(input);await service.toggle({id:task.id,enabled:false});setTime(new Date(2026,9,1,12).getTime());await service.tick();assert.equal((await service.list())[0].runs.length,0);await service.toggle({id:task.id,enabled:true});assert.equal(new Date((await service.list())[0].nextAt).getDate(),2);await service.run(task.id);const [failed]=await finished(service);assert.equal(failed.runs[0].error,'模型不可用');const reopened=createScheduledTasks({directory,execute:async()=>{}});assert.equal((await reopened.list())[0].runs[0].status,'failed');await service.remove(task.id);assert.equal((await service.list()).length,0);});
 test('restart marks in-flight work interrupted without replaying claimed occurrence',async t=>{const {service,directory}=await setup(t);const task=await service.save(input);task.runs=[{id:'run',taskId:'conversation',status:'running',at:new Date().toISOString()}];task.nextAt=new Date(Date.now()+86400000).toISOString();await fs.writeFile(path.join(directory,'scheduled-tasks.json'),JSON.stringify([task]));await service.start();const [restored]=await service.list();assert.equal(restored.runs[0].status,'failed');assert.match(restored.runs[0].error,/中断/);});
+test('a failed run does not prevent an overdue recurring run after restart',async t=>{
+ const {service,directory,setTime}=await setup(t,async()=>{throw Error('网络暂不可用');});
+ const task=await service.save(input);
+ setTime(new Date(2026,9,1,9,1).getTime());await service.tick();
+ let [failed]=await finished(service);assert.equal(failed.runs[0].status,'failed');
+ assert.equal(new Date(failed.nextAt).getDate(),2);
+ service.stop();
+ const resumed=createScheduledTasks({directory,now:()=>new Date(2026,9,3,10).getTime(),execute:async()=>{}});
+ t.after(()=>resumed.stop());await resumed.start();
+ const [caughtUp]=await finished(resumed);
+ assert.equal(caughtUp.runs[0].status,'completed');
+ assert.equal(caughtUp.runs[1].status,'failed');
+ assert.equal(new Date(caughtUp.nextAt).getDate(),4);
+});
 test('Feishu opt-in persists and reaches execution, while existing tasks default to disabled',async t=>{
  const observed=[];const {service,directory}=await setup(t,async task=>observed.push(task.feishuEnabled));
  const legacy=await service.save(input);assert.equal(legacy.feishuEnabled,false);

@@ -1,0 +1,17 @@
+.ailo-mark {
+  display: inline-flex;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+  animation: ailo-mark-breathe 4s ease-in-out infinite;
+}
+.ailo-mark > svg { width: 100%; height: 100%; overflow: visible; }
+.ailo-mark-knot { transform-origin: 16px 16px; animation: ailo-mark-turn 24s linear infinite; }
+@keyframes ailo-mark-turn { to { transform: rotate(360deg); } }
+@keyframes ailo-mark-breathe { 0%,100% { opacity: .78; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .ailo-mark, .ailo-mark-knot { animation: none; }
+}
