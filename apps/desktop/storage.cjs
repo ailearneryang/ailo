@@ -148,6 +148,10 @@ function createStorage(directory, safeStorage) {
         const previous=state.tasks.find(t=>t.id===id);
         const {agentRun,messages,pinned,pinnedAt,titleGenerated,...fields}=patch;
         if(previous?.titleGenerated)delete fields.title;
+        if(fields.permissionMode!==undefined&&!['standard','scoped'].includes(fields.permissionMode))throw Error('权限模式无效');
+        if(fields.memoryEnabled!==undefined&&typeof fields.memoryEnabled!=='boolean')throw Error('对话记忆设置无效');
+        if(previous?.memoryOwner&&fields.memoryOwner!==undefined&&fields.memoryOwner!==previous.memoryOwner)throw Error('不能变更对话记忆所属账号');
+        if(fields.memoryEnabled!==undefined&&fields.memoryEnabled!==previous?.memoryEnabled)fields.memorySince=new Date().toISOString();
 
         if(previous && Object.hasOwn(fields,'projectId') && (fields.projectId||'')!==(previous.projectId||''))throw Error('不能更改会话所属项目');
         const merged=[...(previous?.messages || (previous?.request?[{id:id+'-original',role:'user',content:previous.request,createdAt:previous.created}]:[]))];

@@ -1,0 +1,3 @@
+export type PermissionMode='standard'|'scoped';
+export type PermissionGrant={id:string;kind:'directory'|'network'|'build'|'android'|'app';resource:string;label:string;lifetime:'task'|'always';workspaceKey?:string;taskId?:string;sourceTaskId?:string;sourceTaskTitle?:string;createdAt:string};
+export type PermissionState={ownerId:string;revision:number;defaultMode:PermissionMode;currentMode:PermissionMode;taskId?:string;grants:PermissionGrant[];activeTasks:{id:string;title:string;mode:PermissionMode}[];audit:{id:string;action:string;taskId?:string;grantId?:string;kind?:string;label?:string;lifetime?:string;mode?:string;at:string}[]};

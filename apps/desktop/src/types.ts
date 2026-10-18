@@ -52,6 +52,10 @@ export type Message = {
   modelName?: string;
 };
 export type Task = {
+  permissionMode?:import('./permission-types').PermissionMode;
+  memoryEnabled?:boolean;
+  memoryOwner?:string;
+  memorySince?:string;
   lastErrorCode?: string;
   modelRequestDiagnostics?: Record<string,unknown>;
   titleGenerated?: boolean;
@@ -99,6 +103,7 @@ export type RequestContextUsage = {
   providerUsage?: {inputTokens?:number;outputTokens?:number;reasoningTokens?:number};
 };
 export type AgentRun = {
+  memoryUsed?:{inputId?:string;ownerId?:string;entries:{id:string;topic:string;scope:string;source?:import("./memory-types").MemorySource}[]};
   loadedExtensions?: {id:string;name:string;kind:"skill"|"expert"}[];
   acceptanceCriteria?:{id:string;text:string;status:'passed'|'pending'}[];
   recoverySummary?:{retried:number;recovered:number;unknown:number};
@@ -142,6 +147,16 @@ export const emptyWorkspace: Workspace = {
 declare global {
   interface Window {
     ailo: {
+      permissionsRead:(input?:{taskId?:string;ownerId?:string})=>Promise<import('./permission-types').PermissionState>;
+      permissionsSettings:(input:{ownerId:string;revision:number;defaultMode:import('./permission-types').PermissionMode})=>Promise<import('./permission-types').PermissionState>;
+      permissionsMode:(input:{ownerId:string;taskId:string;mode:import('./permission-types').PermissionMode})=>Promise<import('./permission-types').PermissionState>;
+      permissionsRevoke:(input:{ownerId:string;id?:string;all?:boolean})=>Promise<import('./permission-types').PermissionState>;
+      permissionsAddDirectory:(input:{ownerId:string;taskId?:string;lifetime?:'task'|'always'})=>Promise<import('./permission-types').PermissionState>;
+      onPermissionsChanged:(callback:(owner:string)=>void)=>()=>void;
+      memoryRead:(owner?:string)=>Promise<import('./memory-types').PersonalMemoryData>;
+      memoryUpdate:(input:import('./memory-types').MemoryUpdate)=>Promise<import('./memory-types').PersonalMemoryData>;
+      memoryExport:(owner:string)=>Promise<boolean>;
+      onMemoryChanged:(callback:(owner:string)=>void)=>()=>void;
       importSkill:(input:{name:string;buffer:ArrayBuffer})=>Promise<Extension>;
       projectMemory:(id:string)=>Promise<ProjectMemoryData>;
       saveProjectMemory:(id:string,input:{notes:string;revision:number;hiddenTaskIds?:string[]})=>Promise<unknown>;

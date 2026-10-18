@@ -238,8 +238,15 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
         const { parseClarification } = await import("./clarification.mjs");
         if (storage.agentDirectory && input.taskId) {
           const state = await storage.readWorkspace();
-          const task = state.tasks.find(t => t.id === input.taskId);
+          let task = state.tasks.find(t => t.id === input.taskId);
           if (!task) throw Error("任务不存在。");
+          let memory;
+          if(storage.personalMemory){
+            const owner=await storage.personalMemory.owner();
+            if(!task.memoryOwner&&storage.patchTask)task=await storage.patchTask(task.id,{memoryOwner:owner,memorySince:task.messages?.findLast(m=>m.role==='user')?.createdAt||new Date().toISOString()});
+            memory=await storage.personalMemory.scope({task,owner});
+          }
+          if(storage.permissions&&!task.permissionMode&&storage.patchTask){const policy=await storage.permissions.read(task.id);task=await storage.patchTask(task.id,{permissionMode:policy.currentMode});}
           const scheduledContext=await require('./schedule-context.cjs').prepareScheduleContext(storage.agentDirectory,task,state.tasks||[]);
           const { runAgent } = require("./agent/runner.cjs");
           const { tool,allowedActions,actionTools } = require("./agent/protocol.cjs");
@@ -287,8 +294,8 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           }
           session.accepting=true;
           let savedTitle=task.titleGenerated?task.title:'';
-          const result = await runAgent({ getSteering:async()=>{await session.saving;return session.queue.splice(0);}, base: storage.agentDirectory, task, model, scheduledContext, projectMemoryContext:task.projectId?await require('./project-memory.cjs').readMemory(storage.agentDirectory,state.projects?.find(p=>p.id===task.projectId)||{id:task.projectId},state.tasks||[]):null, projectContext:state.projects?.find(p=>p.id===task.projectId)?.description, personalAssistant:task.id===require('./personal-assistant.cjs').ASSISTANT_ID?storage.personalAssistant:undefined, knowledge:storage.knowledge?.scope(task.knowledgeIds||[]),mcp:storage.mcpConnections?.scope(input.mcpConnectionIds||[]),amap:input.amapEnabled===false?undefined:storage.amap, webSearch:input.searchEnabled===true?storage.webSearch:undefined, android:storage.androidManager, authorizeBuild:storage.authorizeBuild,directoryAccess:storage.directoryAccess,feishuCli:input.feishuEnabled===false?{execute:async()=>{throw Object.assign(Error('当前对话已关闭飞书，请在输入框 ＋ → 应用连接中开启后再试。'),{code:'FEISHU_DECLINED'});}}:storage.feishuCli,
-            signal: controller.signal, ask: askAgent, extensions: selected, skillPackages: storage.skillPackages,
+          const executeAgent=async permissionScope=>runAgent({permissions:permissionScope,getSteering:async()=>{await session.saving;return session.queue.splice(0);}, base: storage.agentDirectory, task, model, scheduledContext,memory, projectMemoryContext:task.projectId?await require('./project-memory.cjs').readMemory(storage.agentDirectory,state.projects?.find(p=>p.id===task.projectId)||{id:task.projectId},state.tasks||[]):null, projectContext:state.projects?.find(p=>p.id===task.projectId)?.description, personalAssistant:task.id===require('./personal-assistant.cjs').ASSISTANT_ID?storage.personalAssistant:undefined, knowledge:storage.knowledge?.scope(task.knowledgeIds||[]),mcp:storage.mcpConnections?.scope(input.mcpConnectionIds||[]),amap:input.amapEnabled===false?undefined:storage.amap, webSearch:input.searchEnabled===true?storage.webSearch:undefined, android:storage.androidManager, authorizeBuild:storage.authorizeBuild,directoryAccess:permissionScope?.directoryAccess||storage.directoryAccess,feishuCli:input.feishuEnabled===false?{execute:async()=>{throw Object.assign(Error('当前对话已关闭飞书，请在输入框 ＋ → 应用连接中开启后再试。'),{code:'FEISHU_DECLINED'});}}:storage.feishuCli,
+            signal:permissionScope?.signal||controller.signal, ask: askAgent, extensions: selected, skillPackages: storage.skillPackages,
             onStatus: input.onStatus, onRun: async run=>{
               if(run.conversationTitle&&run.conversationTitle!==savedTitle&&storage.setGeneratedTitle){
                 const title=await storage.setGeneratedTitle(task.id,run.conversationTitle);
@@ -298,6 +305,8 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
               if(task.scheduledTaskId||task.id===require("./personal-assistant.cjs").ASSISTANT_ID)run={...run,conversationTitle:undefined};
               input.onRun?.(run);
             } });
+          const scopedAgent=async scope=>{const cancel=()=>controller.abort();scope.signal.addEventListener('abort',cancel,{once:true});try{return await executeAgent(scope);}finally{scope.signal.removeEventListener('abort',cancel);}};
+          const result=storage.permissions?await storage.permissions.run(task,controller.signal,scopedAgent):await executeAgent();
           if(task.scheduledTaskId)await require('./schedule-context.cjs').archiveScheduleRun(storage.agentDirectory,task,result);
           return { ...result, modelName: model.name };
         }

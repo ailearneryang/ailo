@@ -11,11 +11,11 @@ async function listFiles(root, relative='') {
 }
 // Seatbelt localhost selectors also admit wildcard listeners on current macOS.
 // Build mode is separately authorized; do not claim loopback-only enforcement.
-function sandboxProfile(root, sdk, build=false, javaHome, readDirectories=[]) {
+function sandboxProfile(root, sdk, build=false, javaHome, readDirectories=[], networkOutbound=true) {
   const q=s=>JSON.stringify(s);
   const read=['/System','/usr','/bin','/sbin','/opt/homebrew','/Library/Java','/Library/Developer','/Library/Apple','/Applications/Android Studio.app','/private/etc','/private/var/db/dyld','/dev',sdk,javaHome,...readDirectories].filter(Boolean);
   const readable=read.map(p=>`(subpath ${q(p)})`).join(' ')+` (subpath ${q(root)})`;
-  return `(version 1)(deny default)(allow process*)(allow sysctl-read)(allow mach-lookup (global-name "com.apple.system.logger") (global-name "com.apple.logd") (global-name "com.apple.system.notification_center") (global-name "com.apple.mDNSResponder"))(allow file-read-metadata)${build?'(allow network-bind (local ip "localhost:*"))(allow network-inbound (local ip "localhost:*"))':''}(allow network-outbound)(allow file-read* (literal "/") ${readable})(allow file-map-executable ${readable})(allow file-write* (subpath ${q(root)}) (literal "/dev/null") (literal "/dev/tty"))`;
+  return `(version 1)(deny default)(allow process*)(allow sysctl-read)(allow mach-lookup (global-name "com.apple.system.logger") (global-name "com.apple.logd") (global-name "com.apple.system.notification_center") (global-name "com.apple.mDNSResponder"))(allow file-read-metadata)${build?'(allow network-bind (local ip "localhost:*"))(allow network-inbound (local ip "localhost:*"))':''}${networkOutbound?'(allow network-outbound)':''}(allow file-read* (literal "/") ${readable})(allow file-map-executable ${readable})(allow file-write* (subpath ${q(root)}) (literal "/dev/null") (literal "/dev/tty"))`;
 }
 async function runCommand(root,command,signal,timeout=120000,options={}) {
   if(typeof command!=='string'||!command.trim()||command.length>8000)throw Error('命令无效');
@@ -29,7 +29,7 @@ async function runCommand(root,command,signal,timeout=120000,options={}) {
   // No inherited API keys or unrestricted fallback when sandbox setup fails.
   return new Promise((resolve,reject)=>{
     if(signal.aborted)return reject(Error('已停止执行'));
-    const child=spawn('/usr/bin/sandbox-exec',['-p',sandboxProfile(root,sdk,!!options.build,javaHome,options.readDirectories),'/bin/sh','-c',command],{cwd:root,env,detached:true,stdio:['ignore','pipe','pipe']});
+    const child=spawn('/usr/bin/sandbox-exec',['-p',sandboxProfile(root,sdk,!!options.build,javaHome,options.readDirectories,options.networkOutbound!==false),'/bin/sh','-c',command],{cwd:root,env,detached:true,stdio:['ignore','pipe','pipe']});
     let output='',truncated=false,timedOut=false;
     const kill=()=>{try{process.kill(-child.pid,'SIGKILL');}catch{child.kill('SIGKILL');}};
     const timer=setTimeout(()=>{timedOut=true;kill();},timeout);
@@ -72,8 +72,13 @@ async function execute(workspace,action,signal,options={}) {
       if(!options.directoryAccess)throw Object.assign(Error('当前环境未提供目录授权入口，任务已保留。'),{code:'DIRECTORY_UNAVAILABLE'});
       return options.directoryAccess.request(workspace.run.taskId,action,signal);
     }
+    case 'request_network': {
+      if(!options.permissions)throw Object.assign(Error('当前环境没有统一权限服务'),{code:'PERMISSION_CONFIG'});return options.permissions.requestNetwork(action,signal);
+    }
     case 'run_command': {
-      const result=await runCommand(files,action.command,signal,120000,{readDirectories:options.directoryAccess?.directories(workspace.run.taskId)});
+      const commandOptions=options.permissions?await options.permissions.commandOptions():{readDirectories:options.directoryAccess?.directories(workspace.run.taskId)};
+      const result=await runCommand(files,action.command,signal,120000,commandOptions);
+      if(commandOptions.networkOutbound===false)result.networkNotice='本次命令未获得联网权限。若任务需要下载依赖或请求网络，请先 request_network，不要通过其他工具绕过。';
       if(/Operation not permitted|Permission denied/i.test(result.output))result.notice='访问被拒绝，尚不能判断是否为系统隐私限制。若需要工作区外目录，请使用 request_directory 获取只读授权；已授权仍失败时说明具体路径，并引导用户检查系统文件与文件夹权限或管理员策略，不要重复探测或直接断言 TCC。';
       return result;
     }

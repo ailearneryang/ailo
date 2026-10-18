@@ -1,5 +1,15 @@
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("ailo", {
+  permissionsRead:input=>ipcRenderer.invoke('permissions:read',input),
+  permissionsSettings:input=>ipcRenderer.invoke('permissions:settings',input),
+  permissionsMode:input=>ipcRenderer.invoke('permissions:mode',input),
+  permissionsRevoke:input=>ipcRenderer.invoke('permissions:revoke',input),
+  permissionsAddDirectory:input=>ipcRenderer.invoke('permissions:addDirectory',input),
+  onPermissionsChanged:callback=>{const listener=(_event,owner)=>callback(owner);ipcRenderer.on('permissions:changed',listener);return ()=>ipcRenderer.removeListener('permissions:changed',listener);},
+  memoryRead:owner=>ipcRenderer.invoke('memory:read',owner),
+  memoryUpdate:input=>ipcRenderer.invoke('memory:update',input),
+  memoryExport:owner=>ipcRenderer.invoke('memory:export',owner),
+  onMemoryChanged:callback=>{const listener=(_event,owner)=>callback(owner);ipcRenderer.on('memory:changed',listener);return ()=>ipcRenderer.removeListener('memory:changed',listener);},
   importSkill: input => ipcRenderer.invoke('extensions:importSkill', input),
   projectMemory:id=>ipcRenderer.invoke('project:memory',id),
   saveProjectMemory:(id,input)=>ipcRenderer.invoke('project:memorySave',{id,input}),

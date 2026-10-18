@@ -25,6 +25,8 @@ const storage = require("./storage.cjs").createStorage(
   safeStorage,
 );
 const chat = require("./chat.cjs").createChat(storage,require('./model-transport.cjs').createModelTransport());
+storage.personalMemory=require('./personal-memory.cjs').createPersonalMemory({directory:app.getPath('userData'),account:()=>storage.account(),workspace:()=>storage.readWorkspace(),notify:owner=>{if(win&&!win.isDestroyed())win.webContents.send('memory:changed',owner);}});
+const memoryWorker=require('./memory-worker.cjs').createMemoryWorker({store:storage.personalMemory,storage,fetchImpl:require('./model-transport.cjs').createModelTransport(),sessions:()=>chat.sessions()});
 // Model requests and proxy diagnostics use Electron's default session.
 // Do not log proxy addresses or credentials.
 storage.modelNetworkContext=async url=>{
@@ -32,6 +34,16 @@ storage.modelNetworkContext=async url=>{
  return {systemProxyMode:proxy==='DIRECT'?'direct':/PROXY|SOCKS/i.test(proxy)?'configured':'unknown'};
 };
 storage.agentDirectory = path.join(app.getPath("userData"), "agent");
+storage.permissions=require('./permissions.cjs').createPermissions({directory:app.getPath('userData'),base:storage.agentDirectory,account:()=>storage.account(),workspace:()=>storage.readWorkspace(),patchTask:(id,patch)=>storage.patchTask(id,patch),notify:owner=>{if(win&&!win.isDestroyed())win.webContents.send('permissions:changed',owner);},
+ selectDirectory:async(action,signal)=>{if(signal.aborted)return null;const result=await dialog.showOpenDialog(win,{title:'选择允许只读访问的文件夹',defaultPath:action.path,properties:['openDirectory','dontAddToRecent']});return result.canceled||signal.aborted?null:result.filePaths[0];},
+ confirm:async(request,signal)=>{
+  if(signal.aborted)return null;
+  const detail=request.kind==='directory'?`只读访问：${request.resource}\n不允许通过此授权修改、移动或删除文件。`:request.kind==='network'?`项目命令可访问互联网，包括向外部服务发送项目内可读的数据；文件写入范围不变。\n项目目录：${request.resource}`:request.kind==='build'?`允许当前项目运行 Gradle 构建脚本、下载依赖及创建构建所需的网络服务，最长20分钟。此 macOS 沙箱不能保证监听仅对本机开放。\n项目目录：${request.resource}`:request.kind==='android'?`允许当前项目运行测试模拟器、安装项目 APK、读取测试日志和截图；不操作个人设备。\n项目目录：${request.resource}`:`应用操作：${request.label}\n请核对目标及完整参数：\n${JSON.stringify(request.params||{},null,2)}\n保存的授权只对相同工具、连接定义和相同参数生效。`;
+  const options=[];if(request.allowOnce)options.push(['仅本次','once']);if(request.taskId&&request.allowTask!==false)options.push(['允许本任务','task']);if(request.allowAlways)options.push(['持续允许','always']);options.push(['取消',null]);
+  const choice=await dialog.showMessageBox(win,{type:'question',title:'Ailo 操作授权',message:request.label,detail:`${request.taskTitle?'任务：'+request.taskTitle+'\n':''}用途：${request.purpose||'用户选择的授权操作'}\n\n${detail}\n\n持续授权仅在“按范围授权”模式下生效，可随时在权限中心撤销。`,buttons:options.map(o=>o[0]),defaultId:options.length-1,cancelId:options.length-1});return signal.aborted?null:options[choice.response]?.[1];
+ }
+});
+
 const { key, json, resolveFile, writeJson } = require("./agent/workspace.cjs");
 const { publicRun } = require("./agent/runner.cjs");
 storage.directoryAccess=require('./agent/directory-access.cjs').createDirectoryAccess({
@@ -46,6 +58,7 @@ const androidGrants=new Set(),androidApprovals=new Map();
 const buildGrants=new Set(),buildApprovals=new Map();
 storage.authorizeBuild=async(root,signal)=>{
   if(signal.aborted)return false;
+  if(storage.permissions.current())return storage.permissions.approve({kind:'build',resource:root,label:'项目构建与联网',purpose:'运行标准 Gradle 构建与验证'},signal);
   if(buildGrants.has(root))return true;
   if(buildApprovals.has(root))return buildApprovals.get(root);
   const pending=(async()=>{
@@ -68,6 +81,7 @@ storage.androidManager=require('./agent/android-device.cjs').createAndroidManage
   directory:path.join(app.getPath('userData'),'android-runtime'),
   authorize:async(root,signal)=>{
     if(signal.aborted)return false;
+    if(storage.permissions.current())return storage.permissions.approve({kind:'android',resource:root,label:'项目测试模拟器',purpose:'验证项目的安装与运行'},signal);
     if(androidGrants.has(root))return true;
     if(androidApprovals.has(root))return androidApprovals.get(root);
     const pending=(async()=>{
@@ -112,7 +126,7 @@ ipcMain.handle("task:edit-last-message", async (e, {id,messageId,content}) => {
   const task=await storage.editLastMessage(id,messageId,content);
   await companion.activity(task,[task.messages.at(-1)],owner).catch(error=>console.error('陪伴记录保存失败',error.message));return task;
 });
-ipcMain.handle("task:patch", (e, {id,patch,append}) => {trusted(e);return companionModule.patchUserTask(storage,companion,id,patch,append);});
+ipcMain.handle("task:patch", async (e, {id,patch,append}) => {trusted(e);if(patch?.permissionMode!==undefined&&chat.sessions().some(s=>s.taskId===id)){const old=(await storage.readWorkspace()).tasks.find(t=>t.id===id);if(old?.permissionMode!==patch.permissionMode)throw Error('请先停止任务再更改权限模式');}return companionModule.patchUserTask(storage,companion,id,patch,append);});
 ipcMain.handle("task:pin", (e, {id,pinned}) => { trusted(e); return storage.setTaskPinned(id,pinned); });
 ipcMain.handle("chat:steer", async (e, input) => {
   trusted(e);const owner=(await storage.account())?.id||'local';const message=await chat.steer(input);
@@ -158,6 +172,14 @@ async function workspaceState(){
   return state;
 }
 ipcMain.handle("state:read", async (e) => {trusted(e);return workspaceState();});
+ipcMain.handle('permissions:read',(e,input={})=>{trusted(e);return storage.permissions.read(input.taskId,input.ownerId);});
+ipcMain.handle('permissions:settings',(e,input)=>{trusted(e);return storage.permissions.settings(input);});
+ipcMain.handle('permissions:mode',(e,input)=>{trusted(e);if(chat.sessions().some(s=>s.taskId===input.taskId))throw Error('请先停止或取消排队任务，再更改权限模式');return storage.permissions.setMode(input);});
+ipcMain.handle('permissions:revoke',(e,input)=>{trusted(e);return storage.permissions.revoke(input);});
+ipcMain.handle('permissions:addDirectory',(e,input)=>{trusted(e);return storage.permissions.addDirectory(input);});
+ipcMain.handle('memory:read',(e,owner)=>{trusted(e);return storage.personalMemory.read(owner);});
+ipcMain.handle('memory:update',async(e,input)=>{trusted(e);if(!input||JSON.stringify(input).length>200000)throw Error('记忆操作过大');await storage.personalMemory.update(input);if(input.action==='settings')memoryWorker.cancel();return storage.personalMemory.read(input.ownerId);});
+ipcMain.handle('memory:export',async(e,owner)=>{trusted(e);const backup=await storage.personalMemory.exportData(owner);const choice=await dialog.showSaveDialog(win,{title:'导出个人记忆',defaultPath:'Ailo-个人记忆.json',filters:[{name:'JSON',extensions:['json']}]});if(choice.canceled||!choice.filePath)return false;await storage.personalMemory.read(owner);await require('node:fs/promises').writeFile(choice.filePath,JSON.stringify(backup,null,2),{mode:0o600});return true;});
 ipcMain.handle('profile:read',e=>{trusted(e);return storage.profile();});
 ipcMain.handle('profile:save',async(e,input)=>{trusted(e);const state=await workspaceState(),owner=(await storage.account())?.id||'local';const result=await storage.saveProfile(input,state);await companion.featured(state.tasks.filter(t=>!chat.sessions().some(s=>s.taskId===t.id)),result.settings.featured,owner).catch(error=>console.error('成果回忆保存失败',error.message));return result;});
 const companionModule=require('./companion.cjs');
@@ -240,12 +262,14 @@ ipcMain.handle("state:write", (e, state) => {
 for (const method of ["account", "register", "login", "logout"])
   ipcMain.handle("account:" + method, (e, input) => {
     trusted(e);
+    if(method!=='account'){memoryWorker.cancel();storage.permissions.cancelAll();chat.cancelAll();}
     return storage[method](input);
   });
 const feishuCli=require('./feishu-cli.cjs').createFeishuCli({
   directory:app.getPath('userData'),openExternal:url=>shell.openExternal(url),
   confirmWrite:async(action,signal)=>{
     if(signal?.aborted)return false;
+    if(storage.permissions.current())return storage.permissions.approve({kind:'app',resource:'feishu',label:'飞书 · '+(action.query||action.method||action.operation),params:{operation:action.operation,query:action.query,method:action.method,path:action.path,params:action.params,data:action.data},purpose:action.purpose},signal);
     const result=await dialog.showMessageBox(win,{type:'question',title:'确认飞书操作',
       message:action.purpose||'允许执行这项飞书操作？',
       detail:'将以你的飞书用户身份执行。请核对目标及完整内容：\n'+JSON.stringify({operation:action.operation,query:action.query,method:action.method,path:action.path,params:action.params,data:action.data},null,2),
@@ -262,11 +286,13 @@ ipcMain.handle('knowledge:remove',async(e,id)=>{trusted(e);const choice=await di
 ipcMain.handle('knowledge:import',async(e,id)=>{trusted(e);const result=await dialog.showOpenDialog(win,{title:'导入知识库资料',properties:['openFile','multiSelections'],filters:[{name:'知识库资料',extensions:['pdf','xlsx','pptx','ppt','docx','txt','md','markdown','csv','tsv','json','yaml','yml','toml','xml','html','sql','py','js','ts']}]});return result.canceled?[]:storage.knowledge.import(id,result.filePaths);});
 storage.amap=require('./amap-mcp.cjs').createAMap({directory:app.getPath('userData'),safeStorage,confirmWrite:async(action,signal)=>{
   if(signal.aborted)return false;
+  if(storage.permissions.current())return storage.permissions.approve({kind:'app',resource:'amap',label:'高德地图 · '+action.query,params:{tool:action.query,params:action.params},purpose:action.purpose},signal);
   const choice=await dialog.showMessageBox(win,{type:'question',title:'确认高德地图操作',message:action.purpose||'允许调用此高德工具？',detail:JSON.stringify({tool:action.query,params:action.params},null,2),buttons:['执行','取消'],defaultId:1,cancelId:1});return choice.response===0&&!signal.aborted;
 }});
 for(const method of ['status','save','test','disconnect'])ipcMain.handle('amap:'+method,(e,input)=>{trusted(e);return storage.amap[method](method==='save'?input:undefined);});
-storage.mcpConnections=require('./mcp-connections.cjs').createMCPConnections({directory:app.getPath('userData'),safeStorage,openExternal:url=>shell.openExternal(url),confirmCall:async({server,tool,params,purpose},signal)=>{
+storage.mcpConnections=require('./mcp-connections.cjs').createMCPConnections({directory:app.getPath('userData'),safeStorage,openExternal:url=>shell.openExternal(url),confirmCall:async({server,tool,params,purpose,fingerprint},signal)=>{
   if(signal.aborted)return false;
+  if(storage.permissions.current())return storage.permissions.approve({kind:'app',resource:'mcp:'+server.id+':'+tool,fingerprint:server.url+':'+fingerprint,label:server.name+' · '+tool,params,purpose},signal);
   const choice=await dialog.showMessageBox(win,{type:'question',title:'确认应用工具操作',message:purpose||`允许调用“${server.name}”的工具？`,detail:`应用：${server.name}\n工具：${tool}\n参数：${JSON.stringify(params,null,2)}`,buttons:['执行','取消'],defaultId:1,cancelId:1});
   return choice.response===0&&!signal.aborted;
 }});
@@ -368,6 +394,7 @@ app.whenReady().then(async () => {
   }
   create();
   await schedules.start();
+  void memoryWorker.start().catch(error=>console.error("记忆后台启动失败",error.message));
   const checkSchedules=()=>schedules.tick().catch(error=>console.error('Scheduled task check failed:',error.message));
   powerMonitor.on('resume',checkSchedules);
   app.on("activate", () => {
@@ -378,7 +405,7 @@ app.whenReady().then(async () => {
 let quitting=false;
 app.on("before-quit", e => {
   if(quitting)return;
-  e.preventDefault();schedules.stop();chat.cancelAll();
+  e.preventDefault();memoryWorker.stop();storage.permissions.cancelAll();schedules.stop();chat.cancelAll();
   Promise.allSettled([storage.androidManager.dispose(),feishuCli.dispose(),storage.amap.dispose(),storage.mcpConnections.dispose()]).finally(()=>{quitting=true;app.quit();});
 });
 app.on("window-all-closed", () => {

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useCompanion, usePetPreferences } from './pet-preferences';
 import { attentionTasks, hasUnreadPetNotification, workspacePetState } from './pet-state';
 import { Pet } from './pet';
+import { PendingAttentionPanel } from './pending-attention-panel';
 import { Icon } from './icon';
 import type { Task, Workspace } from './types';
 
@@ -34,6 +35,7 @@ export function MyAilo({ data, runningIds, onOpen, compact, onSchedules, onPets 
       <button onClick={openWork} aria-label="查看任务" title={attention.length ? `有 ${attention.length} 项任务需要你处理，点击查看` : "查看任务进度与结果"} aria-haspopup="dialog"><Icon name="folder" /><span>任务</span>{attention.length > 0 && <small>{attention.length} 项待处理</small>}{running.length > 0 && <small>{running.length} 项执行中</small>}<span aria-hidden="true">›</span></button>
     </div>
     {!compact && <div className="assistant-greeting"><Pet interactive state={workspacePetState(data.tasks,Object.fromEntries(runningIds.map(id=>[id,{status:"正在执行"}])))}/><h1>{!preferences.greetings?'有什么想交给我？':preferences.style==='quiet'?`${name}在，按你的节奏来。`:preferences.style==='work'?`今天想一起完成什么？${running.length?` ${running.length} 项任务执行中`:''}`:name==='Ailo'?'我在，有什么想交给我？':`${name}在这里，有什么想交给我？`}</h1>{companion&&<button className="companion-home-link" onClick={onPets}>相识 {companion.summary.calendarDays} 天 · {companion.summary.stage} ↗</button>}<p>在这里持续交流、安排任务；一件独立的事，也可以开启「新的对话」。</p></div>}
+    <PendingAttentionPanel data={data} runningIds={runningIds} onOpen={onOpen}/>
     {createPortal(<dialog className="assistant-work-dialog" ref={dialog} aria-labelledby="assistant-work-title" onClick={e=>{if(e.target===e.currentTarget){const box=e.currentTarget.getBoundingClientRect();if(e.clientX<box.left||e.clientX>box.right||e.clientY<box.top||e.clientY>box.bottom)e.currentTarget.close();}}}>
       <div className="assistant-work-heading"><h2 id="assistant-work-title">任务</h2><button onClick={()=>dialog.current?.close()} aria-label="关闭任务"><Icon name="close"/></button></div>
       <div className="my-ailo-tabs" role="tablist" aria-label="工作状态">

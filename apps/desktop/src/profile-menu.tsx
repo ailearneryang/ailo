@@ -43,6 +43,8 @@ export function ProfileMenu({user,ready,onSelect,onLogout}:{user:User|null;ready
       {settingsOpen&&<div id="profile-settings-options" className="profile-menu-settings" role="group" aria-label="设置选项">
         <button role="menuitem" onClick={()=>select('account')}><Icon name="user"/><span>{user?'我的账号':'登录 / 注册'}</span></button>
         <button role="menuitem" onClick={()=>select('models')}><Icon name="sliders"/><span>模型设置</span></button>
+        <button role="menuitem" onClick={()=>select('permissions')}><Icon name="lock"/><span>操作权限</span></button>
+        <button role="menuitem" onClick={()=>select('memory')}><Icon name="memory"/><span>个人记忆</span></button>
         <button role="menuitem" onClick={()=>select('appearance')}><Icon name="palette"/><span>外观设置</span></button>
         <button role="menuitem" onClick={()=>select('pets')}><Icon name="pet"/><span>陪伴与成长</span></button>
       </div>}

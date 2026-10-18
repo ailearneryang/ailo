@@ -2161,3 +2161,55 @@ select:focus-visible {
   .task-activity-inline .task-activity-age::before { content: none; }
   .task-activity-inline .task-activity-current > span[role="status"] { flex: 1; }
 }
+
+/* Actionable work stays visible on the assistant home without interrupting chat. */
+.pending-attention { flex-shrink: 0; margin: 16px 0 22px; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+.pending-attention-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: calc(14px * var(--font-scale, 1)); font-weight: 600; }
+.pending-attention-heading h2 span { min-width: 20px; padding: 1px 6px; border-radius: 20px; background: var(--selected); color: var(--muted); text-align: center; font-size: calc(11px * var(--font-scale, 1)); }
+.pending-attention-heading p { margin: 6px 0 12px; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); line-height: 1.6; }
+.pending-attention-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 13px 8px; text-align: left; border-radius: 9px; }
+.pending-attention-item + .pending-attention-item { border-top: 1px solid var(--border); }
+.pending-attention-item:hover { background: var(--surface-soft); }
+.pending-attention-item:focus-visible, .pending-attention-more:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
+.pending-attention-icon { display: flex; align-items: center; justify-content: center; flex: 0 0 32px; height: 32px; border-radius: 10px; background: var(--selected); color: var(--muted); }
+.pending-attention-content { flex: 1; min-width: 0; }
+.pending-attention-title { display: flex; align-items: baseline; gap: 10px; }
+.pending-attention-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(13px * var(--font-scale, 1)); font-weight: 500; }
+.pending-attention-title > span { flex-shrink: 0; color: var(--muted); font-size: calc(11px * var(--font-scale, 1)); }
+.pending-attention-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; margin-top: 5px; font-size: calc(12px * var(--font-scale, 1)); line-height: 1.6; color: var(--muted); }
+.pending-attention-source { display: block; margin-top: 4px; color: var(--muted); font-size: calc(10px * var(--font-scale, 1)); }
+.pending-attention-action { display: flex; align-items: center; gap: 3px; flex-shrink: 0; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); }
+.pending-attention-action .ui-icon { width: 14px; height: 14px; }
+.pending-attention-more { display: flex; align-items: center; gap: 4px; padding: 10px 8px 0; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); }
+@media (max-width: 600px) { .pending-attention { padding: 12px; } .pending-attention-icon { display: none; } .pending-attention-title { flex-wrap: wrap; gap: 3px 8px; } .pending-attention-action { font-size: calc(11px * var(--font-scale, 1)); } }
+.pending-attention { width: calc(100% - 2 * var(--conversation-inset, 0px)); max-width: 760px; box-sizing: border-box; margin-left: auto; margin-right: auto; }
+.pending-attention-list { max-height: min(24vh, 240px); overflow-y: auto; overscroll-behavior: contain; }
+
+/* Keep conversation tools together and reserve a stable trailing action group. */
+.composerbar{gap:12px;align-items:flex-end;}
+.composerbar .composer-add{flex:1;min-width:0;max-width:none;gap:6px;align-items:center;}
+.composerbar .composer-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto;max-width:48%;min-height:36px;}
+.composer-actions .composer-model{margin-left:0;max-width:210px;min-width:0;}
+.composer-actions .context-trigger{margin-left:0;flex-shrink:0;}
+.composerbar .permission-trigger{height:32px;padding:0 9px;gap:6px;background:transparent;border:1px solid var(--border);font-size:calc(11px * var(--font-scale,1));white-space:nowrap;}
+.composerbar .permission-trigger:hover{background:var(--surface-soft);}
+.composerbar .conversation-memory-button{width:32px;height:32px;flex:0 0 32px;padding:7px;border-radius:50%;color:var(--accent);}
+.composerbar .conversation-memory-button>span{display:none;}
+.composerbar .conversation-memory-button .ui-icon{width:18px;height:18px;}
+.composerbar .conversation-memory-button[aria-pressed=false]{color:var(--muted);background:var(--surface-soft);opacity:1;}
+.composerbar .conversation-memory-button[aria-pressed=false]::after{content:'';position:absolute;width:20px;height:1px;background:currentColor;transform:rotate(-45deg);}
+.composerbar .composer-add-chip{height:28px;border-radius:14px;font-size:calc(11px * var(--font-scale,1));padding:4px 9px;white-space:nowrap;min-width:0;}
+.composerbar .composer-add-chip .ui-icon{width:14px;height:14px;}
+.composerbar .model-trigger{height:34px;padding:0 10px;font-size:calc(12px * var(--font-scale,1));background:transparent;}
+.composerbar .model-trigger:hover{background:var(--surface-soft);}
+.composerbar button:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}
+@media(max-width:1050px){
+ .composerbar .composer-actions{gap:4px;max-width:44%;}
+ .composer-actions .context-trigger{padding:3px;}
+ .composerbar .model-trigger{gap:4px;padding:0 5px;}
+ .composerbar .model-trigger>.ui-icon:first-child{display:none;}
+ .composerbar .composer-add{gap:4px;}
+}
+.composerbar .conversation-memory-button{position:relative;}
+
+.composer-context .composer-status{white-space:nowrap;}

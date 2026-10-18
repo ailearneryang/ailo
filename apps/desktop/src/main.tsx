@@ -1,8 +1,12 @@
+import {ConversationSearch} from './conversation-search-dialog';
 import {initializeCompanion} from './pet-preferences';
 import {CompanionResultAction} from './pet-settings';
 import {supportsReasoning} from "../reasoning.cjs";
 import {CompanionNavigation} from './companion-navigation';
 import {PetSettings} from './pet-settings';
+import {PermissionCenter,PermissionSelector} from './permissions';
+import type {PermissionMode} from './permission-types';
+import {PersonalMemory} from './personal-memory';
 import {PersonalProfile} from './personal-profile';
 import {ProfileMenu} from './profile-menu';
 import './appearance';
@@ -78,6 +82,8 @@ function App() {
   const [reasoningChoices,setReasoningChoices]=useState<Record<string,'low'|'medium'|'high'>>({});
   const [searchChoices,setSearchChoices]=useState<Record<string,boolean>>({});
   const [mcpChoices,setMCPChoices]=useState<Record<string,string[]>>({});
+  const [permissionChoices,setPermissionChoices]=useState<Record<string,PermissionMode>>({});
+  const [memoryChoices,setMemoryChoices]=useState<Record<string,boolean>>({});
   const [amapChoices,setAMapChoices]=useState<Record<string,boolean>>({});
   const [connectionChoices,setConnectionChoices]=useState<Record<string,boolean>>({});
   const [extensionIds, setExtensionIds] = useState<string[]>([]);
@@ -141,6 +147,8 @@ function App() {
     void reconcile();const timer=setInterval(()=>void reconcile(),1000);
     return ()=>{cancelled=true;clearInterval(timer);};
   },[]);
+  const [searchOpen,setSearchOpen]=useState(false);
+  useEffect(()=>{const key=(event:KeyboardEvent)=>{if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'&&!event.altKey&&!event.isComposing){event.preventDefault();setSearchOpen(true);}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[]);
   const cancelledRef = useRef<string | null>(null);
   const threadEnd = useRef<HTMLDivElement>(null);
   const composerBusy = saving || importing;
@@ -272,7 +280,7 @@ function App() {
     setActive(id);
     setNotice("");
     setExtensionIds(id ? data.tasks.find(t => t.id === id)?.extensionIds || [] : data.projects.find(p => p.id === projectId)?.extensionIds || []);
-    if (!id) {setNewKnowledgeIds([]);setProjectId("");setExtensionIds([]);setRightPanel(null);}
+    if (!id) {setPermissionChoices(previous=>{const next={...previous};delete next.new;return next;});setMemoryChoices(previous=>{const next={...previous};delete next.new;return next;});setNewKnowledgeIds([]);setProjectId("");setExtensionIds([]);setRightPanel(null);}
     if (id) {
       const selected = data.tasks.find((t) => t.id === id);
       setProjectId(selected?.projectId || "");
@@ -310,6 +318,8 @@ function App() {
       feishuEnabled: useFeishu,
       amapEnabled: useAMap,
       mcpConnectionIds,
+      permissionMode:permissionChoices[connectionKey]??nextTask.permissionMode,
+      memoryEnabled:memoryChoices[connectionKey]??nextTask.memoryEnabled??true,
       searchEnabled: useSearch,
       lastError: undefined,
       partialReply: undefined,
@@ -512,7 +522,9 @@ function App() {
                 }} />);
   return (
     <div className="shell">
-      <SidebarLayout disabled={!ready || saving || importing} onHome={()=>select(null)}>
+      {searchOpen&&<ConversationSearch key={user?.id||'local'} tasks={data.tasks} projects={data.projects} onClose={()=>setSearchOpen(false)} onOpen={(id,messageId)=>{select(id);if(messageId){requestAnimationFrame(()=>requestAnimationFrame(()=>{const target=[...document.querySelectorAll<HTMLElement>('[data-search-message]')].find(el=>el.dataset.searchMessage===messageId);if(target){target.scrollIntoView({block:'center',behavior:'instant'});target.classList.add('search-message-highlight');setTimeout(()=>target.classList.remove('search-message-highlight'),3000);}}));}}}/>}
+
+      <SidebarLayout onSearch={()=>setSearchOpen(true)} disabled={!ready || saving || importing} onHome={()=>select(null)}>
         <button
           className="new"
           aria-label="新的对话"
@@ -569,7 +581,7 @@ function App() {
         <header>
           <div className="workspace-heading">
             <strong>
-              {view === "profile" ? "个人资料" : view === "pets" ? "陪伴与成长" : view === "appearance" ? "外观设置" : view === "assistant" ? "我的 Ailo" : view === "knowledge" ? "知识库" : view === "schedules" ? "定时任务" : view === "extensions" ? "扩展" : view === "about"
+              {view === "profile" ? "个人资料" : view === "pets" ? "陪伴与成长" : view === "permissions" ? "操作权限" : view === "memory" ? "个人记忆" : view === "appearance" ? "外观设置" : view === "assistant" ? "我的 Ailo" : view === "knowledge" ? "知识库" : view === "schedules" ? "定时任务" : view === "extensions" ? "扩展" : view === "about"
                 ? "关于 Ailo"
                 : view === "models"
                   ? "偏好设置"
@@ -601,7 +613,7 @@ function App() {
         <div className="workspace">
           <section className={"conversation" + (view === "assistant" ? " assistant-conversation" : "") + (isConversation && !task ? " conversation-home" : "")}>
             {view === "assistant" && <MyAilo compact={!!task} data={data} runningIds={Object.keys(sessions)} onOpen={select} onSchedules={()=>setView("schedules")} onPets={()=>setView("pets")} />}
-            {view === "profile" ? <PersonalProfile onUser={setUser} onWorkspace={setData} onOpen={select} onCreate={text=>{select(null);setInput(text);}} onFeedback={(id,text)=>{select(id);setInput(text);}} onConnections={()=>{setExtensionTab("connector");setView("extensions");}}/> : view === "pets" ? <PetSettings workspace={data} runningIds={Object.keys(sessions)} onOpen={select} onFeedback={(id,text)=>{select(id);setInput(text);}} onProject={id=>{setProjectId(id);setView("project");}}/> : view === "appearance" ? <AppearanceSettings/> : view === "knowledge" ? <KnowledgeCenter onUse={id=>{select(null);setNewKnowledgeIds([id]);setView("chat");setNotice("已选择知识库，发送问题即可检索资料。");}}/> : view === "schedules" ? <Schedules projects={data.projects} key={scheduleTarget||"all"} initialId={scheduleTarget||undefined} focusHistory={!!scheduleTarget} onChanged={async()=>setData(await window.ailo.read())} tasks={data.tasks} models={models} defaultModelId={data.defaultModelId} onFeishu={()=>{setExtensionTab("connector");setView("extensions");}} onModels={()=>setView("models")} onOpen={async id=>{const latest=await window.ailo.read();if(!latest.tasks.some(t=>t.id===id))throw Error('对话已删除或尚未创建');setData(latest);select(id);const opened=latest.tasks.find(t=>t.id===id)!;setModelId(opened.modelId||latest.defaultModelId);setProjectId(opened.projectId||"");setExtensionIds(opened.extensionIds||[]);}}/> : view === "project" && data.projects.some(p=>p.id===projectId) ? <ProjectOverview key={projectId} project={data.projects.find(p=>p.id===projectId)!} tasks={data.tasks.filter(t=>t.projectId===projectId)} onSelect={select} onNew={()=>{const id=projectId;select(null);selectProject(id);}}/> : view === "extensions" ? (
+            {view === "profile" ? <PersonalProfile onUser={setUser} onWorkspace={setData} onOpen={select} onCreate={text=>{select(null);setInput(text);}} onFeedback={(id,text)=>{select(id);setInput(text);}} onConnections={()=>{setExtensionTab("connector");setView("extensions");}}/> : view === "pets" ? <PetSettings workspace={data} runningIds={Object.keys(sessions)} onOpen={select} onFeedback={(id,text)=>{select(id);setInput(text);}} onProject={id=>{setProjectId(id);setView("project");}}/> : view === "permissions" ? <PermissionCenter key={user?.id||"local"} ownerId={user?.id||"local"} workspace={data} onOpen={select} onConnections={()=>{setExtensionTab("connector");setView("extensions");}}/> : view === "memory" ? <PersonalMemory key={user?.id||"local"} ownerId={user?.id||"local"} workspace={data} onOpen={select}/> : view === "appearance" ? <AppearanceSettings/> : view === "knowledge" ? <KnowledgeCenter onUse={id=>{select(null);setNewKnowledgeIds([id]);setView("chat");setNotice("已选择知识库，发送问题即可检索资料。");}}/> : view === "schedules" ? <Schedules projects={data.projects} key={scheduleTarget||"all"} initialId={scheduleTarget||undefined} focusHistory={!!scheduleTarget} onChanged={async()=>setData(await window.ailo.read())} tasks={data.tasks} models={models} defaultModelId={data.defaultModelId} onFeishu={()=>{setExtensionTab("connector");setView("extensions");}} onModels={()=>setView("models")} onOpen={async id=>{const latest=await window.ailo.read();if(!latest.tasks.some(t=>t.id===id))throw Error('对话已删除或尚未创建');setData(latest);select(id);const opened=latest.tasks.find(t=>t.id===id)!;setModelId(opened.modelId||latest.defaultModelId);setProjectId(opened.projectId||"");setExtensionIds(opened.extensionIds||[]);}}/> : view === "project" && data.projects.some(p=>p.id===projectId) ? <ProjectOverview key={projectId} project={data.projects.find(p=>p.id===projectId)!} tasks={data.tasks.filter(t=>t.projectId===projectId)} onSelect={select} onNew={()=>{const id=projectId;select(null);selectProject(id);}}/> : view === "extensions" ? (
               <ExtensionCenter initialTab={extensionTab} items={availableExtensions} busy={busy || !ready}
                 onTryConnection={(text,connector)=>{if(typeof connector==='object')changeMCPConnections([...new Set([...mcpConnectionIds,connector.mcpId])]);else if(connector==='amap')setAMapChoices(v=>({...v,[connectionKey]:true}));else setConnectionChoices(v=>({...v,[connectionKey]:true}));setView(active === ASSISTANT_ID ? "assistant" : "chat");setInput(text);setError("");}}
                 onImporting={setImporting}
@@ -689,6 +701,7 @@ function App() {
                 {messagesFor(task).map((message,index) => (
                   <div
                     key={message.id}
+                    data-search-message={message.id}
                     className={message.role === "user" ? "user-turn" : "reply"}
                     data-conversation-turn={message.role === 'user' ? message.id : undefined}
                   >
@@ -718,6 +731,7 @@ function App() {
                     {message.role==='assistant'&&index===messagesFor(task).length-1&&!busy&&<CompanionResultAction task={task}/>}
                     {view === "assistant" && data.tasks.filter(t=>(t.parentAssistantId === ASSISTANT_ID && t.parentMessageId === message.id) || task.assistantReferences?.[message.id]?.includes(t.id)).map(linked=><button key={linked.id} className="assistant-linked-task" onClick={()=>select(linked.id)}><Icon name="folder"/><span><strong>{linked.title}</strong><small>{sessions[linked.id] ? sessions[linked.id].status : linked.assistantPaused ? "已暂停" : linked.lastError ? "需要处理" : linked.agentRun?.status === "completed" ? "成果已准备好" : linked.messages?.at(-1)?.clarification ? "需要补充信息" : linked.messages?.at(-1)?.role === "assistant" ? "已有结果" : "查看任务进度"}{linked.agentRun?.artifacts.length ? ` · ${linked.agentRun.artifacts.length} 项成果` : ""}</small></span><span>查看任务 ↗</span></button>)}
                     {view === "assistant" && task.assistantScheduleLinks?.filter(link=>link.messageId===message.id).map(link=><button key={link.id} className="assistant-linked-task" onClick={()=>setView("schedules")}><Icon name="clock"/><span><strong>{link.title}</strong><small>已保存到定时任务</small></span><span>查看安排 ↗</span></button>)}
+                    {messagesFor(task).at(-1)?.role==='assistant'&&task.agentRun?.memoryUsed?.inputId===latestUserMessageId&&message.id===[...messagesFor(task)].reverse().find(m=>m.role==='assistant')?.id&&task.agentRun?.memoryUsed?.ownerId===(user?.id||'local')&&!!task.agentRun.memoryUsed.entries.length&&<details className="memory-used-receipt"><summary>参考了 {task.agentRun.memoryUsed.entries.length} 条记忆</summary><ul>{task.agentRun.memoryUsed.entries.map(entry=><li key={entry.id}>{entry.topic} · {entry.scope==='personal'?'个人':'当前项目'}</li>)}</ul><button onClick={()=>setView('memory')}>查看与管理记忆 ↗</button></details>}
                     {progressAt===message.id && currentProgress}
                     {message.role === "assistant" && message.clarification && <ClarificationCard
                       messageId={message.id} value={message.clarification} disabled={busy}
@@ -810,9 +824,14 @@ function App() {
                     onSubmit={event => { void submit(event); }}
                   />
                   <div className="composerbar">
-                    <KnowledgePicker openFrom={knowledgeMenuAnchor} onClose={()=>setKnowledgeMenuAnchor(null)} key={'knowledge-'+(task?.id||view)} value={task?(task.knowledgeIds||[]):newKnowledgeIds} disabled={!ready||busy||!!pending} onManage={()=>setView('knowledge')} onChange={ids=>{if(task)void window.ailo.patchTask(task.id,{knowledgeIds:ids}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,knowledgeIds:ids}:t)}))).catch(e=>setError(String(e)));else setNewKnowledgeIds(ids);}}/>
                   <ComposerAdd mcpConnectionIds={mcpConnectionIds} setMCPConnectionIds={changeMCPConnections} amap={useAMap===true} setAMap={enabled=>{setAMapChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{amapEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,amapEnabled:enabled}:t)})));}} onKnowledge={setKnowledgeMenuAnchor} searchEnabled={useSearch} setSearchEnabled={enabled=>{setSearchChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{searchEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,searchEnabled:enabled}:t)})));}} onProject={!task && view !== "assistant"?setProjectMenuAnchor:undefined} feishu={useFeishu} setFeishu={enabled=>{setConnectionChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{feishuEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,feishuEnabled:enabled}:t)})));}} key={task?.id || projectId || "new"} items={availableExtensions} value={[...selectedIds,...turnIds.filter(id=>availableExtensions.find(e=>e.id===id)?.kind==='skill')]} disabled={!ready || composerBusy} onChange={changeAddedExtensions} onManage={tab => {setExtensionTab(tab);setView("extensions");}} onAttach={attach} importing={importing}
-                    onDefault={(task?.projectId || projectId) ? () => { const id = task?.projectId || projectId; void commit({...data, projects:data.projects.map(p => p.id === id ? {...p,extensionIds:selectedIds} : p)}).then(ok => { if(ok) setNotice("已保存为项目默认扩展，将用于该项目的新对话。"); }); } : undefined} />
+                    onDefault={(task?.projectId || projectId) ? () => { const id = task?.projectId || projectId; void commit({...data, projects:data.projects.map(p => p.id === id ? {...p,extensionIds:selectedIds} : p)}).then(ok => { if(ok) setNotice("已保存为项目默认扩展，将用于该项目的新对话。"); }); } : undefined} >
+                    <PermissionSelector key={'permissions-'+connectionKey+'-'+(user?.id||'local')} taskId={task?.id} value={permissionChoices[connectionKey]??task?.permissionMode} disabled={!ready||busy} onManage={()=>setView('permissions')} onChange={mode=>{setPermissionChoices(v=>({...v,[connectionKey]:mode}));if(task)setData(d=>({...d,tasks:d.tasks.map(t=>t.id===task.id?{...t,permissionMode:mode}:t)}));}}/>
+                    <button type="button" className="conversation-memory-button" aria-label="在此对话中使用和保存记忆" aria-pressed={memoryChoices[connectionKey]??task?.memoryEnabled??true} disabled={!ready||busy} title={(memoryChoices[connectionKey]??task?.memoryEnabled??true)?'记忆已开启 · 点击关闭本对话记忆':'记忆已关闭 · 点击开启本对话记忆'} onClick={async()=>{const enabled=!(memoryChoices[connectionKey]??task?.memoryEnabled??true);try{if(task){const saved=await window.ailo.patchTask(task.id,{memoryEnabled:enabled});setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,...saved}:t)}));}setMemoryChoices(v=>({...v,[connectionKey]:enabled}));setNotice('');}catch(e){setError((e as Error).message);}}}><Icon name="memory"/><span>{(memoryChoices[connectionKey]??task?.memoryEnabled??true)?'记忆':'记忆已关闭'}</span></button>
+                    <KnowledgePicker openFrom={knowledgeMenuAnchor} onClose={()=>setKnowledgeMenuAnchor(null)} key={'knowledge-'+(task?.id||view)} value={task?(task.knowledgeIds||[]):newKnowledgeIds} disabled={!ready||busy||!!pending} onManage={()=>setView('knowledge')} onChange={ids=>{if(task)void window.ailo.patchTask(task.id,{knowledgeIds:ids}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,knowledgeIds:ids}:t)}))).catch(e=>setError(String(e)));else setNewKnowledgeIds(ids);}}/>
+                  </ComposerAdd>
+                  <div className="composer-actions">
+
                     {currentModel.id !== "demo" && <ContextMeter
                       messages={[...(task ? messagesFor(task) : []), ...(input || materials.length ? [{ role: "user" as const, content: input, materials }] : [])]}
                       extensions={availableExtensions.filter(e => effectiveIds.includes(e.id))}
@@ -855,6 +874,7 @@ function App() {
                         <Icon name="arrow-up" />
                       </button>
                     )}
+                  </div>
                   </div>
                 </form>
                 <div className="composer-context">
