@@ -9,7 +9,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
   const scheduler=require('./chat-scheduler.cjs').createScheduler(3);
   const steering = new Map();
   return {
-    sessions(){return [...steering.entries()].map(([id,s])=>({id,taskId:s.taskId,status:s.status||'等待执行…',content:s.content||'',updatedAt:s.updatedAt}));},
+    sessions(){return [...steering.entries()].map(([id,s])=>({id,taskId:s.taskId,status:s.status||'等待执行…',content:s.content||'',updatedAt:s.updatedAt,startedAt:s.startedAt,inputId:s.inputId,phase:s.phase,run:s.run}));},
     async steer({id, taskId, content}) {
       const session=steering.get(id);
       if(!session || session.taskId!==taskId || !session.accepting || pending.get(id)?.signal.aborted)throw Error('当前任务已停止，请作为新消息发送。');
@@ -38,10 +38,10 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
       if (pending.has(input.id)||[...steering.values()].some(s=>s.taskId && s.taskId===input.taskId)) throw Error('此会话正在执行或排队，请补充消息或等待完成。');
       const controller = new AbortController();
       pending.set(input.id, controller);
-      const session={taskId:input.taskId,queue:[],saving:Promise.resolve(),accepting:false};
+      const session={taskId:input.taskId,startedAt:new Date().toISOString(),phase:'preparing',queue:[],saving:Promise.resolve(),accepting:false};
       steering.set(input.id,session);
       const callbacks=input;
-      input={...input,onStatus:message=>{session.status=message;session.updatedAt=new Date().toISOString();callbacks.onStatus?.(message);},onText:content=>{session.content=content;session.updatedAt=new Date().toISOString();callbacks.onText?.(content);}};
+      input={...input,onStatus:message=>{session.status=message;session.updatedAt=new Date().toISOString();if(message.startsWith('等待执行'))session.phase='queued';callbacks.onStatus?.(message);},onText:content=>{session.content=content;session.updatedAt=new Date().toISOString();callbacks.onText?.(content);}};
       let timeoutMessage = "", timeoutCode;
       let timer, totalTimer, textTimer;
       let replyStartedAt;
@@ -71,9 +71,9 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
         )
           throw Error("对话内容无效或过长，请新建对话。");
         const schedulingState=input.taskId && storage.readWorkspace ? await storage.readWorkspace() : {tasks:[]};
-        const schedulingTask=schedulingState.tasks?.find(t=>t.id===input.taskId);
+        const schedulingTask=schedulingState.tasks?.find(t=>t.id===input.taskId);session.inputId=schedulingTask?.messages?.findLast(m=>m.role==='user')?.id;
         release=await scheduler.acquire(schedulingTask?.projectId || (schedulingTask?.scheduledTaskId?'schedule:'+schedulingTask.scheduledTaskId:input.taskId) || input.id,controller.signal,input.onStatus);
-        executionStarted=Date.now();
+        executionStarted=Date.now();session.phase='preparing';
         input.onStatus?.('正在执行…');
         const selected = input.extensionIds?.length ? selectedExtensions((await storage.readWorkspace()).extensions || [], input.extensionIds) : [];
         executionExtensions=selected;
@@ -236,7 +236,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           for(;;){try{return await recoverRequest(attempt=>askOnce(messages,maxTokens,showReply,prefix,requestPhase,format,attempt),{signal:controller.signal,retries:limits.retries??2,retryDelay:limits.retryDelay??500,onRetry:(attempt,total)=>input.onStatus?.(`模型响应暂时停顿，正在自动重试当前${requestPhase==='任务决策'?'决策':'请求'}（${attempt}/${total}）…`)});}catch(error){if(error.code==='MODEL_USAGE_UNSUPPORTED'&&requestUsage){requestUsage=false;continue;}throw error;}}
         }
         const { parseClarification } = await import("./clarification.mjs");
-        if (storage.agentDirectory && input.taskId) {
+        if (storage.agentDirectory && input.taskId && !storage.isTemporary?.(input.taskId) && !schedulingTask?.responseOnly) {
           const state = await storage.readWorkspace();
           let task = state.tasks.find(t => t.id === input.taskId);
           if (!task) throw Error("任务不存在。");
@@ -294,9 +294,10 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           }
           session.accepting=true;
           let savedTitle=task.titleGenerated?task.title:'';
-          const executeAgent=async permissionScope=>runAgent({permissions:permissionScope,getSteering:async()=>{await session.saving;return session.queue.splice(0);}, base: storage.agentDirectory, task, model, scheduledContext,memory, projectMemoryContext:task.projectId?await require('./project-memory.cjs').readMemory(storage.agentDirectory,state.projects?.find(p=>p.id===task.projectId)||{id:task.projectId},state.tasks||[]):null, projectContext:state.projects?.find(p=>p.id===task.projectId)?.description, personalAssistant:task.id===require('./personal-assistant.cjs').ASSISTANT_ID?storage.personalAssistant:undefined, knowledge:storage.knowledge?.scope(task.knowledgeIds||[]),mcp:storage.mcpConnections?.scope(input.mcpConnectionIds||[]),amap:input.amapEnabled===false?undefined:storage.amap, webSearch:input.searchEnabled===true?storage.webSearch:undefined, android:storage.androidManager, authorizeBuild:storage.authorizeBuild,directoryAccess:permissionScope?.directoryAccess||storage.directoryAccess,feishuCli:input.feishuEnabled===false?{execute:async()=>{throw Object.assign(Error('当前对话已关闭飞书，请在输入框 ＋ → 应用连接中开启后再试。'),{code:'FEISHU_DECLINED'});}}:storage.feishuCli,
+          const executeAgent=async permissionScope=>runAgent({permissions:permissionScope,getSteering:async()=>{await session.saving;return session.queue.splice(0);}, base: storage.agentDirectory, task, model, scheduledContext,memory, projectMemoryContext:task.projectId?await require('./project-memory.cjs').readMemory(storage.agentDirectory,state.projects?.find(p=>p.id===task.projectId)||{id:task.projectId},state.tasks||[]):null, projectContext:require('./project-context.cjs').projectContext(state.projects?.find(p=>p.id===task.projectId)), personalAssistant:task.id===require('./personal-assistant.cjs').ASSISTANT_ID?storage.personalAssistant:undefined, knowledge:storage.knowledge?.scope(task.knowledgeIds||[]),mcp:storage.mcpConnections?.scope(input.mcpConnectionIds||[]),amap:input.amapEnabled===false?undefined:storage.amap, webSearch:input.searchEnabled===true?storage.webSearch:undefined, android:storage.androidManager, authorizeBuild:storage.authorizeBuild,directoryAccess:permissionScope?.directoryAccess||storage.directoryAccess,feishuCli:input.feishuEnabled===false?{execute:async()=>{throw Object.assign(Error('当前对话已关闭飞书，请在输入框 ＋ → 应用连接中开启后再试。'),{code:'FEISHU_DECLINED'});}}:storage.feishuCli,
             signal:permissionScope?.signal||controller.signal, ask: askAgent, extensions: selected, skillPackages: storage.skillPackages,
             onStatus: input.onStatus, onRun: async run=>{
+              session.run=run;session.phase='running';
               if(run.conversationTitle&&run.conversationTitle!==savedTitle&&storage.setGeneratedTitle){
                 const title=await storage.setGeneratedTitle(task.id,run.conversationTitle);
                 if(title)savedTitle=title;
@@ -307,11 +308,18 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
             } });
           const scopedAgent=async scope=>{const cancel=()=>controller.abort();scope.signal.addEventListener('abort',cancel,{once:true});try{return await executeAgent(scope);}finally{scope.signal.removeEventListener('abort',cancel);}};
           const result=storage.permissions?await storage.permissions.run(task,controller.signal,scopedAgent):await executeAgent();
+          session.run=result.agentRun;session.phase='settling';
           if(task.scheduledTaskId)await require('./schedule-context.cjs').archiveScheduleRun(storage.agentDirectory,task,result);
           return { ...result, modelName: model.name };
         }
         const { prepareContext, countMessages, capacity } = await import("./context.mjs");
-        const prepared = await prepareContext(input.messages, selected, model, input.contextCheckpoint, async (messages, budget, { attempt }) => {
+        const replyExtensions=[...selected];
+        if(schedulingTask?.responseOnly){
+          const context={project:require('./project-context.cjs').projectContext(schedulingState.projects?.find(p=>p.id===schedulingTask.projectId))};
+          if(storage.personalMemory){const scope=await storage.personalMemory.scope({task:schedulingTask,owner:await storage.personalMemory.owner()});context.memory=await scope.context(input.messages.at(-1)?.content||'');}
+          replyExtensions.push({id:'reply-context',name:'当前项目与记忆（仅作参考）',kind:'expert',instructions:JSON.stringify(context)});
+        }
+        const prepared = await prepareContext(input.messages, replyExtensions, model, input.contextCheckpoint, async (messages, budget, { attempt }) => {
           input.onStatus?.(attempt ? `正在自动调整摘要长度并重试（${attempt + 1}/3）…` : "正在整理较早对话，保留关键信息…");
           try { return (await ask(messages, budget)).content; }
           catch (error) {

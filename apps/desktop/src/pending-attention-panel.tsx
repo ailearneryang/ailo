@@ -1,18 +1,11 @@
 import {useState} from 'react';
 import {Icon} from './icon';
 import {pendingAttention} from './pending-attention';
-import type {Workspace} from './types';
-export function PendingAttentionPanel({data,runningIds,onOpen}:{data:Workspace;runningIds:string[];onOpen:(id:string)=>void}){
- const [expanded,setExpanded]=useState(false);
- const items=pendingAttention(data.tasks,runningIds),visible=expanded?items:items.slice(0,2);
+import {ClarificationCard} from './clarification-card';
+import type {Workspace,ClarificationAnswer,Material} from './types';
+export function PendingAttentionPanel({data,runningIds,onOpen,onResolve}:{data:Workspace;runningIds:string[];onOpen:(id:string)=>void;onResolve?:(id:string,messageId?:string,answers?:ClarificationAnswer[],materials?:Material[])=>Promise<void>}){
+ const [expanded,setExpanded]=useState(false),[selected,setSelected]=useState(''),[working,setWorking]=useState(''),[error,setError]=useState('');const items=pendingAttention(data.tasks,runningIds);
+ async function resolve(id:string,messageId?:string,answers?:ClarificationAnswer[],materials?:Material[]){if(!onResolve)return;setWorking(id);setError('');try{await onResolve(id,messageId,answers,materials);setSelected('');}catch(e){setError((e as Error).message);}finally{setWorking('');}}
  if(!items.length)return null;
- return <section className="pending-attention" aria-labelledby="pending-attention-title">
-  <div className="pending-attention-heading"><h2 id="pending-attention-title">待你处理 <span>{items.length}</span></h2><p>补充信息或处理问题，让事情继续往前。</p></div>
-  <div className="pending-attention-list">{visible.map(({task,kind,label,action,description})=><button key={task.id} className="pending-attention-item" onClick={()=>onOpen(task.id)} aria-label={`${action}：${task.title}`}>
-   <span className={`pending-attention-icon ${kind}`}><Icon name={kind==='permission'?'lock':kind==='reply'?'chat':'info'}/></span>
-   <span className="pending-attention-content"><span className="pending-attention-title"><strong>{task.title}</strong><span>{label}</span></span><span className="pending-attention-description">{description}</span><span className="pending-attention-source">{task.scheduledTaskId?'定时任务':'任务'}{task.projectId?` · ${data.projects.find(p=>p.id===task.projectId)?.name||'项目'}`:''}</span></span>
-   <span className="pending-attention-action">{action}<Icon name="chevron-right"/></span>
-  </button>)}</div>
-  {items.length>2&&<button className="pending-attention-more" onClick={()=>setExpanded(value=>!value)} aria-expanded={expanded}>{expanded?'收起':`查看其余 ${items.length-2} 项`}<Icon name={expanded?'chevron':'chevron-right'}/></button>}
- </section>;
+ return <section className="pending-attention pending-attention-compact" aria-label="待处理事项"><button className="pending-attention-summary" aria-expanded={expanded} onClick={()=>setExpanded(v=>!v)}><Icon name="info"/><strong>{items.length} 项待你处理</strong><span>补充信息或处理阻塞，让任务继续</span><Icon name="chevron-right"/></button>{expanded&&<div className="pending-attention-list">{items.map(item=>{const source=item.task.messages?.at(-1);return <article className="pending-attention-card" key={item.task.id}><div className="pending-attention-title"><strong>{item.task.title}</strong><span>{item.label}</span></div><p className="pending-attention-description">{item.description}</p><div className="experience-actions"><button onClick={()=>onOpen(item.task.id)}>查看对话</button>{onResolve&&(source?.clarification?<button disabled={!!working} onClick={()=>setSelected(selected===item.task.id?'':item.task.id)}>在此回答</button>:<button disabled={!!working} onClick={()=>void resolve(item.task.id)}>{working===item.task.id?'正在处理…':item.kind==='permission'?'继续并核对授权':'重试当前步骤'}</button>)}</div>{selected===item.task.id&&source?.clarification&&<ClarificationCard value={source.clarification} messageId={source.id} disabled={!!working} active onSubmit={(answers,materials)=>resolve(item.task.id,source.id,answers,materials)}/>}</article>;})}</div>}{error&&<p className="error" role="alert">{error}</p>}</section>;
 }

@@ -1,0 +1,2 @@
+const {execFileSync}=require('node:child_process'),fs=require('node:fs'),path=require('node:path');
+if(process.platform==='darwin'){const base=path.resolve(__dirname,'../apps/desktop'),out=path.join(base,'.native');fs.mkdirSync(out,{recursive:true});execFileSync('/usr/bin/xcrun',['swiftc','-O','-target',(process.arch==='arm64'?'arm64':'x86_64')+'-apple-macos12.0','-module-cache-path',path.join(out,'module-cache'),path.join(base,'native/dictation.swift'),'-o',path.join(out,'ailo-dictation')],{stdio:'inherit'});}

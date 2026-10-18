@@ -1,7 +1,12 @@
 import React from 'react';
 // A single stroke weight and viewbox keep navigation icons optically consistent.
-export function Icon({ name }: { name: 'memory' | 'gauge' | 'pet' | 'sliders' | 'palette' | 'help' | 'logout' | 'lock' | 'globe' | 'settings' | 'book' | 'sparkles' | 'plug' | 'chevron-right' | 'plus' | 'arrow-up' | 'compose' | 'chat' | 'grid' | 'folder' | 'folder-open' | 'info' | 'user' | 'chevron' | 'paperclip' | 'panel' | 'expand' | 'file' | 'queue' | 'play' | 'edit' | 'trash' | 'check' | 'close' | 'clock' | 'refresh' | 'copy' | 'search' | 'more' | 'pin' }) {
+export function Icon({ name }: { name: 'bell' | 'archive' | 'branch' | 'mic' | 'stop' | 'memory' | 'gauge' | 'pet' | 'sliders' | 'palette' | 'help' | 'logout' | 'lock' | 'globe' | 'settings' | 'book' | 'sparkles' | 'plug' | 'chevron-right' | 'plus' | 'arrow-up' | 'compose' | 'chat' | 'grid' | 'folder' | 'folder-open' | 'info' | 'user' | 'chevron' | 'paperclip' | 'panel' | 'expand' | 'file' | 'queue' | 'play' | 'edit' | 'trash' | 'check' | 'close' | 'clock' | 'refresh' | 'copy' | 'search' | 'more' | 'pin' }) {
   const shapes = {
+    bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></>,
+    archive: <><path d="M3 4h18v4H3zM5 8v13h14V8M10 12h4"/></>,
+    branch: <><circle cx="6" cy="5" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="19" r="3"/><path d="M6 8v8m0-3c8 0 12-1 12-4"/></>,
+    mic: <><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></>,
+    stop: <rect x="6" y="6" width="12" height="12" rx="2"/>,
     memory: <><path d="M12 5a3 3 0 0 0-5.8-1 4 4 0 0 0-3.1 5.7 4 4 0 0 0 .5 7.2A4 4 0 0 0 12 19V5Zm0 0a3 3 0 0 1 5.8-1 4 4 0 0 1 3.1 5.7 4 4 0 0 1-.5 7.2A4 4 0 0 1 12 19"/><path d="M7 8a3 3 0 0 0 5 2m5-2a3 3 0 0 1-5 2M6 14a3 3 0 0 1 3 3m9-3a3 3 0 0 0-3 3"/></>,
     gauge: <><path d="M5 19a9 9 0 1 1 14 0M16 8l-4 4"/><circle cx="12" cy="12" r="2"/><path d="M5 12H3M12 5V3M19 12h2"/></>,
     pet: <><path d="M5 16c0-5 3-12 7-12s7 7 7 12c0 4-3 5-7 5s-7-1-7-5Z"/><path d="M9 12v2M15 12v2M10 17h4"/></>,

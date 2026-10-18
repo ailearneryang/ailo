@@ -1,3 +1,10 @@
+import {taskPresentation,mergeSessionSnapshot,type LiveSession} from './task-presentation';
+import {ConversationActions,ConversationActionDialog,ArchivedConversations} from './conversation-management';
+import {FileLibrary} from './file-library';
+import {NotificationCenter,NotificationButton} from './notification-center';
+import {DictationButton} from './dictation-button';
+import type {ConversationOperation} from './experience-types';
+import './experience.css';
 import {ConversationSearch} from './conversation-search-dialog';
 import {initializeCompanion} from './pet-preferences';
 import {CompanionResultAction} from './pet-settings';
@@ -53,9 +60,14 @@ import {
   type User,
   type Message,
 } from "./types";
+function recentGroup(created:string){const date=new Date(created),now=new Date();if(date.toDateString()===now.toDateString())return '今天';const yesterday=new Date();yesterday.setDate(now.getDate()-1);if(date.toDateString()===yesterday.toDateString())return '昨天';return date.getFullYear()+'年'+(date.getMonth()+1)+'月';}
 const ASSISTANT_ID = "my-ailo-assistant";
 function App() {
   const [data, setData] = useState<Workspace>(emptyWorkspace);
+  const [conversationOperation,setConversationOperation]=useState<{id:string;action:ConversationOperation}>();
+  const [regenerateTarget,setRegenerateTarget]=useState<string>();
+  const discardedTemporary=useRef(new Set<string>());
+  const [recentLimit,setRecentLimit]=useState(30);
   const [ready, setReady] = useState(false);
   const [active, setActive] = useState<string | null>(ASSISTANT_ID);
   const [knowledgeMenuAnchor,setKnowledgeMenuAnchor]=useState<HTMLButtonElement|null>(null);
@@ -93,7 +105,9 @@ function App() {
   const selectedIds = extensionIds.filter(id => availableExtensions.some(e => e.id === id && e.enabled && e.kind === 'expert'));
   function selectProject(id: string) {
     setProjectId(id);
-    setExtensionIds(data.projects.find(p => p.id === id)?.extensionIds || []);
+    const project=data.projects.find(p=>p.id===id);
+    setExtensionIds(project?.extensionIds || []);
+    setSearchChoices(v=>({...v,new:project?.defaultTools?.searchEnabled===true}));setConnectionChoices(v=>({...v,new:project?.defaultTools?.feishuEnabled===true}));setAMapChoices(v=>({...v,new:project?.defaultTools?.amapEnabled===true}));setMCPChoices(v=>({...v,new:project?.defaultTools?.mcpConnectionIds||[]}));
     setNotice("");
   }
   const models = data.models;
@@ -102,8 +116,8 @@ function App() {
     models.find((m) => m.id === data.defaultModelId) ||
     models[0] ||
     demoModel;
-  type LiveSession={id:string;content:string;status:string;attached?:boolean};
   const requests=useRef<Record<string,LiveSession>>({});
+  const finishedRequests=useRef(new Set<string>());
   const [sessions,setSessions]=useState<Record<string,LiveSession>>({});
   const syncSessions=()=>setSessions({...requests.current});
   const streamText=active?sessions[active]?.content||'':'';
@@ -122,6 +136,7 @@ function App() {
   const pending=active && sessions[active]?active:null;
   const requestRef={current:active?requests.current[active]?.id||null:null};
   useEffect(() => window.ailo.onChatStatus(status => {
+    if(status.finished&&status.id){finishedRequests.current.add(status.id);if(finishedRequests.current.size>2000)finishedRequests.current.delete(finishedRequests.current.values().next().value!);}
     if(status.finished){void window.ailo.read().then(setData);}
     const entry=Object.entries(requests.current).find(([,s])=>s.id===status.id);
     if(!entry)return;
@@ -129,20 +144,20 @@ function App() {
     if(status.failure)setData(previous=>({...previous,tasks:previous.tasks.map(t=>t.id===taskId?{...t,lastErrorCode:status.failure!.code,modelRequestDiagnostics:status.failure!.requestDiagnostics}:t)}));
     if(status.finished){delete requests.current[taskId];syncSessions();void window.ailo.read().then(setData);return;}
     if (status.run) setData(previous => ({...previous,tasks:previous.tasks.map(t => t.id === taskId ? {...t,agentRun:status.run,...(status.run?.conversationTitle?{title:status.run.conversationTitle,titleGenerated:true}:{})} : t)}));
-    requests.current[taskId]={...session,attached:true,...(status.message?{status:status.message}:{}),...(typeof status.content==='string'?{content:status.content,status:'正在生成回复…'}:{})};
+    requests.current[taskId]={...session,attached:true,...(status.run?{run:status.run,phase:'running' as const}:{}),...(status.message?{status:status.message}:{}),...(typeof status.content==='string'?{content:status.content,status:'正在生成回复…'}:{})};
     syncSessions();
   }), []);
   useEffect(()=>{
-    let cancelled=false;
+    let cancelled=false,polling=false;
     async function reconcile(){
+      if(polling)return;polling=true;
       try{
         const running=await window.ailo.sessions();if(cancelled)return;
-        let ended=false;
-        for(const [taskId,session] of Object.entries(requests.current))if(session.attached&&!running.some(s=>s.id===session.id)){delete requests.current[taskId];ended=true;}
-        if(ended){const state=await window.ailo.read();if(!cancelled)setData(state);}
-        for(const s of running)if(s.taskId)requests.current[s.taskId]={id:s.id,content:s.content,status:s.status,attached:true};
+        const before=Object.keys(requests.current).length;
+        requests.current=mergeSessionSnapshot(requests.current,running,finishedRequests.current);
+        if(Object.keys(requests.current).length<before){const state=await window.ailo.read();if(!cancelled)setData(state);}
         syncSessions();
-      }catch{/* IPC may be closing; retry on next tick. */}
+      }catch{/* IPC may be closing; retry on next tick. */}finally{polling=false;}
     }
     void reconcile();const timer=setInterval(()=>void reconcile(),1000);
     return ()=>{cancelled=true;clearInterval(timer);};
@@ -211,14 +226,24 @@ function App() {
       })
       .catch((e) => setError("无法加载本地记录：" + String(e)));
   }, []);
-  const pinnedTasks = data.tasks.filter(t=>t.id!==ASSISTANT_ID&&t.pinned).sort((a,b)=>Date.parse(b.pinnedAt||b.created)-Date.parse(a.pinnedAt||a.created));
-  const recentTasks = data.tasks.filter(t=>t.id !== ASSISTANT_ID).sort((a,b)=>Date.parse(b.scheduledAt||b.created)-Date.parse(a.scheduledAt||a.created)).filter((t,index,items)=>!t.scheduledTaskId || t.scheduledArchived || items.findIndex(other=>other.scheduledTaskId===t.scheduledTaskId)===index).filter(t=>!t.pinned);
+  const pinnedTasks = data.tasks.filter(t=>t.id!==ASSISTANT_ID&&!t.archived&&!t.temporary&&t.pinned).sort((a,b)=>Date.parse(b.pinnedAt||b.created)-Date.parse(a.pinnedAt||a.created));
+  const recentTasks = data.tasks.filter(t=>t.id !== ASSISTANT_ID&&!t.archived&&!t.temporary&&!t.projectId).sort((a,b)=>Date.parse(b.scheduledAt||b.created)-Date.parse(a.scheduledAt||a.created)).filter((t,index,items)=>!t.scheduledTaskId || t.scheduledArchived || items.findIndex(other=>other.scheduledTaskId===t.scheduledTaskId)===index).filter(t=>!t.pinned);
   async function toggleTaskPin(t:Task){
     try{const saved=await window.ailo.setTaskPinned(t.id,!t.pinned);setData(previous=>({...previous,tasks:previous.tasks.map(old=>old.id===saved.id?{...old,pinned:saved.pinned,pinnedAt:saved.pinnedAt}:old)}));}
     catch(e){setError((e as Error).message);}
   }
   const isConversation = view === "chat" || view === "assistant";
   const task = data.tasks.find((t) => t.id === active);
+  useEffect(()=>window.ailo.onNavigateTask(id=>{void window.ailo.read().then(state=>{setData(state);if(state.tasks.some(t=>t.id===id))select(id);});}),[active,input,materials]);
+  async function operateConversation(id:string,action:ConversationOperation){
+    if(action==='export'){try{if(await window.ailo.exportConversation(id))setNotice('对话已导出为 Markdown');}catch(e){setError((e as Error).message);}return;}
+    if(action==='move'&&queued.some(m=>m.taskId===id)){setError('请先移除该对话的待发送消息，再移动项目');return;}
+    if(['rename','move','delete'].includes(action)){setConversationOperation({id,action});return;}
+    try{await window.ailo.conversationAction({id,action});const state=await window.ailo.read();setData(state);if(action==='archive'){setQueued(v=>v.filter(m=>m.taskId!==id));if(active===id)select(null);}setNotice(action==='archive'?'已归档，可在设置或搜索中找回':'对话已恢复');}catch(e){setError((e as Error).message);}
+  }
+  async function forkConversation(messageId:string,regenerate=false){if(!task||task.temporary)return;try{const result=await window.ailo.conversationAction({id:task.id,action:regenerate?'regenerate':'branch',messageId});if(!('title' in result))return;const state=await window.ailo.read();setData(state);select(result.id);setModelId(result.modelId||data.defaultModelId);setProjectId(result.projectId||'');if(regenerate)setRegenerateTarget(result.id);}catch(e){setError((e as Error).message);}}
+  useEffect(()=>{if(regenerateTarget&&task?.id===regenerateTarget&&ready&&!busy){setRegenerateTarget(undefined);void respond(task,false);}},[regenerateTarget,task?.id,ready,busy]);
+  async function startTemporary(){try{const created=await window.ailo.temporaryConversation();if(!created)return;select(created.id);setData(d=>({...d,tasks:[created,...d.tasks]}));setProjectId('');setModelId(data.defaultModelId);setExtensionIds([]);setInput('');setMaterials([]);}catch(e){setError((e as Error).message);}}
   const attentionCount = unreadAttentionTasks(data.tasks, Object.keys(sessions)).length;
   const companionState = workspacePetState(data.tasks, sessions);
   const markingPetRead = useRef<string | null>(null);
@@ -274,8 +299,10 @@ function App() {
     }
   }
   function select(id: string | null) {
+    if(task?.temporary&&id!==task.id){discardedTemporary.current.add(task.id);delete drafts.current[task.id];void window.ailo.temporaryConversation({id:task.id}).catch(()=>{});setData(d=>({...d,tasks:d.tasks.filter(t=>t.id!==task.id)}));}
+
     setMessageEdit(null);
-    drafts.current[active||'new']={input,materials};
+    if(!task?.temporary)drafts.current[active||'new']={input,materials};
     const draft=drafts.current[id||'new']||{input:'',materials:[]};
     setActive(id);
     setNotice("");
@@ -303,7 +330,7 @@ function App() {
   async function respond(nextTask: Task, clearDraft: boolean) {
     if (requests.current[nextTask.id] || saving || importing || !modelReady()) return;
     const requestId = crypto.randomUUID();
-    requests.current[nextTask.id]={id:requestId,content:'',status:'正在检查上下文…'};syncSessions();
+    requests.current[nextTask.id]={id:requestId,taskId:nextTask.id,inputId:[...(nextTask.messages||[])].reverse().find(m=>m.role==='user')?.id,startedAt:new Date().toISOString(),phase:'preparing',content:'',status:'正在检查上下文…'};syncSessions();
     setActive(nextTask.id);
     setError("");
     const messages = messagesFor(nextTask);
@@ -359,6 +386,7 @@ function App() {
       const finished=await window.ailo.patchTask(updated.id,{contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens,lastError:undefined,partialReply:undefined},[assistant]);
       setData(previous=>({...previous,tasks:previous.tasks.map(t=>t.id===finished.id?{...t,...finished}:t)}));
     } catch (e) {
+      if(discardedTemporary.current.has(nextTask.id))return;
       const message = String(e).replace(/^.*Error: /, "");
       const running=await window.ailo.sessions().catch(()=>[]);
       const existing=running.find(s=>s.taskId===nextTask.id);
@@ -370,7 +398,7 @@ function App() {
         setError(message);
       }
     } finally {
-      if(requests.current[nextTask.id]?.id===requestId)delete requests.current[nextTask.id];syncSessions();
+      finishedRequests.current.add(requestId);if(requests.current[nextTask.id]?.id===requestId)delete requests.current[nextTask.id];syncSessions();
     }
   }
   async function resendEditedMessage() {
@@ -388,6 +416,7 @@ function App() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!ready || composerBusy) return;
+    if(pending&&task?.temporary){setError('请先结束本次回复，再发送下一条临时消息');return;}
     if(pending && task?.id===pending && requestRef.current) {
       if(!hasMessageContent(input,materials)||input.trim().length>20000)return;
       setQueued(previous=>[...previous,{id:crypto.randomUUID(),taskId:task.id,content:input.trim(),materials}]);
@@ -487,6 +516,7 @@ function App() {
   }
   async function pasteFiles(files: File[]) {
     if (composerBusy || !ready) return;
+    if(task?.temporary){setError('临时对话仅支持文本和语音转写，请使用普通对话添加文件。');return;}
     setImporting(true);
     try {
       if (files.length > 10) throw Error("一次最多添加 10 个材料文件。");
@@ -502,6 +532,7 @@ function App() {
   }
   async function attach() {
     if (composerBusy || !ready) return;
+    if(task?.temporary){setError('临时对话仅支持文本和语音转写，请使用普通对话添加文件。');return;}
     setImporting(true);
     try {
       const m = await window.ailo.pick();
@@ -515,15 +546,17 @@ function App() {
   }
   const progressAt=progressAnchor(task?.agentRun,task?messagesFor(task):[]);
   const latestUserMessageId=task?messagesFor(task).filter(m=>m.role==='user').at(-1)?.id:undefined;
-  const currentProgress=task && (task.agentRun && <TaskProgress task={task} onOpenArtifacts={()=>setRightPanel('artifacts')} busy={!ready || busy || messageEdit?.taskId===task.id} onContinue={() => {
+  const currentState=task?taskPresentation(task,sessions[task.id]):undefined;
+  const currentProgress=task && (task.agentRun && <TaskProgress task={task} historical={currentState?.historical} currentStatus={currentState?.progressStatus} onOpenArtifacts={()=>setRightPanel('artifacts')} busy={!ready || busy || messageEdit?.taskId===task.id} onContinue={() => {
                   if (messagesFor(task).at(-1)?.role === 'user') { void respond(task,false); return; }
                   const message: Message = {id:crypto.randomUUID(),role:"user",content:"请从已保存的任务状态继续，先检查已有成果，不重复执行已完成步骤。"};
                   void respond({...task,messages:[...messagesFor(task),message]},false);
                 }} />);
   return (
-    <div className="shell">
-      {searchOpen&&<ConversationSearch key={user?.id||'local'} tasks={data.tasks} projects={data.projects} onClose={()=>setSearchOpen(false)} onOpen={(id,messageId)=>{select(id);if(messageId){requestAnimationFrame(()=>requestAnimationFrame(()=>{const target=[...document.querySelectorAll<HTMLElement>('[data-search-message]')].find(el=>el.dataset.searchMessage===messageId);if(target){target.scrollIntoView({block:'center',behavior:'instant'});target.classList.add('search-message-highlight');setTimeout(()=>target.classList.remove('search-message-highlight'),3000);}}));}}}/>}
+    <ConversationActions.Provider value={(id,action)=>void operateConversation(id,action)}><div className="shell">
+      {searchOpen&&<ConversationSearch key={user?.id||'local'} tasks={data.tasks.filter(t=>!t.temporary)} projects={data.projects} onClose={()=>setSearchOpen(false)} onOpen={(id,messageId)=>{select(id);if(messageId){requestAnimationFrame(()=>requestAnimationFrame(()=>{const target=[...document.querySelectorAll<HTMLElement>('[data-search-message]')].find(el=>el.dataset.searchMessage===messageId);if(target){target.scrollIntoView({block:'center',behavior:'instant'});target.classList.add('search-message-highlight');setTimeout(()=>target.classList.remove('search-message-highlight'),3000);}}));}}}/>}
 
+      {conversationOperation&&data.tasks.find(t=>t.id===conversationOperation.id)&&<ConversationActionDialog key={conversationOperation.id+conversationOperation.action} task={data.tasks.find(t=>t.id===conversationOperation.id)!} action={conversationOperation.action} projects={data.projects} onClose={()=>setConversationOperation(undefined)} onConfirm={async value=>{await window.ailo.conversationAction({...conversationOperation,value});setData(await window.ailo.read());if(conversationOperation.action==='delete'){setQueued(v=>v.filter(m=>m.taskId!==conversationOperation.id));if(active===conversationOperation.id)select(null);}}}/>}
       <SidebarLayout onSearch={()=>setSearchOpen(true)} disabled={!ready || saving || importing} onHome={()=>select(null)}>
         <button
           className="new"
@@ -536,6 +569,7 @@ function App() {
         </button>
         <nav>
           <CompanionNavigation state={companionState} count={attentionCount} selected={view === "assistant"} onSelect={()=>select(ASSISTANT_ID)}/>
+          <button aria-label="文件与成果" title="文件与成果" className={view==='files'?'selected':''} onClick={()=>setView('files')}><Icon name="folder"/><span>文件与成果</span></button>
           <button aria-label="知识库" title="知识库" className={view === "knowledge" ? "selected" : ""} onClick={()=>setView("knowledge")}><Icon name="book"/><span>知识库</span></button>
           <button aria-label="定时任务" title="定时任务" className={view === "schedules" ? "selected" : ""} onClick={()=>{setScheduleTarget(null);setView("schedules");}}><Icon name="clock"/><span>定时任务</span></button>
           <button
@@ -548,7 +582,7 @@ function App() {
           </button>
         </nav>
         <div className="sidebar-scroll">
-          {!!pinnedTasks.length&&<section aria-label="置顶对话"><div className="label">置顶</div><div className="history">{pinnedTasks.map(t=><TaskNavigation key={t.id} task={t} running={!!sessions[t.id]} selected={view==='chat'&&active===t.id} busy={saving||importing} onSelect={()=>select(t.id)} onPin={()=>toggleTaskPin(t)}>{sessions[t.id]&&<small>执行中</small>}</TaskNavigation>)}</div></section>}
+          {!!pinnedTasks.length&&<section aria-label="置顶对话"><div className="label">置顶</div><div className="history">{pinnedTasks.map(t=><TaskNavigation key={t.id} task={t} session={sessions[t.id]} running={!!sessions[t.id]} selected={view==='chat'&&active===t.id} busy={saving||importing} onSelect={()=>select(t.id)} onPin={()=>toggleTaskPin(t)}></TaskNavigation>)}</div></section>}
           <button className="label project-group-toggle" aria-expanded={projectsOpen} aria-controls="sidebar-projects" onClick={()=>setProjectsOpen(open=>!open)}>
             <span>项目 {data.projects.length || ""}</span><Icon name="chevron-right"/>
           </button>
@@ -556,7 +590,7 @@ function App() {
             {data.projects.length === 0 ? (
               <p className="muted">在新对话中创建项目</p>
             ) : (
-              [...data.projects].sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned)).map(p=><ProjectNavigation key={p.id} project={p} expanded={!!expandedProjects[p.id]} selected={projectId===p.id} tasks={data.tasks.filter(t=>t.projectId===p.id)} active={view==='chat'?active:null} runningIds={Object.keys(sessions)} extensions={availableExtensions} busy={saving||importing} onExpand={()=>setExpandedProjects(v=>({...v,[p.id]:!v[p.id]}))} onOpen={()=>{select(null);selectProject(p.id);setView('project');}} onNew={()=>{select(null);selectProject(p.id);}} onSelect={select} onPin={toggleTaskPin} onSave={async project=>{
+              [...data.projects].sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned)).map(p=><ProjectNavigation key={p.id} project={p} expanded={!!expandedProjects[p.id]} selected={projectId===p.id} tasks={data.tasks.filter(t=>t.projectId===p.id&&!t.archived&&!t.temporary)} active={view==='chat'?active:null} runningIds={Object.keys(sessions)} sessions={sessions} extensions={availableExtensions} busy={saving||importing} onExpand={()=>setExpandedProjects(v=>({...v,[p.id]:!v[p.id]}))} onOpen={()=>{select(null);selectProject(p.id);setView('project');}} onNew={()=>{select(null);selectProject(p.id);}} onSelect={select} onPin={toggleTaskPin} onSave={async project=>{
                 if(data.projects.some(other=>other.id!==project.id&&other.name.toLowerCase()===project.name.toLowerCase())){setError('项目名称已存在，请换个名称。');return false;}
                 return commit({...data,projects:data.projects.map(old=>old.id===project.id?project:old)});
               }} onDelete={async()=>{try{if(await window.ailo.removeProject(p.id)){const latest=await window.ailo.read();setData(latest);if(projectId===p.id){select(null);setProjectId('');}}}catch(e){setError((e as Error).message);}}} onError={setError}/>)
@@ -567,13 +601,14 @@ function App() {
             {recentTasks.length === 0 ? (
               <p className="muted">从一件想完成的事开始</p>
             ) : (
-              recentTasks.map((t) => (
-                <TaskNavigation key={t.id} task={t} running={!!sessions[t.id]} selected={view==='chat'&&active===t.id} busy={saving||importing} onSelect={()=>select(t.id)} onPin={()=>toggleTaskPin(t)}>
-                  {t.scheduledTaskId ? <small className="scheduled-recent-date">{new Date(t.scheduledAt||t.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})} · {sessions[t.id] ? (sessions[t.id].status.startsWith('等待执行')?'排队中':'执行中') : t.lastError || ['failed','blocked','waiting_permission','paused','waiting_user'].includes(t.agentRun?.status||'') || t.messages?.at(-1)?.clarification ? '待处理' : t.messages?.at(-1)?.role==='assistant' || t.answer ? '已有结果' : '等待结果'}</small> : sessions[t.id]&&<small className="session-status">{sessions[t.id].status.startsWith('等待执行')?'排队中':'执行中'}</small>}
-                </TaskNavigation>
+              recentTasks.slice(0,recentLimit).map((t,index) => (
+                <React.Fragment key={t.id}>{(index===0||recentGroup(t.created)!==recentGroup(recentTasks[index-1].created))&&<div className="recent-date-group">{recentGroup(t.created)}</div>}<TaskNavigation task={t} session={sessions[t.id]} running={!!sessions[t.id]} selected={view==='chat'&&active===t.id} busy={saving||importing} onSelect={()=>select(t.id)} onPin={()=>toggleTaskPin(t)}>
+                  {t.scheduledTaskId&&<small className="scheduled-recent-date">{new Date(t.scheduledAt||t.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</small>}
+                </TaskNavigation></React.Fragment>
               ))
             )}
           </div>
+          {recentTasks.length>recentLimit&&<button className="recent-show-more" onClick={()=>setRecentLimit(n=>n+30)}>显示更早对话</button>}
         </div>
         <ProfileMenu user={user} ready={accountReady} onSelect={setView} onLogout={async()=>{await window.ailo.logout();setUser(null);}}/>
       </SidebarLayout>
@@ -581,7 +616,7 @@ function App() {
         <header>
           <div className="workspace-heading">
             <strong>
-              {view === "profile" ? "个人资料" : view === "pets" ? "陪伴与成长" : view === "permissions" ? "操作权限" : view === "memory" ? "个人记忆" : view === "appearance" ? "外观设置" : view === "assistant" ? "我的 Ailo" : view === "knowledge" ? "知识库" : view === "schedules" ? "定时任务" : view === "extensions" ? "扩展" : view === "about"
+              {view === "files" ? "文件与成果" : view === "notifications" ? "通知" : view === "archived" ? "已归档对话" : view === "profile" ? "个人资料" : view === "pets" ? "陪伴与成长" : view === "permissions" ? "操作权限" : view === "memory" ? "个人记忆" : view === "appearance" ? "外观设置" : view === "assistant" ? "我的 Ailo" : view === "knowledge" ? "知识库" : view === "schedules" ? "定时任务" : view === "extensions" ? "扩展" : view === "about"
                 ? "关于 Ailo"
                 : view === "models"
                   ? "偏好设置"
@@ -598,7 +633,10 @@ function App() {
                   : "正在读取工作空间"}
             </small>}
           </div>
-          <div className="header-controls">
+          <div className="header-controls"><NotificationButton key={user?.id||'local'} onClick={()=>setView('notifications')}/>
+            {view==='chat'&&!task&&<button className="temporary-start" disabled={busy} onClick={()=>void startTemporary()}><Icon name="clock"/>临时对话</button>}
+            {task?.temporary&&<button disabled={busy} onClick={()=>select(null)}>结束临时对话</button>}
+
             {view === "chat" && task?.scheduledTaskId && !task.scheduledArchived && <button onClick={()=>{setScheduleTarget(task.scheduledTaskId!);setView("schedules");}}><Icon name="clock"/><span>历史记录</span></button>}
             {view === "chat" && task && (
               <span className="header-model">
@@ -612,8 +650,8 @@ function App() {
         </header>
         <div className="workspace">
           <section className={"conversation" + (view === "assistant" ? " assistant-conversation" : "") + (isConversation && !task ? " conversation-home" : "")}>
-            {view === "assistant" && <MyAilo compact={!!task} data={data} runningIds={Object.keys(sessions)} onOpen={select} onSchedules={()=>setView("schedules")} onPets={()=>setView("pets")} />}
-            {view === "profile" ? <PersonalProfile onUser={setUser} onWorkspace={setData} onOpen={select} onCreate={text=>{select(null);setInput(text);}} onFeedback={(id,text)=>{select(id);setInput(text);}} onConnections={()=>{setExtensionTab("connector");setView("extensions");}}/> : view === "pets" ? <PetSettings workspace={data} runningIds={Object.keys(sessions)} onOpen={select} onFeedback={(id,text)=>{select(id);setInput(text);}} onProject={id=>{setProjectId(id);setView("project");}}/> : view === "permissions" ? <PermissionCenter key={user?.id||"local"} ownerId={user?.id||"local"} workspace={data} onOpen={select} onConnections={()=>{setExtensionTab("connector");setView("extensions");}}/> : view === "memory" ? <PersonalMemory key={user?.id||"local"} ownerId={user?.id||"local"} workspace={data} onOpen={select}/> : view === "appearance" ? <AppearanceSettings/> : view === "knowledge" ? <KnowledgeCenter onUse={id=>{select(null);setNewKnowledgeIds([id]);setView("chat");setNotice("已选择知识库，发送问题即可检索资料。");}}/> : view === "schedules" ? <Schedules projects={data.projects} key={scheduleTarget||"all"} initialId={scheduleTarget||undefined} focusHistory={!!scheduleTarget} onChanged={async()=>setData(await window.ailo.read())} tasks={data.tasks} models={models} defaultModelId={data.defaultModelId} onFeishu={()=>{setExtensionTab("connector");setView("extensions");}} onModels={()=>setView("models")} onOpen={async id=>{const latest=await window.ailo.read();if(!latest.tasks.some(t=>t.id===id))throw Error('对话已删除或尚未创建');setData(latest);select(id);const opened=latest.tasks.find(t=>t.id===id)!;setModelId(opened.modelId||latest.defaultModelId);setProjectId(opened.projectId||"");setExtensionIds(opened.extensionIds||[]);}}/> : view === "project" && data.projects.some(p=>p.id===projectId) ? <ProjectOverview key={projectId} project={data.projects.find(p=>p.id===projectId)!} tasks={data.tasks.filter(t=>t.projectId===projectId)} onSelect={select} onNew={()=>{const id=projectId;select(null);selectProject(id);}}/> : view === "extensions" ? (
+            {view === "assistant" && <MyAilo compact={!!task} data={data} runningIds={Object.keys(sessions)} onOpen={select} onResolve={async(id,messageId,answers,materials)=>{setData(await window.ailo.resumeTask({id,messageId,answers,materials}));}} onSchedules={()=>setView("schedules")} onPets={()=>setView("pets")} />}
+            {view === 'files' ? <FileLibrary workspace={data} onOpen={select}/> : view === 'notifications' ? <NotificationCenter key={user?.id||'local'} taskIds={data.tasks.map(t=>t.id)} onOpen={select}/> : view === 'archived' ? <ArchivedConversations tasks={data.tasks} onOpen={select} onAction={(id,action)=>void operateConversation(id,action)}/> : view === "profile" ? <PersonalProfile onUser={setUser} onWorkspace={setData} onOpen={select} onCreate={text=>{select(null);setInput(text);}} onFeedback={(id,text)=>{select(id);setInput(text);}} onConnections={()=>{setExtensionTab("connector");setView("extensions");}}/> : view === "pets" ? <PetSettings workspace={data} runningIds={Object.keys(sessions)} onOpen={select} onFeedback={(id,text)=>{select(id);setInput(text);}} onProject={id=>{setProjectId(id);setView("project");}}/> : view === "permissions" ? <PermissionCenter key={user?.id||"local"} ownerId={user?.id||"local"} workspace={data} onOpen={select} onConnections={()=>{setExtensionTab("connector");setView("extensions");}}/> : view === "memory" ? <PersonalMemory key={user?.id||"local"} ownerId={user?.id||"local"} workspace={data} onOpen={select}/> : view === "appearance" ? <AppearanceSettings/> : view === "knowledge" ? <KnowledgeCenter onUse={id=>{select(null);setNewKnowledgeIds([id]);setView("chat");setNotice("已选择知识库，发送问题即可检索资料。");}}/> : view === "schedules" ? <Schedules projects={data.projects} key={scheduleTarget||"all"} initialId={scheduleTarget||undefined} focusHistory={!!scheduleTarget} onChanged={async()=>setData(await window.ailo.read())} tasks={data.tasks} models={models} defaultModelId={data.defaultModelId} onFeishu={()=>{setExtensionTab("connector");setView("extensions");}} onModels={()=>setView("models")} onOpen={async id=>{const latest=await window.ailo.read();if(!latest.tasks.some(t=>t.id===id))throw Error('对话已删除或尚未创建');setData(latest);select(id);const opened=latest.tasks.find(t=>t.id===id)!;setModelId(opened.modelId||latest.defaultModelId);setProjectId(opened.projectId||"");setExtensionIds(opened.extensionIds||[]);}}/> : view === "project" && data.projects.some(p=>p.id===projectId) ? <ProjectOverview onSaved={project=>setData(d=>({...d,projects:d.projects.map(p=>p.id===project.id?project:p)}))} key={projectId} project={data.projects.find(p=>p.id===projectId)!} tasks={data.tasks.filter(t=>t.projectId===projectId&&!t.archived&&!t.temporary)} onSelect={select} onNew={()=>{const id=projectId;select(null);selectProject(id);}}/> : view === "extensions" ? (
               <ExtensionCenter initialTab={extensionTab} items={availableExtensions} busy={busy || !ready}
                 onTryConnection={(text,connector)=>{if(typeof connector==='object')changeMCPConnections([...new Set([...mcpConnectionIds,connector.mcpId])]);else if(connector==='amap')setAMapChoices(v=>({...v,[connectionKey]:true}));else setConnectionChoices(v=>({...v,[connectionKey]:true}));setView(active === ASSISTANT_ID ? "assistant" : "chat");setInput(text);setError("");}}
                 onImporting={setImporting}
@@ -698,6 +736,8 @@ function App() {
                 </div>
                 {task.agentRun?.history?.filter(r=>!messagesFor(task).some(m=>m.id===r.afterMessageId)).map((r,i)=><ExecutionHistory key={r.executionId||i} task={task} run={r} onOpenArtifacts={()=>setRightPanel('artifacts')}/>)}
                 {!progressAt && currentProgress && <details className="completed-execution"><summary>此前任务进度</summary>{currentProgress}</details>}
+                {task.archived&&<p className="experience-note">此对话已归档。<button onClick={()=>void operateConversation(task.id,'restore')}>恢复到历史列表</button></p>}
+                {task.branchOf&&<p className="experience-note">分支自：<button onClick={()=>select(task.branchOf!.id)}>{task.branchOf.title}</button>{task.responseOnly?' · 本轮只生成回答，不执行工具':''}</p>}
                 {messagesFor(task).map((message,index) => (
                   <div
                     key={message.id}
@@ -726,7 +766,7 @@ function App() {
                         {message.materials.map((material,i)=><span className="message-file" key={i} title={material.name}><Icon name="file"/><span>{material.name}</span></span>)}
                       </div>}
                     </div>
-                    {messageEdit?.taskId!==task.id&&<MessageActions message={message} createdAt={message.createdAt||(index===0&&message.role==='user'?task.created:undefined)} disabled={busy}
+                    {messageEdit?.taskId!==task.id&&<MessageActions onBranch={!task.temporary?()=>void forkConversation(message.id):undefined} onRegenerate={!task.temporary&&message.role==='assistant'?()=>void forkConversation(message.id,true):undefined} message={message} createdAt={message.createdAt||(index===0&&message.role==='user'?task.created:undefined)} disabled={busy}
                       onEdit={message.role==='user'&&latestUserMessageId===message.id&&!pending?()=>setMessageEdit({taskId:task.id,messageId:message.id,content:message.content}):undefined}/>}
                     {message.role==='assistant'&&index===messagesFor(task).length-1&&!busy&&<CompanionResultAction task={task}/>}
                     {view === "assistant" && data.tasks.filter(t=>(t.parentAssistantId === ASSISTANT_ID && t.parentMessageId === message.id) || task.assistantReferences?.[message.id]?.includes(t.id)).map(linked=><button key={linked.id} className="assistant-linked-task" onClick={()=>select(linked.id)}><Icon name="folder"/><span><strong>{linked.title}</strong><small>{sessions[linked.id] ? sessions[linked.id].status : linked.assistantPaused ? "已暂停" : linked.lastError ? "需要处理" : linked.agentRun?.status === "completed" ? "成果已准备好" : linked.messages?.at(-1)?.clarification ? "需要补充信息" : linked.messages?.at(-1)?.role === "assistant" ? "已有结果" : "查看任务进度"}{linked.agentRun?.artifacts.length ? ` · ${linked.agentRun.artifacts.length} 项成果` : ""}</small></span><span>查看任务 ↗</span></button>)}
@@ -783,7 +823,7 @@ function App() {
             )}
             {isConversation && (
               <div className={"compose-area " + (task ? "chat-compose" : "")}>
-                {task && pending===task.id && <TaskActivity task={task} status={chatStatus}/>}
+                {task && pending===task.id && <TaskActivity task={task} status={chatStatus} session={sessions[task.id]}/>}
                 {task && queued.some(m=>m.taskId===task.id) && <div className="message-queue" aria-label="待发送消息">
                   <p><Icon name="queue"/>待发送 · {queued.filter(m=>m.taskId===task.id).length}</p>
                   {queued.filter(m=>m.taskId===task.id).map(item=><div className="queued-message" key={item.id}>
@@ -813,7 +853,7 @@ function App() {
                   <ComposerInput
                     key={connectionKey}
                     value={input} onChange={setInput}
-                    placeholder={view === "assistant" ? "" : pending ? "补充指令…" : "告诉 Ailo 你想做什么… @ 引用对话文件，/ 调用专家和技能"}
+                    placeholder={view === "assistant" ? "" : pending ? "补充指令…" : "想让 Ailo 做什么？"}
                     disabled={!ready || composerBusy}
                     files={[...(task?.materials || []), ...materials]}
                     materials={materials} extensions={availableExtensions} selectedIds={effectiveIds}
@@ -823,14 +863,15 @@ function App() {
                     onExtensions={ids => { setTurnExtensions(previous=>({...previous,[connectionKey]:ids.filter(id=>!selectedIds.includes(id))})); setNotice(""); }}
                     onSubmit={event => { void submit(event); }}
                   />
+                  {task?.temporary&&<p className="temporary-notice"><Icon name="clock"/>临时对话 · 离开即清除本地记录 · 不使用记忆与工具 · 支持文本和离线听写<br/><small>内容仍会发送给当前模型服务商，其保留规则由服务商决定。</small></p>}
                   <div className="composerbar">
-                  <ComposerAdd mcpConnectionIds={mcpConnectionIds} setMCPConnectionIds={changeMCPConnections} amap={useAMap===true} setAMap={enabled=>{setAMapChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{amapEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,amapEnabled:enabled}:t)})));}} onKnowledge={setKnowledgeMenuAnchor} searchEnabled={useSearch} setSearchEnabled={enabled=>{setSearchChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{searchEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,searchEnabled:enabled}:t)})));}} onProject={!task && view !== "assistant"?setProjectMenuAnchor:undefined} feishu={useFeishu} setFeishu={enabled=>{setConnectionChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{feishuEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,feishuEnabled:enabled}:t)})));}} key={task?.id || projectId || "new"} items={availableExtensions} value={[...selectedIds,...turnIds.filter(id=>availableExtensions.find(e=>e.id===id)?.kind==='skill')]} disabled={!ready || composerBusy} onChange={changeAddedExtensions} onManage={tab => {setExtensionTab(tab);setView("extensions");}} onAttach={attach} importing={importing}
+                  <ComposerAdd mcpConnectionIds={mcpConnectionIds} setMCPConnectionIds={changeMCPConnections} amap={useAMap===true} setAMap={enabled=>{setAMapChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{amapEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,amapEnabled:enabled}:t)})));}} onKnowledge={setKnowledgeMenuAnchor} searchEnabled={useSearch} setSearchEnabled={enabled=>{setSearchChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{searchEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,searchEnabled:enabled}:t)})));}} onProject={!task && view !== "assistant"?setProjectMenuAnchor:undefined} feishu={useFeishu} setFeishu={enabled=>{setConnectionChoices(v=>({...v,[connectionKey]:enabled}));if(task)void window.ailo.patchTask(task.id,{feishuEnabled:enabled}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,feishuEnabled:enabled}:t)})));}} key={task?.id || projectId || "new"} items={availableExtensions} value={[...selectedIds,...turnIds.filter(id=>availableExtensions.find(e=>e.id===id)?.kind==='skill')]} disabled={!ready || composerBusy || task?.temporary===true} onChange={changeAddedExtensions} onManage={tab => {setExtensionTab(tab);setView("extensions");}} onAttach={attach} importing={importing}
                     onDefault={(task?.projectId || projectId) ? () => { const id = task?.projectId || projectId; void commit({...data, projects:data.projects.map(p => p.id === id ? {...p,extensionIds:selectedIds} : p)}).then(ok => { if(ok) setNotice("已保存为项目默认扩展，将用于该项目的新对话。"); }); } : undefined} >
-                    <PermissionSelector key={'permissions-'+connectionKey+'-'+(user?.id||'local')} taskId={task?.id} value={permissionChoices[connectionKey]??task?.permissionMode} disabled={!ready||busy} onManage={()=>setView('permissions')} onChange={mode=>{setPermissionChoices(v=>({...v,[connectionKey]:mode}));if(task)setData(d=>({...d,tasks:d.tasks.map(t=>t.id===task.id?{...t,permissionMode:mode}:t)}));}}/>
-                    <button type="button" className="conversation-memory-button" aria-label="在此对话中使用和保存记忆" aria-pressed={memoryChoices[connectionKey]??task?.memoryEnabled??true} disabled={!ready||busy} title={(memoryChoices[connectionKey]??task?.memoryEnabled??true)?'记忆已开启 · 点击关闭本对话记忆':'记忆已关闭 · 点击开启本对话记忆'} onClick={async()=>{const enabled=!(memoryChoices[connectionKey]??task?.memoryEnabled??true);try{if(task){const saved=await window.ailo.patchTask(task.id,{memoryEnabled:enabled});setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,...saved}:t)}));}setMemoryChoices(v=>({...v,[connectionKey]:enabled}));setNotice('');}catch(e){setError((e as Error).message);}}}><Icon name="memory"/><span>{(memoryChoices[connectionKey]??task?.memoryEnabled??true)?'记忆':'记忆已关闭'}</span></button>
+                    <PermissionSelector key={'permissions-'+connectionKey+'-'+(user?.id||'local')} taskId={task?.id} value={permissionChoices[connectionKey]??task?.permissionMode} disabled={!ready||busy||task?.temporary===true} onManage={()=>setView('permissions')} onChange={mode=>{setPermissionChoices(v=>({...v,[connectionKey]:mode}));if(task)setData(d=>({...d,tasks:d.tasks.map(t=>t.id===task.id?{...t,permissionMode:mode}:t)}));}}/>
+                    <button type="button" className="conversation-memory-button" aria-label="在此对话中使用和保存记忆" aria-pressed={memoryChoices[connectionKey]??task?.memoryEnabled??true} disabled={!ready||busy||task?.temporary===true} title={(memoryChoices[connectionKey]??task?.memoryEnabled??true)?'记忆已开启 · 点击关闭本对话记忆':'记忆已关闭 · 点击开启本对话记忆'} onClick={async()=>{const enabled=!(memoryChoices[connectionKey]??task?.memoryEnabled??true);try{if(task){const saved=await window.ailo.patchTask(task.id,{memoryEnabled:enabled});setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,...saved}:t)}));}setMemoryChoices(v=>({...v,[connectionKey]:enabled}));setNotice('');}catch(e){setError((e as Error).message);}}}><Icon name="memory"/><span>{(memoryChoices[connectionKey]??task?.memoryEnabled??true)?'记忆':'记忆已关闭'}</span></button>
                     <KnowledgePicker openFrom={knowledgeMenuAnchor} onClose={()=>setKnowledgeMenuAnchor(null)} key={'knowledge-'+(task?.id||view)} value={task?(task.knowledgeIds||[]):newKnowledgeIds} disabled={!ready||busy||!!pending} onManage={()=>setView('knowledge')} onChange={ids=>{if(task)void window.ailo.patchTask(task.id,{knowledgeIds:ids}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,knowledgeIds:ids}:t)}))).catch(e=>setError(String(e)));else setNewKnowledgeIds(ids);}}/>
                   </ComposerAdd>
-                  <div className="composer-actions">
+                  <div className="composer-actions"><DictationButton conversationId={connectionKey} disabled={!ready||busy} onText={text=>setInput(value=>[value,text].filter(Boolean).join(' ').slice(0,20000))} onError={setError}/>
 
                     {currentModel.id !== "demo" && <ContextMeter
                       messages={[...(task ? messagesFor(task) : []), ...(input || materials.length ? [{ role: "user" as const, content: input, materials }] : [])]}
@@ -919,7 +960,7 @@ function App() {
           </section>
         </div>
       </main>
-    </div>
+    </div></ConversationActions.Provider>
   );
 }
 createRoot(document.getElementById("root")!).render(<App />);

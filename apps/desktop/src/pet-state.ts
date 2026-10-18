@@ -4,13 +4,13 @@ export const petStateLabels: Record<PetState, string> = { idle: 'Ailo 在这里'
 export function taskPetState(task: Task | undefined, liveStatus?: string): PetState {
   if (!task) return liveStatus === undefined ? 'idle' : 'thinking';
   const status = task.agentRun?.status;
+  if (liveStatus !== undefined) {if(task.agentRun?.currentIntent==='task'&&['failed','blocked','waiting_permission','waiting_user'].includes(status||''))return 'attention';return liveStatus.startsWith('等待执行') || !task.agentRun?.inFlight ? 'thinking' : 'running';}
   if (task.lastError || task.assistantPaused || ['failed', 'blocked', 'waiting_permission', 'waiting_user', 'paused'].includes(status || '') || (liveStatus === undefined && (task.messages?.at(-1)?.clarification || task.messages?.at(-1)?.role === 'user'))) return 'attention';
-  if (liveStatus !== undefined) return liveStatus.startsWith('等待执行') || !task.agentRun?.inFlight ? 'thinking' : 'running';
   if (status === 'completed') return 'completed';
   return 'idle';
 }
 export function attentionTasks(tasks: Task[], runningIds: string[]): Task[] {
-  return tasks.filter(task => !runningIds.includes(task.id) && taskPetState(task) === 'attention');
+  return tasks.filter(task => !task.archived && !task.temporary && !runningIds.includes(task.id) && taskPetState(task) === 'attention');
 }
 export function petResultToken(task: Task): string | undefined {
   const last = task.messages?.at(-1);
@@ -39,7 +39,7 @@ export function unreadAttentionTasks(tasks:Task[],runningIds:string[]):Task[] {
 export function workspacePetState(tasks: Task[], sessions: Record<string, { status: string }>): PetState {
   const running = Object.keys(sessions);
   if (unreadAttentionTasks(tasks, running).length) return 'attention';
-  if (tasks.some(task => !running.includes(task.id) && taskPetState(task)!=='attention' && hasUnreadPetNotification(task))) return 'completed';
+  if (tasks.some(task => !task.archived && !task.temporary && !running.includes(task.id) && taskPetState(task)!=='attention' && hasUnreadPetNotification(task))) return 'completed';
   if (running.length) return running.some(id => taskPetState(tasks.find(task => task.id === id), sessions[id].status) === 'running') ? 'running' : 'thinking';
   return 'idle';
 }

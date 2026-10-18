@@ -31,7 +31,7 @@ async function prepareScheduleContext(base,task,tasks,now=Date.now()){
   // Project-bound schedules already use the project's files, not isolated legacy roots.
   if(prior.projectId){manifest.push(prior.id);await writeJson(manifestFile,manifest);continue;}
   const source=path.join(workspacePath(base,prior),'files');
-  const archive=path.dirname(await resolveFile(files,`${historyRoot}/${key(prior.id)}/placeholder`,true));
+  const archive=path.dirname(await resolveFile(files,`${historyRoot}/${key(prior.runRecordId||prior.id)}/placeholder`,true));
   await copyFiles(source,archive);
   await copyFiles(source,files);
   manifest.push(prior.id);await writeJson(manifestFile,manifest);
@@ -39,11 +39,11 @@ async function prepareScheduleContext(base,task,tasks,now=Date.now()){
  const ledgerFile=path.join(root,'history-ledger.json');
  const records=await json(ledgerFile,[]);
  for(const prior of related.filter(t=>t.id!==task.id)){
-  const run=await json(path.join(workspacePath(base,prior),'runs',key(prior.id)+'.json'),null);
+  const run=await json(path.join(workspacePath(base,prior),'runs',key(prior.runRecordId||prior.id)+'.json'),null);
   const reply=prior.messages?.filter(m=>m.role==='assistant').at(-1)?.content||prior.answer||'';
-  const detailPath=`${historyRoot}/${key(prior.id)}/execution.json`;
+  const detailPath=`${historyRoot}/${key(prior.runRecordId||prior.id)}/execution.json`;
   await writeJson(await resolveFile(files,detailPath,true),{taskId:prior.id,date:prior.scheduledAt||prior.created,messages:prior.messages||[],run:run?{status:run.status,goal:run.goal,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,artifacts:run.artifacts}:prior.agentRun,error:prior.lastError});
-  const entry={taskId:prior.id,date:prior.scheduledAt||prior.created,status:run?.status||prior.agentRun?.status||(prior.lastError?'failed':'unknown'),summary:reply.slice(0,2500),goal:run?.goal,artifacts:run?.artifacts||prior.agentRun?.artifacts||[],detailPath,archive:`${historyRoot}/${key(prior.id)}`,error:prior.lastError};
+  const entry={taskId:prior.id,date:prior.scheduledAt||prior.created,status:run?.status||prior.agentRun?.status||(prior.lastError?'failed':'unknown'),summary:reply.slice(0,2500),goal:run?.goal,artifacts:run?.artifacts||prior.agentRun?.artifacts||[],detailPath,archive:`${historyRoot}/${key(prior.runRecordId||prior.id)}`,error:prior.lastError};
   const index=records.findIndex(r=>r.taskId===prior.id);if(index<0)records.push(entry);else records[index]=entry;
  }
  records.sort((a,b)=>Date.parse(a.date)-Date.parse(b.date));
@@ -56,9 +56,9 @@ async function prepareScheduleContext(base,task,tasks,now=Date.now()){
 async function archiveScheduleRun(base,task,result){
  if(!task.scheduledTaskId)return;
  const files=await workspaceFiles(base,task);
- const archive=path.dirname(await resolveFile(files,`schedule-history/${key(task.scheduledTaskId)}/${key(task.id)}/placeholder`,true));
+ const archive=path.dirname(await resolveFile(files,`schedule-history/${key(task.scheduledTaskId)}/${key(task.runRecordId||task.id)}/placeholder`,true));
  if(task.projectId){
-  const run=await json(path.join(workspacePath(base,task),'runs',key(task.id)+'.json'),null);
+  const run=await json(path.join(workspacePath(base,task),'runs',key(task.runRecordId||task.id)+'.json'),null);
   const paths=new Set([...(run?.artifacts||[]).map(a=>a.path),...(run?.events||[]).filter(e=>['write_file','edit_spreadsheet'].includes(e.type)).map(e=>e.detail.path)].filter(Boolean));
   for(const relative of paths){
    const source=await resolveFile(files,relative),destination=await resolveFile(archive,relative,true);
@@ -66,7 +66,7 @@ async function archiveScheduleRun(base,task,result){
   }
  }else await copyFiles(files,archive,true);
  if(result){
-  const detailPath=`schedule-history/${key(task.scheduledTaskId)}/${key(task.id)}/execution.json`;
+  const detailPath=`schedule-history/${key(task.scheduledTaskId)}/${key(task.runRecordId||task.id)}/execution.json`;
   await writeJson(await resolveFile(files,detailPath,true),{taskId:task.id,date:task.scheduledAt||task.created,messages:[...(task.messages||[]),{role:'assistant',content:result.content}],run:result.agentRun});
   const ledgerFile=path.join(base,'schedules',key(task.scheduledTaskId),'history-ledger.json'),records=await json(ledgerFile,[]);
   const entry={taskId:task.id,date:task.scheduledAt||task.created,status:result.agentRun?.status||'unknown',summary:result.content?.slice(0,2500)||'',goal:result.agentRun?.goal,artifacts:result.agentRun?.artifacts||[],detailPath,archive:path.posix.dirname(detailPath)};
@@ -78,9 +78,9 @@ async function archiveScheduleRun(base,task,result){
 async function scheduleArtifactRoot(base,task,artifactPath){
  const files=await workspaceFiles(base,task);
  if(!task.scheduledTaskId)return files;
- const run=await json(path.join(workspacePath(base,task),'runs',key(task.id)+'.json'),null);
+ const run=await json(path.join(workspacePath(base,task),'runs',key(task.runRecordId||task.id)+'.json'),null);
  if(run?.status!=='completed'&&artifactPath)try{await fs.access(await resolveFile(files,artifactPath));return files;}catch(e){if(e.code!=='ENOENT')throw e;}
- const archive=path.dirname(await resolveFile(files,`schedule-history/${key(task.scheduledTaskId)}/${key(task.id)}/placeholder`));
+ const archive=path.dirname(await resolveFile(files,`schedule-history/${key(task.scheduledTaskId)}/${key(task.runRecordId||task.id)}/placeholder`));
  if(artifactPath)try{await fs.access(await resolveFile(archive,artifactPath));return archive;}catch(e){if(e.code!=='ENOENT')throw e;}
  const legacy=path.join(workspacePath(base,task),'files');
  try{if((await fs.lstat(legacy)).isDirectory())return legacy;}catch(e){if(e.code!=='ENOENT')throw e;}

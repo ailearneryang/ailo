@@ -9,7 +9,7 @@ export function pendingAttention(tasks: Task[], runningIds: string[]): PendingAt
   const latest=new Map<string,Task>();
   for(const task of tasks)if(task.scheduledTaskId){const old=latest.get(task.scheduledTaskId);if(!old||updated(task)>updated(old))latest.set(task.scheduledTaskId,task);}
   return tasks.flatMap((task):PendingAttention[]=>{
-    if(task.id==='my-ailo-assistant'||runningIds.includes(task.id)||task.assistantPaused)return [];
+    if(task.archived||task.temporary||task.id==='my-ailo-assistant'||runningIds.includes(task.id)||task.assistantPaused)return [];
     if(task.scheduledTaskId&&latest.get(task.scheduledTaskId)!==task)return [];
     const status=task.agentRun?.status,last=task.messages?.at(-1);
     if(status==='paused'||status==='cancelled')return [];

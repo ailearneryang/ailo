@@ -1,17 +1,21 @@
+import {taskPresentation,activityForSession,type LiveSession} from './task-presentation';
 import React,{useEffect,useState} from 'react';
 import { Pet } from './pet';
 import { taskPetState } from './pet-state';
 import {activityPresentation,formatProgressAge} from './activity-presentation';
 import type {Task} from './types';
-export function TaskActivity({task,status}:{task:Task;status:string}) {
-  const presentation=activityPresentation(task.agentRun,status);
+export function TaskActivity({task,status,session}:{task:Task;status:string;session?:LiveSession}) {
+  const current=taskPresentation(task,session);
+  const presentation=activityPresentation(session?activityForSession(current.activityRun,session):task.agentRun,session?current.activityStatus:status);
   const [now,setNow]=useState(Date.now());
   useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()),1000);return ()=>clearInterval(timer);},[]);
   const at=presentation.progressAt?Date.parse(presentation.progressAt):NaN;
   const elapsed=Number.isFinite(at)?Math.max(0,Math.floor((now-at)/1000)):undefined;
-  const label=!presentation.expanded&&presentation.detail?`${presentation.label} · ${presentation.detail}`:presentation.label;
+  const primary=session?current.label:presentation.label;
+  const detail=session&&current.state==='running'&&presentation.label!==primary?[presentation.label,presentation.detail].filter(Boolean).join(' · '):presentation.detail;
+  const label=!presentation.expanded&&detail?`${primary} · ${detail}`:primary;
   return <div className="task-activity task-activity-inline" aria-label="当前任务活动">
-    <div className="task-activity-current"><Pet size="mini" state={taskPetState(task,status)} /><span role="status" title={label}>{label}</span>{elapsed!==undefined&&<small className="task-activity-age" title="距上次有效进展更新的时间">{formatProgressAge(elapsed)}</small>}</div>
+    <div className="task-activity-current"><Pet size="mini" state={taskPetState(session?{...task,lastError:undefined,agentRun:current.activityRun}:task,status)} /><span role="status" title={label}>{label}</span>{elapsed!==undefined&&<small className="task-activity-age" title="距上次有效进展更新的时间">{formatProgressAge(elapsed)}</small>}</div>
     {presentation.expanded&&presentation.detail&&<div className="task-activity-explanation">{presentation.detail}</div>}
   </div>;
 }

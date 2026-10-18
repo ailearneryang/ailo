@@ -127,7 +127,7 @@ async function patchUserTask(storage,store,id,patch,append=[]){
  const task=await storage.patchTask(id,patch,append);
  const incoming=[...(patch.messages||[]),...append];
  const added=(task.messages||[]).filter(m=>m.role==='user'&&incoming.some(n=>n.id===m.id)&&!previous?.messages?.some(old=>old.id===m.id));
- if(added.length)await store.activity(task,added,owner).catch(error=>console.error('陪伴记录保存失败',error.message));
+ if(added.length&&!task.temporary)await store.activity(task,added,owner).catch(error=>console.error('陪伴记录保存失败',error.message));
  return task;
 }
 module.exports={defaults,stages,day,empty,tick,activity,adopt,project,editMemory,summary,preferences,backup,validateBackup,merge,album,albumHtml,createCompanion,patchUserTask};

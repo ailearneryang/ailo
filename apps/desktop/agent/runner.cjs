@@ -24,7 +24,7 @@ const acceptanceChecks=require('./acceptance.cjs');
 const actionJournal=require('./action-journal.cjs');
 const {validatePlan}=require('./plan.cjs');
 function publicRun(run) {
-  return {memoryUsed:run.memoryUsed,loadedExtensions:run.loadedExtensions,conversationTitle:run.conversationTitle,progressInputId:run.progressInputId,executionId:run.executionId,history:run.history||[],inFlight:run.inFlight,contextUsage:run.contextUsage,acceptanceCriteria:acceptanceChecks.criteria(run).map(({id,text,check})=>({id,text,status:check?.status==='passed'&&check.revision===run.revision?'passed':'pending'})),recoverySummary:{retried:(run.actionJournal||[]).filter(e=>e.retries>0).length,recovered:(run.actionJournal||[]).filter(e=>e.recovered).length,unknown:(run.actionJournal||[]).filter(e=>e.status==='unknown').length},status:run.status,mode:run.mode,goal:run.goal,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,artifacts:run.artifacts,updatedAt:run.updatedAt,events:run.events.slice(-12).map(e=>({id:e.id,type:e.type,at:e.at,detail:{purpose:e.detail.purpose,exitCode:e.detail.result?.exitCode,path:e.detail.path,name:e.detail.name,offset:e.detail.offset,entry:e.detail.entry,pointer:e.detail.pointer,message:e.detail.message,output:['run_command','build_android','android_device','feishu'].includes(e.type)?e.detail.result?.output?.slice(-2000):undefined}}))};
+  return {currentOutcome:run.currentOutcome,currentInputId:run.inputKey,currentIntent:run.currentIntent,memoryUsed:run.memoryUsed,loadedExtensions:run.loadedExtensions,conversationTitle:run.conversationTitle,progressInputId:run.progressInputId,executionId:run.executionId,history:run.history||[],inFlight:run.inFlight,contextUsage:run.contextUsage,acceptanceCriteria:acceptanceChecks.criteria(run).map(({id,text,check})=>({id,text,status:check?.status==='passed'&&check.revision===run.revision?'passed':'pending'})),recoverySummary:{retried:(run.actionJournal||[]).filter(e=>e.retries>0).length,recovered:(run.actionJournal||[]).filter(e=>e.recovered).length,unknown:(run.actionJournal||[]).filter(e=>e.status==='unknown').length},status:run.status,mode:run.mode,goal:run.goal,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,artifacts:run.artifacts,updatedAt:run.updatedAt,events:run.events.slice(-12).map(e=>({id:e.id,type:e.type,at:e.at,detail:{purpose:e.detail.purpose,exitCode:e.detail.result?.exitCode,path:e.detail.path,name:e.detail.name,offset:e.detail.offset,entry:e.detail.entry,pointer:e.detail.pointer,message:e.detail.message,output:['run_command','build_android','android_device','feishu'].includes(e.type)?e.detail.result?.output?.slice(-2000):undefined}}))};
 }
 async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[],skillPackages,android,authorizeBuild,directoryAccess,feishuCli,webSearch,amap,mcp,knowledge,personalAssistant,projectContext,projectMemoryContext,scheduledContext,memory,permissions,maxSteps=240,batchSize=48,maxDurationMs=2*60*60*1000,now=Date.now,executeTool=execute,getSteering=async()=>[]}) {
   for(const value of [maxSteps,batchSize,maxDurationMs])if(!Number.isSafeInteger(value)||value<=0)throw Error('执行预算必须为正整数');
@@ -37,7 +37,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
   run.loadedExtensions=extensions.filter(e=>e.enabled!==false).map(({id,name,kind})=>({id,name,kind}));
   if(run.loadedExtensions.length)run.progressInputId=run.inputKey;
   const savedProjectMemory=projectMemoryContext!==undefined?projectMemoryContext:task.projectId?await (async()=>{const root=require('./workspace-path.cjs').workspacePath(base,task),path=require('node:path');const saved=await require('./workspace.cjs').json(path.join(root,'memory.json'),{notes:''});let files=[];try{files=(await fs.readdir(path.join(root,'runs'))).filter(n=>/^[a-f0-9]{64}\.json$/.test(n)).slice(0,100);}catch(e){if(e.code!=='ENOENT')throw e;}const records=[];for(const name of files){const r=await require('./workspace.cjs').json(path.join(root,'runs',name),null);if(r&&r.taskId!==task.id&&!(saved.hiddenTaskIds||[]).includes(r.taskId))records.push({taskId:r.taskId,goal:r.goal,status:r.status,decisions:r.decisions,steps:r.steps,updatedAt:r.updatedAt});}records.sort((a,b)=>(b.updatedAt||'').localeCompare(a.updatedAt||''));return {...saved,records:records.slice(0,10)};})():null;
-  const previousStatus=run.status;
+  const previousStatus=run.status;run.currentIntent=undefined;run.currentOutcome=undefined;
   const {AGENT_PROMPT:PROMPT}=await import('./prompt.mjs');
   const {validateClarification}=await import('../clarification.mjs');
   const {countMessages,capacity,outputLimit}=await import('../context.mjs');
@@ -252,7 +252,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
       try {
         if(!intent) {
           if(action.action!=='route'||!['chat','task'].includes(action.kind))throw Error('先使用 route 识别本次用户意图');
-          intent=personalAssistant?'chat':action.kind;
+          intent=personalAssistant?'chat':action.kind;run.currentIntent=intent;
           if(intent==='task'){run.progressInputId=run.inputKey;run.mode='task';run.status=run.steps.length?'running':'understanding';}
           invalid=0;await workspace.event('intent',{kind:intent});await notify();continue;
         }
@@ -313,7 +313,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
         }
         if(action.action==='clarify') {
           const clarification=validateClarification(action.clarification);if(!clarification)throw Error('澄清格式无效');
-          const content=text();run.status='waiting_user';run.question=clarification;await workspace.event('clarification',{title:clarification.title});await notify();return {content,clarification,agentRun:publicRun(run)};
+          const content=text();run.status='waiting_user';run.currentOutcome='clarify';run.question=clarification;await workspace.event('clarification',{title:clarification.title});await notify();return {content,clarification,agentRun:publicRun(run)};
         }
         if(['verify','finish'].includes(action.action)&&run.pendingArtifactUpdates?.length)throw Error('请先重新登记待更新成果：'+JSON.stringify(run.pendingArtifactUpdates)+'。必须逐个执行 artifact，不能用 verify 替代登记。');
         if(['reply','pause','blocked','finish'].includes(action.action)) {
@@ -329,7 +329,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
             await acceptanceChecks.assertAccepted(workspace);
           run.status='completed';
           } else run.status=action.action==='blocked'?'blocked':action.action==='pause'?'paused':run.mode==='task'?previousStatus:'idle';
-          await workspace.event(action.action,{text:content});await notify();return {content,agentRun:publicRun(run)};
+          run.currentOutcome=action.action;await workspace.event(action.action,{text:content});await notify();return {content,agentRun:publicRun(run)};
         }
         if(action.action==='verify'){
           if(intent!=='task'||!run.steps.length)throw Error('请先制定任务验收要求');

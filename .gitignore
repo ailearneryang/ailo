@@ -49,3 +49,5 @@ connection.json.*
 # Account-local companion growth and memories
 companion.json
 companion.json.*
+
+apps/desktop/.native/

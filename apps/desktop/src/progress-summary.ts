@@ -22,3 +22,9 @@ export function confirmationNotice(needsConfirmation:boolean,stepStatus:string,r
   if(!needsConfirmation||stepStatus==='done')return '';
   return runStatus==='waiting_user'&&isFirstUnfinished?'需你确认':'执行到此时需你确认';
 }
+
+// Translate presentation text only. Original titles and descriptions remain in details.
+export function readableProgressText(text:string):string {
+  return text.replace(/(?<![\w./-])verify(?![\w./-])/gi,'核对')
+    .replace(/(?<![\w./-])artifacts?(?![\w./-])/gi,'交付成果');
+}

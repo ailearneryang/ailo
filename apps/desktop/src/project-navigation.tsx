@@ -1,10 +1,11 @@
+import type {LiveSession} from './task-presentation';
 import {useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
 import type {Project,Extension,Task} from './types';
 import {Icon} from './icon';
 import {TaskNavigation} from './task-navigation';
-export function ProjectNavigation({project,expanded,selected,tasks,active,runningIds,extensions,busy,onExpand,onOpen,onNew,onSelect,onPin,onSave,onDelete,onError}:{
- project:Project;expanded:boolean;selected:boolean;tasks:Task[];active:string|null;runningIds:string[];extensions:Extension[];busy:boolean;
+export function ProjectNavigation({project,expanded,selected,tasks,active,runningIds,sessions,extensions,busy,onExpand,onOpen,onNew,onSelect,onPin,onSave,onDelete,onError}:{
+ project:Project;expanded:boolean;selected:boolean;tasks:Task[];active:string|null;runningIds:string[];sessions:Record<string,LiveSession>;extensions:Extension[];busy:boolean;
  onPin:(task:Task)=>Promise<void>;onExpand:()=>void;onOpen:()=>void;onNew:()=>void;onSelect:(id:string)=>void;onSave:(project:Project)=>Promise<boolean>;onDelete:()=>Promise<void>;onError:(message:string)=>void;
 }){
  const menu=useRef<HTMLDialogElement>(null),editor=useRef<HTMLDialogElement>(null);
@@ -17,7 +18,7 @@ export function ProjectNavigation({project,expanded,selected,tasks,active,runnin
    <button className="project-nav-name" aria-label={`${expanded?'收起':'展开'} ${project.name}`} aria-expanded={expanded} aria-controls={'project-threads-'+project.id} title={project.name} onClick={onExpand}><span className="project-folder-icon"><Icon name={expanded?"folder-open":"folder"}/></span><span>{project.name}</span>{project.pinned&&<small aria-label="已置顶"><Icon name="pin"/></small>}</button>
    <div className="project-nav-actions"><button aria-label={`在 ${project.name} 新建对话`} title="新建对话" disabled={busy} onClick={onNew}><Icon name="edit"/></button><button aria-label={`${project.name} 项目操作`} title="项目操作" aria-haspopup="dialog" disabled={busy} onClick={e=>{const box=e.currentTarget.getBoundingClientRect();setPosition({left:Math.min(box.right+8,window.innerWidth-260),top:Math.max(12,Math.min(box.top,window.innerHeight-295))});menu.current?.showModal();}}><Icon name="more"/></button></div>
   </div>
-  {expanded&&<div id={'project-threads-'+project.id} className="sidebar-project-threads">{tasks.map(t=><TaskNavigation key={t.id} task={t} running={runningIds.includes(t.id)} busy={busy} selected={active===t.id} onSelect={()=>onSelect(t.id)} onPin={()=>onPin(t)}>{runningIds.includes(t.id)&&<small>执行中</small>}</TaskNavigation>)}<button disabled={busy} onClick={onNew} className="project-new-thread"><Icon name="plus"/><span>新建对话</span></button></div>}
+  {expanded&&<div id={'project-threads-'+project.id} className="sidebar-project-threads">{tasks.map(t=><TaskNavigation key={t.id} task={t} session={sessions[t.id]} running={runningIds.includes(t.id)} busy={busy} selected={active===t.id} onSelect={()=>onSelect(t.id)} onPin={()=>onPin(t)}></TaskNavigation>)}<button disabled={busy} onClick={onNew} className="project-new-thread"><Icon name="plus"/><span>新建对话</span></button></div>}
   {createPortal(<><dialog ref={menu} className="project-menu-dialog" style={{top:position.top,left:position.left}} aria-label={`${project.name} 项目操作`} onClick={e=>{if(e.target===e.currentTarget){const b=e.currentTarget.getBoundingClientRect();if(e.clientX<b.left||e.clientX>b.right||e.clientY<b.top||e.clientY>b.bottom)e.currentTarget.close();}}}>
    <strong>{project.name}</strong><small>{tasks.length} 个对话</small>
    <button aria-current={selected?'page':undefined} onClick={()=>{menu.current?.close();if(!expanded)onExpand();onOpen();}}><Icon name="grid"/><span>查看项目概览</span></button>

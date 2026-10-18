@@ -27,3 +27,9 @@ test('remaining work is not presented as an action currently executing',async()=
  assert.equal(progressHeadline('剩余：同步清单'),'待处理：同步清单');
  assert.equal(progressHeadline('正在处理：运行 make_review_html.py 和 3→2 映射'),'详细进展已记录，可展开本步查看。');
 });
+
+test('display copy translates technical labels without rewriting file names',async()=>{
+ const {readableProgressText}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+ assert.equal(readableProgressText('verify验收项并登记artifact'),'核对验收项并登记交付成果');
+ assert.equal(readableProgressText('运行 scripts/verify.js，读取 artifact.json'),'运行 scripts/verify.js，读取 artifact.json');
+});

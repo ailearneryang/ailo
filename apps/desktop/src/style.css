@@ -174,7 +174,7 @@ nav small {
   font-size:calc(14px * var(--font-scale, 1));
 }
 .task-nav-row { display:flex; align-items:center; border-radius:10px; min-width:0; }
-.task-nav-row:is(:hover,:focus-within) { background:transparent; }
+.task-nav-row:is(:hover,:focus-within) { background:color-mix(in srgb, var(--muted,#687563) 12%, transparent); }
 .task-nav-row.selected { background:color-mix(in srgb, var(--muted,#687563) 10%, transparent); }
 .sidebar .task-nav-row .task-nav-name { flex:1; min-width:0; width:auto; text-align:left; background:transparent; }
 .task-nav-name > span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -378,7 +378,8 @@ header button {
 .bubble {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  background: var(--ui-e8eee3, #e8eee3);
+  background: var(--user-message-bg, #e8f2ff);
+  color: var(--user-message-text, #203b5b);
   border-radius: 16px 16px 4px 16px;
   padding: 16px 20px;
   margin-left: 12%;
@@ -1546,7 +1547,8 @@ select:focus-visible {
 /* Task deliverables live beside the conversation, with independent scrolling. */
 .workspace { position: relative; }
 .artifact-toggle { display: inline-flex; align-items: center; gap: 7px; }
-.artifact-toggle[aria-expanded="true"] { color: var(--ui-38634b, #38634b); background: var(--ui-e8eee3, #e8eee3); }
+.artifact-toggle[aria-expanded="true"] { color: var(--ui-38634b, #38634b); background: var(--user-message-bg, #e8f2ff);
+  color: var(--user-message-text, #203b5b); }
 .artifact-panel { position: absolute; z-index: 30; top: 12px; right: 12px; width: min(320px, calc(100% - 24px)); min-width: 0; display: flex; flex-direction: column; max-height: calc(100% - 24px); background: var(--surface, #fff); border: 1px solid var(--border, #e0e5da); border-radius: 16px; box-shadow: 0 3px 16px var(--shadow-color, #2439210d); overflow: hidden; }
 .artifact-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border, #e7ebe2); flex-shrink: 0; }
 .artifact-panel-heading > div { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -2213,3 +2215,24 @@ select:focus-visible {
 .composerbar .conversation-memory-button{position:relative;}
 
 .composer-context .composer-status{white-space:nowrap;}
+
+/* User messages retain a distinct, quiet blue surface across appearance presets. */
+:root[data-mode="dark"] {
+  --user-message-bg: #243c56;
+  --user-message-text: #e5efff;
+}
+.compact-completed-toggle {
+  padding: 5px 6px;
+  margin: 0 0 6px;
+  border: 0;
+  background: transparent;
+  color: var(--ui-63765f, #63765f);
+  font-size: calc(12px * var(--font-scale, 1));
+  cursor: pointer;
+}
+.compact-completed-toggle:hover { text-decoration: underline; }
+.compact-completed-toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: 4px; }
+
+.task-nav-title > span { display: inline-block; white-space: nowrap; vertical-align: bottom; }
+.task-nav-name > .task-nav-title.revealing { text-overflow: clip; }
+.task-nav-row.selected:is(:hover,:focus-within) { background:color-mix(in srgb, var(--muted,#687563) 16%, transparent); }

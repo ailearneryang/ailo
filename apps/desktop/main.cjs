@@ -34,6 +34,7 @@ storage.modelNetworkContext=async url=>{
  return {systemProxyMode:proxy==='DIRECT'?'direct':/PROXY|SOCKS/i.test(proxy)?'configured':'unknown'};
 };
 storage.agentDirectory = path.join(app.getPath("userData"), "agent");
+const {experience,dictation}=require('./experience-ipc.cjs').attachExperience({app,ipcMain,storage,chat,trusted,getWin:()=>win,dialog,shell,workspaceState,readMaterial,createWindow:()=>create()});
 storage.permissions=require('./permissions.cjs').createPermissions({directory:app.getPath('userData'),base:storage.agentDirectory,account:()=>storage.account(),workspace:()=>storage.readWorkspace(),patchTask:(id,patch)=>storage.patchTask(id,patch),notify:owner=>{if(win&&!win.isDestroyed())win.webContents.send('permissions:changed',owner);},
  selectDirectory:async(action,signal)=>{if(signal.aborted)return null;const result=await dialog.showOpenDialog(win,{title:'选择允许只读访问的文件夹',defaultPath:action.path,properties:['openDirectory','dontAddToRecent']});return result.canceled||signal.aborted?null:result.filePaths[0];},
  confirm:async(request,signal)=>{
@@ -106,6 +107,7 @@ ipcMain.handle('extensions:importSkill', (e, input) => { trusted(e); return stor
 ipcMain.handle("chat:sessions", e=>{trusted(e);return chat.sessions();});
 ipcMain.handle("chat:complete", async (e, input) => {
   trusted(e);
+  if(storage.isTemporary(input.taskId))input={...input,extensionIds:[],knowledgeIds:[],feishuEnabled:false,amapEnabled:false,mcpConnectionIds:[],searchEnabled:false};
   const send=value=>{if(!e.sender.isDestroyed())e.sender.send('chat:status',{id:input.id,taskId:input.taskId,...value});};
   // A reconnect must attach to the existing job, never mark it as failed.
   if(chat.sessions().some(s=>s.taskId===input.taskId))throw Error('此会话正在执行或排队，请补充消息或等待完成。');
@@ -124,12 +126,12 @@ ipcMain.handle("task:edit-last-message", async (e, {id,messageId,content}) => {
   if(chat.sessions().some(s=>s.taskId===id))throw Error('请先停止回复再编辑消息');
   const owner=(await storage.account())?.id||'local';
   const task=await storage.editLastMessage(id,messageId,content);
-  await companion.activity(task,[task.messages.at(-1)],owner).catch(error=>console.error('陪伴记录保存失败',error.message));return task;
+  if(!task.temporary)await companion.activity(task,[task.messages.at(-1)],owner).catch(error=>console.error('陪伴记录保存失败',error.message));return task;
 });
-ipcMain.handle("task:patch", async (e, {id,patch,append}) => {trusted(e);if(patch?.permissionMode!==undefined&&chat.sessions().some(s=>s.taskId===id)){const old=(await storage.readWorkspace()).tasks.find(t=>t.id===id);if(old?.permissionMode!==patch.permissionMode)throw Error('请先停止任务再更改权限模式');}return companionModule.patchUserTask(storage,companion,id,patch,append);});
+ipcMain.handle("task:patch", async (e, {id,patch,append}) => {trusted(e);if(patch?.permissionMode!==undefined&&chat.sessions().some(s=>s.taskId===id)){const old=(await storage.readWorkspace()).tasks.find(t=>t.id===id);if(old?.permissionMode!==patch.permissionMode)throw Error('请先停止任务再更改权限模式');}return storage.isTemporary(id)?storage.patchTask(id,patch,append):companionModule.patchUserTask(storage,companion,id,patch,append);});
 ipcMain.handle("task:pin", (e, {id,pinned}) => { trusted(e); return storage.setTaskPinned(id,pinned); });
 ipcMain.handle("chat:steer", async (e, input) => {
-  trusted(e);const owner=(await storage.account())?.id||'local';const message=await chat.steer(input);
+  trusted(e);if(storage.isTemporary(input.taskId))throw Error('临时对话请在本轮结束后发送新消息');const owner=(await storage.account())?.id||'local';const message=await chat.steer(input);
   const task=(await storage.readWorkspace()).tasks.find(t=>t.id===input.taskId);
   if(task)await companion.activity(task,[message],owner).catch(error=>console.error('陪伴记录保存失败',error.message));return message;
 });
@@ -151,7 +153,7 @@ const schedules=require('./scheduled-tasks.cjs').createScheduledTasks({
   notify:(task,result)=>{
     if(win&&!win.isDestroyed())win.webContents.send('chat:status',{finished:true});
     const {Notification}=require('electron');
-    if(Notification.isSupported())new Notification({title:result.status==='completed'?'定时任务已完成':'定时任务未完成',body:task.title}).show();
+    // Scheduled and interactive results share the notification center.
   },
 });
 storage.personalAssistant=require('./personal-assistant.cjs').createPersonalAssistant({storage,chat,schedules,notify:value=>{if(win&&!win.isDestroyed())win.webContents.send('chat:status',value);}});
@@ -165,7 +167,7 @@ async function workspaceState(){
   const state = await storage.readWorkspace();
   for (const task of state.tasks) {
 
-    const run = await json(path.join(require('./agent/workspace-path.cjs').workspacePath(storage.agentDirectory,task),"runs",key(task.id)+".json"),null);
+    const run = await json(path.join(require('./agent/workspace-path.cjs').workspacePath(storage.agentDirectory,task),"runs",key(task.runRecordId||task.id)+".json"),null);
     if (run) {task.agentRun = publicRun(run);if(!chat.sessions().some(s=>s.taskId===task.id)&&['running','understanding'].includes(task.agentRun.status))task.agentRun.status='paused';}
   }
   state.tasks=require('./scheduled-records.cjs').associateScheduledRecords(state.tasks,await schedules.list());
@@ -227,7 +229,7 @@ ipcMain.handle("agent:reveal", async (e, {taskId, artifactPath, projectFile = fa
   const task = state.tasks.find(t => t.id === taskId);
   if (!task) throw Error("任务不存在");
   const project = require('./agent/workspace-path.cjs').workspacePath(storage.agentDirectory,task);
-  const run = await json(path.join(project,"runs",key(task.id)+".json"),null);
+  const run = await json(path.join(project,"runs",key(task.runRecordId||task.id)+".json"),null);
   if (artifactPath) {
     if (projectFile) await require("./agent/project-files.cjs").projectFile(await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task),artifactPath);
     else if (!run?.artifacts.some(a => a.path === artifactPath)) throw Error("成果不属于此任务");
@@ -247,7 +249,7 @@ ipcMain.handle("agent:preview", async (e, {taskId, artifactPath, projectFile = f
   const task=state.tasks.find(t=>t.id===taskId);
   if(!task)throw Error('任务不存在');
   const project=require('./agent/workspace-path.cjs').workspacePath(storage.agentDirectory,task);
-  const run=await json(path.join(project,'runs',key(task.id)+'.json'),null);
+  const run=await json(path.join(project,'runs',key(task.runRecordId||task.id)+'.json'),null);
   if(projectFile)await require('./agent/project-files.cjs').projectFile(await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task),artifactPath);
   else if(!run?.artifacts.some(a=>a.path===artifactPath))throw Error('成果不属于当前任务');
   const root=projectFile?await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task):await require('./schedule-context.cjs').scheduleArtifactRoot(storage.agentDirectory,task,artifactPath);
@@ -260,9 +262,9 @@ ipcMain.handle("state:write", (e, state) => {
   return storage.saveWorkspace(state, true);
 });
 for (const method of ["account", "register", "login", "logout"])
-  ipcMain.handle("account:" + method, (e, input) => {
+  ipcMain.handle("account:" + method, async (e, input) => {
     trusted(e);
-    if(method!=='account'){memoryWorker.cancel();storage.permissions.cancelAll();chat.cancelAll();}
+    if(method!=='account'){memoryWorker.cancel();storage.permissions.cancelAll();chat.cancelAll();await experience.dispose();dictation.cancel();}
     return storage[method](input);
   });
 const feishuCli=require('./feishu-cli.cjs').createFeishuCli({
@@ -364,6 +366,9 @@ function create() {
   win.webContents.on("will-navigate", (e, url) => {
     if (url !== page) e.preventDefault();
   });
+  win.on('closed',()=>{dictation.cancel();void experience.dispose();});
+  win.webContents.on('render-process-gone',()=>{dictation.cancel();void experience.dispose();});
+  win.webContents.on('did-start-navigation',(_event,_url,inPlace,mainFrame)=>{if(mainFrame&&!inPlace){dictation.cancel();void experience.dispose();}});
   win.loadURL(page);
 }
 app.whenReady().then(async () => {
@@ -384,7 +389,7 @@ app.whenReady().then(async () => {
   const state = await storage.readWorkspace();
   for (const task of state.tasks) {
 
-    const file = path.join(require('./agent/workspace-path.cjs').workspacePath(storage.agentDirectory,task),"runs",key(task.id)+".json");
+    const file = path.join(require('./agent/workspace-path.cjs').workspacePath(storage.agentDirectory,task),"runs",key(task.runRecordId||task.id)+".json");
     const run = await json(file,null);
     if (run && ['running','understanding'].includes(run.status)) {
       run.status = 'paused';
@@ -406,7 +411,7 @@ let quitting=false;
 app.on("before-quit", e => {
   if(quitting)return;
   e.preventDefault();memoryWorker.stop();storage.permissions.cancelAll();schedules.stop();chat.cancelAll();
-  Promise.allSettled([storage.androidManager.dispose(),feishuCli.dispose(),storage.amap.dispose(),storage.mcpConnections.dispose()]).finally(()=>{quitting=true;app.quit();});
+  Promise.allSettled([experience.dispose(),dictation.cancel(),storage.androidManager.dispose(),feishuCli.dispose(),storage.amap.dispose(),storage.mcpConnections.dispose()]).finally(()=>{quitting=true;app.quit();});
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

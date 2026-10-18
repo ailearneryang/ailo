@@ -49,7 +49,7 @@ function searchSelection(text,material,entry,pointer,offset,query) {
 async function createWorkspace(base, task) {
   const project=require('./workspace-path.cjs').workspacePath(base,task);
   const files=await require('./workspace-path.cjs').workspaceFiles(base,task);
-  const runFile=path.join(project,'runs',key(task.id)+'.json');
+  const runFile=path.join(project,'runs',key(task.runRecordId||task.id)+'.json');
   await fs.mkdir(files,{recursive:true,mode:0o700});
   const catalogFile=path.join(project,'materials.json');
   let catalog=await json(catalogFile,[]);

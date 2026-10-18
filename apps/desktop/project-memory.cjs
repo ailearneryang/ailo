@@ -6,7 +6,7 @@ function location(base,id){if(typeof id!=='string'||!id)throw Error('项目不�
 async function readMemory(base,project,tasks){
  const saved=await json(location(base,project.id),{revision:0,notes:''});const records=[];
  for(const task of tasks.filter(t=>t.projectId===project.id).sort((a,b)=>Date.parse(b.created||0)-Date.parse(a.created||0)).slice(0,100)){
-  const run=await json(path.join(workspacePath(base,task),'runs',key(task.id)+'.json'),null);if(!run||(saved.hiddenTaskIds||[]).includes(task.id))continue;
+  const run=await json(path.join(workspacePath(base,task),'runs',key(task.runRecordId||task.id)+'.json'),null);if(!run||(saved.hiddenTaskIds||[]).includes(task.id))continue;
   records.push({taskId:task.id,title:task.title,goal:run.goal||task.request,status:run.status,decisions:run.decisions||[],steps:(run.steps||[]).map(s=>({title:s.title||s.name||s.description,status:s.status})),updatedAt:run.updatedAt});
  }
  records.sort((a,b)=>(b.updatedAt||'').localeCompare(a.updatedAt||''));

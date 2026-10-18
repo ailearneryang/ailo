@@ -1,12 +1,12 @@
 import React, {useId,useState} from 'react';
-import {progressSummary,progressHeadline,confirmationNotice} from './progress-summary';
+import {progressSummary,progressHeadline,confirmationNotice,readableProgressText} from './progress-summary';
 import {visiblePlanItems} from './progress-placement';
 import type {Task,AgentRun} from './types';
-const statuses:Record<string,string>={understanding:'理解需求',running:'执行中',waiting_permission:'等待目录授权',waiting_user:'等待回答',paused:'已暂停',blocked:'需要处理阻塞',failed:'执行中断',completed:'已完成',idle:'对话'};
+const statuses:Record<string,string>={understanding:'理解需求',running:'执行中',waiting_permission:'等待授权',waiting_user:'等待回答',paused:'已暂停',blocked:'需要处理阻塞',failed:'执行中断',completed:'已完成',idle:'回复已完成',preparing:'正在准备回复',queued:'排队中',replying:'正在回复',settling:'正在保存回复'};
 const steps:Record<string,string>={pending:'待执行',waiting_sync:'等待同步',running:'进行中',done:'已完成',blocked:'阻塞'};
 const eventLabels:Record<string,string>={intent:'分析任务与确定方向',checkpoint:'保存任务进展',plan:'更新执行计划',plan_update:'更新执行计划',route:'确定处理方式',read_file:'读取文件',write_file:'写入文件',edit_file:'修改文件',run_command:'执行命令',tool_error:'操作未成功',steering:'接收补充要求',finish:'完成任务',acceptance_check:'检查验收结果'};
 function StepDescription({text,paused=false}:{text:string;paused?:boolean}) {
-  return <div className="progress-description"><div className="progress-preview-lines">{progressSummary(text).map(part=><p className="progress-summary-line" key={part.label}><span>{paused&&part.label==='正在处理'?'暂停前进展':part.label}：</span><span>{part.text}</span></p>)}</div><details className="progress-step-expand"><summary><span className="progress-detail-show">查看本步详情</span><span className="progress-detail-hide">收起本步详情</span></summary><p className="progress-step-detail">{text}</p></details></div>;
+  return <div className="progress-description"><div className="progress-preview-lines">{progressSummary(text).map(part=><p className="progress-summary-line" key={part.label}><span>{paused&&part.label==='正在处理'?'暂停前进展':part.label}：</span><span>{readableProgressText(part.text)}</span></p>)}</div><details className="progress-step-expand"><summary><span className="progress-detail-show">查看本步详情</span><span className="progress-detail-hide">收起本步详情</span></summary><p className="progress-step-detail">{text}</p></details></div>;
 }
 function StatusBadge({status,label}:{status:string;label:string}) {
   const tone = status==='done'||status==='completed'||status==='archived' ? 'done' : status==='running'||status==='understanding' ? 'running' : status==='blocked'||status==='failed' ? 'blocked' : 'pending';
@@ -16,11 +16,22 @@ function StatusBadge({status,label}:{status:string;label:string}) {
     </svg><span>{label}</span>
   </span>;
 }
-export function TaskProgress({task,busy,onContinue,showRecovery=true,onOpenArtifacts}:{onOpenArtifacts:()=>void;task:Task;busy:boolean;onContinue:()=>void;showRecovery?:boolean}) {
-  const run=task.agentRun!;
+export function TaskProgress({task,busy,onContinue,showRecovery=true,onOpenArtifacts,historical=false,currentStatus}:{historical?:boolean;currentStatus?:string;onOpenArtifacts:()=>void;task:Task;busy:boolean;onContinue:()=>void;showRecovery?:boolean}) {
+  const original=task.agentRun!;
+  const run=currentStatus&&!historical?{...original,status:currentStatus}:original;
   const listId=useId();
   const [expanded,setExpanded]=useState<{scope:string;id:string}|null>(null);
   const scope=`${task.id}-${run.executionId||run.progressInputId||'current'}`;
+  const [collapsedTasks,setCollapsedTasks]=useState<Record<string,boolean>>({});
+  const preferenceKey=`ailo.progress.completed.${task.id}`;
+  let savedCollapsed=false;
+  try { savedCollapsed=localStorage.getItem(preferenceKey)==='true'; } catch {}
+  const collapsed=collapsedTasks[task.id]??savedCollapsed;
+  const toggleCompleted=()=>{
+    const next=!collapsed;
+    setCollapsedTasks(previous=>({...previous,[task.id]:next}));
+    try { localStorage.setItem(preferenceKey,String(next)); } catch {}
+  };
   const decisions=visiblePlanItems(run.decisions),acceptance=visiblePlanItems(run.acceptance);
   const loaded=!!run.loadedExtensions?.length && <div className="execution-extensions" role="status" aria-label="本轮已加载的技能与专家"><span>本轮已加载</span>{run.loadedExtensions.map(e=><span className="execution-extension" key={e.id}>{e.kind==='skill'?'技能':'专家'} · {e.name}</span>)}</div>;
   const recoverable=['paused','failed','blocked','waiting_permission'].includes(run.status);
@@ -29,14 +40,11 @@ export function TaskProgress({task,busy,onContinue,showRecovery=true,onOpenArtif
   const paused=run.status==='paused';
   const ambiguousRunning=run.steps.filter(s=>s.status==='running').length>1;
   const completedSteps=run.steps.filter(step=>step.status==='done');
-  const firstUnfinished=run.steps.findIndex(step=>step.status!=='done');
-  const pastSteps=firstUnfinished<0?run.steps:run.steps.slice(0,firstUnfinished);
-  const remainingSteps=firstUnfinished<0?[]:run.steps.slice(firstUnfinished);
   const stepRow=(step:AgentRun['steps'][number])=>{
     // Split legacy descriptive titles only at explicit boundaries; preserve every word.
     const boundary=step.title.search(/[：:（(]/);
     const split=!step.detail&&boundary>=4&&boundary<=24;
-    const title=split?step.title.slice(0,boundary):step.title;
+    const title=readableProgressText(split?step.title.slice(0,boundary):step.title);
     const detail=step.detail||(split?step.title.slice(boundary).replace(/^[：:]\s*/,''):'');
     const active=(!ambiguousRunning&&step.status==='running')||step.status==='blocked';
     const needsConfirmation=step.requiresConfirmation===true||/作者.*确认后|用户.*确认后|需(?:要)?你确认/.test(step.title);
@@ -51,18 +59,19 @@ export function TaskProgress({task,busy,onContinue,showRecovery=true,onOpenArtif
       <button type="button" className="compact-step-toggle" aria-expanded={open} aria-controls={panelId} onClick={()=>setExpanded(open?null:{scope,id:step.id})}>
         <StatusBadge status={status} label={label}/><span className="compact-step-number" aria-hidden="true">{number}.</span><span className="compact-step-heading"><span className="compact-step-title" title={title}>{title}</span>{confirmation&&<span className="compact-confirmation">{confirmation}</span>}{(step.status==='waiting_sync'||(ambiguousRunning&&step.status==='running'))&&<span className="compact-confirmation">{label}</span>}</span>
       </button>
-      {headline&&!open&&<p className="compact-step-update" title={headline}>{headline}</p>}
+      {headline&&!open&&<p className="compact-step-update" title={headline}>{readableProgressText(headline)}</p>}
       {open&&<div id={panelId} className="compact-step-panel"><strong>{label}</strong>{detail?(active?<StepDescription text={detail} paused={paused}/>:<p className="progress-step-detail">{detail}</p>):<p className="progress-step-detail">{step.title}</p>}</div>}
     </li>;
   };
   const finishing=run.status==='running' && !!run.steps.length && run.steps.every(s=>s.status==='done');
-  if(run.status==='completed')return <>{loaded}<details className="completed-execution"><summary>✓ {run.goal || '本轮任务'} · 已完成</summary><TaskProgress task={{...task,agentRun:{...run,status:'archived',loadedExtensions:[]}}} busy={busy} onContinue={onContinue} showRecovery={false} onOpenArtifacts={onOpenArtifacts}/></details></>;
+  if(run.status==='completed')return <>{loaded}<details className="completed-execution"><summary>✓ {run.goal || '本轮任务'} · 已完成 {completedSteps.length}/{run.steps.length}</summary><TaskProgress task={{...task,agentRun:{...run,status:'archived',loadedExtensions:[]}}} busy={busy} onContinue={onContinue} showRecovery={false} onOpenArtifacts={onOpenArtifacts}/></details></>;
   return <>{loaded}<section className="task-progress task-progress-compact" aria-label="任务计划与成果">
-    <div className="task-progress-heading"><div className="compact-progress-heading"><strong>任务进度</strong>{!!run.steps.length&&<span>已完成 {completedSteps.length}/{run.steps.length}</span>}</div><div className="task-progress-controls"><StatusBadge status={run.status} label={finishing?'正在核对交付':run.status==='archived'?'已完成':statuses[run.status]||run.status}/>{recoverable && showRecovery && <button className="primary" disabled={busy} onClick={onContinue}>{run.status==='failed'?'重试当前步骤':'继续任务'}</button>}</div></div>
+    <div className="task-progress-heading"><div className="compact-progress-heading"><strong>{historical?'此前任务进度':'任务进度'}</strong>{!!run.steps.length&&<span>已完成 {completedSteps.length}/{run.steps.length}</span>}</div><div className="task-progress-controls"><StatusBadge status={run.status} label={finishing?'正在核对交付':run.status==='archived'?'已完成':statuses[run.status]||run.status}/>{recoverable && showRecovery && <button className="primary" disabled={busy} onClick={onContinue}>{run.status==='failed'?'重试当前步骤':'继续任务'}</button>}</div></div>
+    {historical&&busy&&<p className="compact-state-note">此处为此前保存的计划；本轮回复结束后可继续。</p>}
     {!!run.steps.length && <div className="progress-overview">
       {ambiguousRunning&&<p className="compact-state-note">有多个步骤标记为进行中，实际执行状态待核对。</p>}
-      {!!pastSteps.length&&<details className="compact-past-steps" key={scope}><summary>已完成第 {pastSteps.length===1?'1':`1–${pastSteps.length}`} 步 · 展开查看</summary><ol className="compact-plan-list" aria-label="已完成的任务步骤">{pastSteps.map(stepRow)}</ol></details>}
-      {!!remainingSteps.length&&<ol className="compact-plan-list" start={firstUnfinished+1} aria-label="当前与后续任务步骤">{remainingSteps.map(stepRow)}</ol>}
+      {!!completedSteps.length&&<button type="button" className="compact-completed-toggle" aria-expanded={!collapsed} aria-controls={`${listId}-steps`} onClick={toggleCompleted}>{collapsed?'展开已完成':'收起已完成'}（{completedSteps.length}）</button>}
+      <ol id={`${listId}-steps`} className="compact-plan-list" aria-label="任务步骤">{run.steps.filter(step=>!collapsed||step.status!=='done').map(stepRow)}</ol>
       {finishing && <p className="progress-finishing" role="status">计划步骤已完成，正在核对交付结果。</p>}
     </div>}
     {recoverable && !run.steps.length && <p className="muted">尚未形成执行计划。需求与材料已保存在当前项目，无需重新创建或打开文件夹。</p>}

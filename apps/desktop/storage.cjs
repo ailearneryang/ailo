@@ -52,6 +52,7 @@ function createStorage(directory, safeStorage) {
   }
   return {
     skillPackages,
+    mutateWorkspace(action){return queue(async()=>{const state=await read('workspace',{tasks:[],projects:[],models:[]});const result=await action(state);if(JSON.stringify(state).length>2000000)throw Error('工作空间超过容量限制');await write('workspace',state);return result;});},
     async profile(){
       await writes.catch(()=>{});
       const accounts=await read('accounts',{users:[]}),user=accounts.users.find(u=>u.id===accounts.currentUserId);
@@ -126,7 +127,7 @@ function createStorage(directory, safeStorage) {
       return queue(async()=>{
         if(typeof id!=='string'||typeof title!=='string'||!title.trim()||title.length>40||/[\r\n\x00-\x1f]/.test(title))return null;
         const state=await read('workspace',{tasks:[]});const task=state.tasks.find(t=>t.id===id);
-        if(!task||task.scheduledTaskId||id===require('./personal-assistant.cjs').ASSISTANT_ID)return null;
+        if(!task||task.manualTitle||task.scheduledTaskId||id===require('./personal-assistant.cjs').ASSISTANT_ID)return null;
         task.title=title.trim();task.titleGenerated=true;
         await write('workspace',state);return task.title;
       });
@@ -148,6 +149,7 @@ function createStorage(directory, safeStorage) {
         const previous=state.tasks.find(t=>t.id===id);
         const {agentRun,messages,pinned,pinnedAt,titleGenerated,...fields}=patch;
         if(previous?.titleGenerated)delete fields.title;
+        for(const key of ['archived','archivedAt','manualTitle','resourceOrigins','branchOf','responseOnly','temporary','runRecordId'])delete fields[key];
         if(fields.permissionMode!==undefined&&!['standard','scoped'].includes(fields.permissionMode))throw Error('权限模式无效');
         if(fields.memoryEnabled!==undefined&&typeof fields.memoryEnabled!=='boolean')throw Error('对话记忆设置无效');
         if(previous?.memoryOwner&&fields.memoryOwner!==undefined&&fields.memoryOwner!==previous.memoryOwner)throw Error('不能变更对话记忆所属账号');
@@ -272,7 +274,7 @@ function createStorage(directory, safeStorage) {
             throw Error("项目配置无效。");
           projectIds.add(project.id);
           const registered=previous.projects?.find(p=>p.id===project.id);
-          return { id: project.id, name: project.name.trim(), description:typeof project.description==='string'?project.description.trim().slice(0,4000):'',pinned:project.pinned===true, ...(registered?.localPath?{localPath:registered.localPath,source:'local'}:{}), extensionIds: Array.isArray(project.extensionIds) ? project.extensionIds.filter(id => extensions.some(e => e.id === id)).slice(0,6) : [] };
+          return { id: project.id, name: project.name.trim(), instructions:registered?.instructions||'',sources:registered?.sources||[],defaultTools:registered?.defaultTools||{},settingsRevision:registered?.settingsRevision||0,description:typeof project.description==='string'?project.description.trim().slice(0,4000):'',pinned:project.pinned===true, ...(registered?.localPath?{localPath:registered.localPath,source:'local'}:{}), extensionIds: Array.isArray(project.extensionIds) ? project.extensionIds.filter(id => extensions.some(e => e.id === id)).slice(0,6) : [] };
         });
         if (
           state.tasks.some(

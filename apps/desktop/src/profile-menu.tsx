@@ -45,6 +45,8 @@ export function ProfileMenu({user,ready,onSelect,onLogout}:{user:User|null;ready
         <button role="menuitem" onClick={()=>select('models')}><Icon name="sliders"/><span>模型设置</span></button>
         <button role="menuitem" onClick={()=>select('permissions')}><Icon name="lock"/><span>操作权限</span></button>
         <button role="menuitem" onClick={()=>select('memory')}><Icon name="memory"/><span>个人记忆</span></button>
+        <button role="menuitem" onClick={()=>select('archived')}><Icon name="archive"/><span>已归档对话</span></button>
+        <button role="menuitem" onClick={()=>select('notifications')}><Icon name="bell"/><span>通知设置</span></button>
         <button role="menuitem" onClick={()=>select('appearance')}><Icon name="palette"/><span>外观设置</span></button>
         <button role="menuitem" onClick={()=>select('pets')}><Icon name="pet"/><span>陪伴与成长</span></button>
       </div>}

@@ -2,7 +2,7 @@ import type {Task} from './types';
 export type SearchHit={taskId:string;title:string;snippet:string;messageId?:string;created:string;projectId?:string;score:number};
 export function searchConversations(tasks:Task[],query:string):SearchHit[]{
  const words=query.trim().toLocaleLowerCase().split(/\s+/u).filter(Boolean);
- return tasks.flatMap(task=>{
+ return tasks.filter(t=>!t.temporary).flatMap(task=>{
   const messages=task.messages?.length?task.messages:[{id:task.id+'-original',content:task.request||''},{id:undefined,content:task.answer||''}];
   const fields=[{id:undefined,content:task.title},...messages];
   if(words.length&&!words.every(word=>fields.some(f=>f.content.toLocaleLowerCase().includes(word))))return [];

@@ -8,7 +8,7 @@ export function activityPresentation(run:AgentRun|undefined,status:string) {
  const lastProgress=run?.events.filter(e=>progressTypes.has(e.type)).at(-1);
  const progressAt=lastProgress?.at;
  if(queued)return {label:'等待执行',detail:'前面的任务结束后将自动开始。',progressAt:undefined,expanded:false};
- if(run&&['waiting_user','waiting_permission','blocked','failed'].includes(run.status))return {label:({waiting_user:'等待你确认',waiting_permission:'等待目录授权',blocked:'任务需要处理',failed:'执行已中断'} as Record<string,string>)[run.status],detail:run.status==='waiting_user'?'请查看任务中的问题并回复。':run.status==='waiting_permission'?'请在任务提示中完成目录授权。':'请查看任务提示后继续。',progressAt,expanded:true};
+ if(run&&['waiting_user','waiting_permission','blocked','failed'].includes(run.status))return {label:({waiting_user:'等待你确认',waiting_permission:'等待授权',blocked:'任务需要处理',failed:'执行已中断'} as Record<string,string>)[run.status],detail:run.status==='waiting_user'?'请查看任务中的问题并回复。':run.status==='waiting_permission'?'请在本轮任务提示中核对所需授权。':'请查看任务提示后继续。',progressAt,expanded:true};
  if(run?.status==='paused')return {label:'任务已暂停',detail:undefined,progressAt,expanded:false};
  const retryEvent=!run?.inFlight&&event&&recovery[event.type]?event:undefined;
  const exhausted=retryEvent&&/已用尽|重试失败/.test(retryEvent.detail.message||'');

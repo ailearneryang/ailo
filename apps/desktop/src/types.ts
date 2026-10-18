@@ -39,7 +39,7 @@ export type Model = {
   hasKey?: boolean;
   apiKey?: string;
 };
-export type Project = { description?:string; pinned?:boolean; localPath?:string; source?:'local'; id: string; name: string; extensionIds?: string[] };
+export type Project = {instructions?:string;sources?:import('./experience-types').ProjectSource[];defaultTools?:import('./experience-types').DefaultTools;settingsRevision?:number; description?:string; pinned?:boolean; localPath?:string; source?:'local'; id: string; name: string; extensionIds?: string[] };
 export type Message = {
   createdAt?: string;
   clarification?: Clarification;
@@ -52,6 +52,8 @@ export type Message = {
   modelName?: string;
 };
 export type Task = {
+  archived?:boolean;archivedAt?:string;temporary?:boolean;manualTitle?:boolean;updatedAt?:string;responseOnly?:boolean;
+  branchOf?:{id:string;messageId:string;title:string};
   permissionMode?:import('./permission-types').PermissionMode;
   memoryEnabled?:boolean;
   memoryOwner?:string;
@@ -103,6 +105,7 @@ export type RequestContextUsage = {
   providerUsage?: {inputTokens?:number;outputTokens?:number;reasoningTokens?:number};
 };
 export type AgentRun = {
+  currentOutcome?:string;currentInputId?:string;currentIntent?:'chat'|'task';
   memoryUsed?:{inputId?:string;ownerId?:string;entries:{id:string;topic:string;scope:string;source?:import("./memory-types").MemorySource}[]};
   loadedExtensions?: {id:string;name:string;kind:"skill"|"expert"}[];
   acceptanceCriteria?:{id:string;text:string;status:'passed'|'pending'}[];
@@ -155,6 +158,23 @@ declare global {
       onPermissionsChanged:(callback:(owner:string)=>void)=>()=>void;
       memoryRead:(owner?:string)=>Promise<import('./memory-types').PersonalMemoryData>;
       memoryUpdate:(input:import('./memory-types').MemoryUpdate)=>Promise<import('./memory-types').PersonalMemoryData>;
+      resumeTask:(input:{id:string;messageId?:string;answers?:ClarificationAnswer[];materials?:Material[]})=>Promise<Workspace>;
+      conversationAction:(input:{id:string;action:import('./experience-types').ConversationOperation;value?:string;messageId?:string})=>Promise<Task|{deleted:true;id:string}>;
+      temporaryConversation:(input?:{id:string})=>Promise<Task|void>;
+      exportConversation:(id:string)=>Promise<boolean>;
+      saveProjectSettings:(input:{id:string;revision:number;instructions:string;sources:import('./experience-types').ProjectSource[];defaultTools:import('./experience-types').DefaultTools})=>Promise<Project>;
+      pickProjectSources:()=>Promise<import('./experience-types').ProjectSource[]>;
+      libraryFiles:()=>Promise<import('./experience-types').LibraryFile[]>;
+      libraryPreview:(input:{id:string})=>Promise<ArtifactPreview & {registeredVersionChanged?:boolean}>;
+      libraryReveal:(input:{id:string})=>Promise<void>;
+      notificationsRead:()=>Promise<import('./experience-types').NotificationData>;
+      notificationsUpdate:(input:{action:'read'|'clear'|'settings';id?:string;value?:Partial<import('./experience-types').NotificationData['settings']>})=>Promise<import('./experience-types').NotificationData>;
+      onNotificationsChanged:(callback:()=>void)=>()=>void;
+      onNavigateTask:(callback:(id:string)=>void)=>()=>void;
+      dictationStart:(locale:string)=>Promise<{active:boolean}>;
+      dictationStop:()=>Promise<{active:boolean}>;
+      dictationCancel:()=>Promise<{active:boolean}>;
+      onDictation:(callback:(event:{type:'ready'|'text'|'end'|'error';text?:string})=>void)=>()=>void;
       memoryExport:(owner:string)=>Promise<boolean>;
       onMemoryChanged:(callback:(owner:string)=>void)=>()=>void;
       importSkill:(input:{name:string;buffer:ArrayBuffer})=>Promise<Extension>;
@@ -220,7 +240,7 @@ declare global {
       }) => Promise<{ content: string; clarification?: Clarification; modelName: string; contextCheckpoint?: ContextCheckpoint; promptTokens?: number }>;
       onChatStatus: (callback: (status: { id: string; message?: string; content?: string; taskId?:string; finished?:boolean; run?:AgentRun;failure?:{code:string;requestDiagnostics?:Record<string,unknown>;retryCount:number} }) => void) => () => void;
       cancel: (id: string) => Promise<void>;
-      sessions: () => Promise<{id:string;taskId:string;status:string;content:string;updatedAt?:string}[]>;
+      sessions: () => Promise<(import('./task-presentation').LiveSession & {taskId:string;updatedAt?:string})[]>;
       editLastMessage: (id:string,messageId:string,content:string) => Promise<Task>;
       patchTask: (id:string,patch:Partial<Task>,append?:Message[]) => Promise<Task>;
       setTaskPinned: (id:string,pinned:boolean) => Promise<Task>;
