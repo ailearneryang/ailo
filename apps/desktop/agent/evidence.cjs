@@ -37,18 +37,29 @@ async function assertFresh(workspace,record){
   if(actual!==source.sha256)throw Error('证据依赖文件已变化，请重新观察或检查：'+source.path);
  }
 }
-function resolveId(run,id){if(run.events.some(e=>e.id===id))return id;return run.observationIndex?.find(o=>o.id===id)?.eventId||id;}
+function resolveId(run,id){
+ if(run.events.some(e=>e.id===id))return id;
+ let receipt=run.observationIndex?.find(o=>o.id===id);if(receipt)return receipt.eventId||id;
+ const ids=[...new Set([...run.events.map(e=>e.id),...(run.observationIndex||[]).flatMap(o=>[o.id,o.eventId]).filter(Boolean)])];
+ const matches=typeof id==='string'&&/^[a-f0-9-]{8,}$/i.test(id)?ids.filter(full=>full.startsWith(id)):[];
+ if(matches.length===1){receipt=run.observationIndex?.find(o=>o.id===matches[0]);return receipt?.eventId||matches[0];}
+ return id;
+}
+async function lookup(workspace,id){
+ id=resolveId(workspace.run,id);
+ return workspace.run.events.find(e=>e.id===id)||await workspace.archivedEvent?.(id);
+}
 async function event(workspace,id){
  id=resolveId(workspace.run,id);
- const run=workspace.run,e=run.events.find(e=>e.id===id&&['run_command','build_android','browser','view_image'].includes(e.type));
- if(!e)throw Error('验证证据无效或不存在');
+ const run=workspace.run,e=await lookup(workspace,id);
+ if(!e||!['run_command','build_android','browser','view_image'].includes(e.type))throw Error('验证证据无效或不存在');
  const r=e.detail.result;
  if(['run_command','build_android'].includes(e.type)){
   if(!r||r.exitCode!==0||r.timedOut)throw Error('命令没有成功退出，不能作为完成证据');
   await assertFresh(workspace,{revision:e.detail.revision,sources:r.sources,fileSet:r.fileSet,rendererState:r.rendererState});
  }else{
   if(e.type==='browser'&&(!r?.dom||r.errors?.length||r.dom.missingImages?.length))throw Error('网页证据无效：未观察页面、图片加载失败或存在运行错误');
-  const page=e.type==='browser'?e:run.events.find(item=>item.type==='browser'&&item.detail.result?.screenshot===r?.path);
+  const page=e.type==='browser'?e:run.events.find(item=>item.type==='browser'&&item.detail.result?.screenshot===r?.path)||await workspace.findEvent?.(item=>item.type==='browser'&&item.detail.result?.screenshot===r?.path);
   if(page)require('./html-delivery.cjs').assertPageHealth(page.detail.result);
   const receipt=run.visualObservations?.find(o=>o.eventId===id&&o.delivered);
   if(!receipt&&e.type==='view_image')throw Error('图像尚未传给模型');
@@ -57,4 +68,4 @@ async function event(workspace,id){
  }
  return e;
 }
-module.exports={hash,scopeSchema,scope,covers,assertFresh,event,resolveId};
+module.exports={hash,scopeSchema,scope,covers,assertFresh,event,resolveId,lookup};

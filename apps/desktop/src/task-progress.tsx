@@ -5,7 +5,7 @@ import {visiblePlanItems} from './progress-placement';
 import type {Task,AgentRun} from './types';
 const statuses:Record<string,string>={understanding:'理解需求',running:'执行中',waiting_permission:'等待授权',waiting_user:'等待回答',paused:'已暂停',blocked:'需要处理阻塞',failed:'执行中断',completed:'已完成',idle:'回复已完成',preparing:'正在准备回复',queued:'排队中',replying:'正在回复',settling:'正在保存回复'};
 const steps:Record<string,string>={pending:'待执行',waiting_sync:'等待同步',running:'进行中',done:'已完成',blocked:'阻塞'};
-const eventLabels:Record<string,string>={intent:'分析任务与确定方向',checkpoint:'保存任务进展',plan:'更新执行计划',plan_update:'更新执行计划',route:'确定处理方式',batch_read:'批量读取资料',attached_progress:'更新进度与记忆',no_action_recovery:'收敛无效思考',view_image:'回看图片',browser:'检查网页运行结果',read_file:'读取文件',write_file:'写入文件',edit_file:'修改文件',run_command:'执行命令',tool_error:'操作未成功',steering:'接收补充要求',finish:'完成任务',acceptance_check:'检查验收结果'};
+const eventLabels:Record<string,string>={intent:'分析任务与确定方向',checkpoint:'保存任务进展',plan:'更新执行计划',plan_update:'更新执行计划',route:'确定处理方式',batch_read:'批量读取资料',attached_progress:'更新进度与记忆',loop_recovery:'自动调整执行方式',no_action_recovery:'收敛无效思考',view_image:'回看图片',browser:'检查网页运行结果',read_file:'读取文件',write_file:'写入文件',edit_file:'修改文件',run_command:'执行命令',tool_error:'操作未成功',steering:'接收补充要求',finish:'完成任务',acceptance_check:'检查验收结果'};
 export function executionEventText(e:AgentRun['events'][number]):string {
   return e.detail.message || e.detail.purpose || (e.detail.name ? `${eventLabels[e.type]||'执行操作'} · ${e.detail.name}${e.detail.entry ? ` / ${e.detail.entry}` : ''}${e.detail.offset !== undefined ? ` · 位置 ${e.detail.offset}` : ''}` : e.detail.path || eventLabels[e.type] || '更新任务状态');
 }
@@ -44,6 +44,7 @@ export function TaskProgress({task,busy,onContinue,showRecovery=true,onOpenArtif
   const recoverable=['paused','failed','blocked','waiting_permission'].includes(run.status);
   if (!showRecovery && recoverable && !run.steps.length && !run.artifacts.length) return loaded || null;
   if(run.mode==='chat' && !recoverable)return loaded || null;
+  const deliveryLabel=run.delivery?.visualReviewPending?'已完成 · 视觉效果待人工确认':run.delivery?.outcome==='limited'?'已交付（有明确限制）':'已完成';
   const paused=run.status==='paused';
   const ambiguousRunning=run.steps.filter(s=>s.status==='running').length>1;
   const completedSteps=run.steps.filter(step=>step.status==='done');
@@ -73,9 +74,9 @@ export function TaskProgress({task,busy,onContinue,showRecovery=true,onOpenArtif
     </li>;
   };
   const finishing=run.status==='running' && !!run.steps.length && run.steps.every(s=>s.status==='done');
-  if(run.status==='completed')return <>{loaded}<details className="completed-execution"><summary>✓ {run.goal || '本轮任务'} · {run.delivery?.outcome==='limited'?'已交付（有明确限制）':'已完成'} {completedSteps.length}/{run.steps.length}</summary><TaskProgress task={{...task,agentRun:{...run,status:'archived',loadedExtensions:[]}}} busy={busy} onContinue={onContinue} showRecovery={false} onOpenArtifacts={onOpenArtifacts}/></details></>;
+  if(run.status==='completed')return <>{loaded}<details className="completed-execution"><summary>✓ {run.goal || '本轮任务'} · {deliveryLabel} {completedSteps.length}/{run.steps.length}</summary><TaskProgress task={{...task,agentRun:{...run,status:'archived',loadedExtensions:[]}}} busy={busy} onContinue={onContinue} showRecovery={false} onOpenArtifacts={onOpenArtifacts}/></details></>;
   return <>{loaded}<section className="task-progress task-progress-compact" aria-label="任务计划与成果">
-    <div className="task-progress-heading"><div className="compact-progress-heading"><strong>{historical?'此前任务进度':'任务进度'}</strong>{!!run.steps.length&&<span>步骤已完成 {completedSteps.length}/{run.steps.length}</span>}</div><div className="task-progress-controls"><StatusBadge status={run.status} label={verificationError?'验收未通过':finishing?'正在核对交付':run.status==='archived'?(run.delivery?.outcome==='limited'?'已交付（有明确限制）':'已完成'):statuses[run.status]||run.status}/>{recoverable && showRecovery && <button className="primary" disabled={busy} onClick={onContinue}>{verificationError?'继续验收':run.status==='failed'?'重试当前步骤':'继续任务'}</button>}</div></div>
+    <div className="task-progress-heading"><div className="compact-progress-heading"><strong>{historical?'此前任务进度':'任务进度'}</strong>{!!run.steps.length&&<span>步骤已完成 {completedSteps.length}/{run.steps.length}</span>}</div><div className="task-progress-controls"><StatusBadge status={run.status} label={verificationError?'验收未通过':finishing?'正在核对交付':run.status==='archived'?deliveryLabel:statuses[run.status]||run.status}/>{recoverable && showRecovery && <button className="primary" disabled={busy} onClick={onContinue}>{verificationError?'继续验收':run.status==='failed'?'重试当前步骤':'继续任务'}</button>}</div></div>
     {verificationError&&<p className="error" role="alert">{stepsComplete?'计划步骤已完成，最终验收未通过。':'最终验收未通过。'}{verificationError}</p>}
     {historical&&busy&&<p className="compact-state-note">此处为此前保存的计划；本轮回复结束后可继续。</p>}
     {!!run.steps.length && <div className="progress-overview">

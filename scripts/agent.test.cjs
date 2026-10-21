@@ -149,10 +149,10 @@ test('material observations and read coverage survive pause, checkpoint and resu
  await runAgent(options(base,async messages=>{const s=JSON.parse(messages.at(-1).content);if(resumed++===0){assert.equal(s.readCoverage.length,1);assert.match(s.toolResults[0].result.text,/晴天/);return {content:JSON.stringify({action:'checkpoint',text:memory})};}assert.equal(s.workingMemory,memory);assert.equal(s.readCoverage[0].next,null);assert.equal(s.toolResults.length,0);return {content:JSON.stringify({action:'pause',text:'暂停'})};}));
  const w=await createWorkspace(base,task);assert.equal(w.run.workingMemory,memory);assert.equal(w.run.observations.length,0);
 });
-test('repeated reads mixed with successes pause instead of looping indefinitely',async t=>{
+test('repeated reads mixed with successes recover internally without replaying tools',async t=>{
  const base=await setup(t);let n=0;
- const result=await runAgent(options(base,async messages=>{const s=JSON.parse(messages.at(-1).content);const action=n++%2?{action:'list_files',path:'.'}:{action:'read_material',id:s.materials[0].id};return {content:JSON.stringify(action)};}));
- assert.equal(result.agentRun.status,'paused');assert.match(result.content,/反复/);assert.ok(n<=6);assert.equal(result.agentRun.events.at(-1).type,'no_progress');
+ const result=await runAgent(options(base,async messages=>{const s=JSON.parse(messages.at(-1).content);const action=n++%2?{action:'list_files',path:'.'}:{action:'read_material',id:s.materials[0].id};return {content:JSON.stringify(action)};},{maxSteps:10}));
+ assert.equal(result.agentRun.status,'paused');assert.match(result.content,/决策轮数预算/);assert.equal(n,9);assert.ok(result.agentRun.events.some(e=>e.type==='loop_recovery'));assert.ok(!result.agentRun.events.some(e=>e.type==='no_progress'));
 });
 test('duplicate route is recoverable but cannot switch chat into task permissions',async t=>{
  const base=await setup(t);let n=0;
@@ -331,15 +331,15 @@ test('elapsed budget is checked again before executing a generated action',async
  const result=await runAgent(options(base,async()=>{clock=101;return {content:JSON.stringify(plan)};},{now:()=>clock,maxDurationMs:100}));
  assert.match(result.content,/时长预算/);assert.equal(result.agentRun.steps.length,0);
 });
-test('bookkeeping-only batch pauses rather than endlessly continuing',async t=>{
+test('bookkeeping-only batches refocus internally while retaining the overall execution budget',async t=>{
  const base=await setup(t);let n=0;
  const result=await runAgent(options(base,async()=>({content:JSON.stringify(n++===0?plan:{action:'checkpoint',text:'保存已有结论，当前没有新的材料或者执行结果，下一步需要继续判断。'})}),{batchSize:2,maxSteps:10}));
- assert.match(result.content,/未发现新的有效进展/);
+ assert.match(result.content,/决策轮数预算/);assert.ok(result.agentRun.events.some(e=>e.type==='loop_recovery'));
 });
 test('repeated action guard remains effective across batch boundaries',async t=>{
  const base=await setup(t);let n=0;
  const result=await runAgent(options(base,async()=>({content:JSON.stringify(n++===0?plan:{action:'read_file',path:'a.txt'})}),{batchSize:2,maxSteps:12,executeTool:async()=>({text:'same'})}));
- assert.match(result.content,/相同动作反复执行/);
+ assert.match(result.content,/决策轮数预算/);assert.ok(result.agentRun.events.some(e=>e.type==='loop_recovery'));
 });
 
 test('thinking truncation does not inflate budget across actions or manual continuation',async t=>{
@@ -356,17 +356,17 @@ test('thinking truncation does not inflate budget across actions or manual conti
  await runAgent(options(base,async(messages,budget)=>{assert.equal(budget,8192);return {content:JSON.stringify({action:'pause',text:'保持进度'})};},{model:{id:'m',contextWindow:100000,maxOutputTokens:65536}}));
 });
 
-test('repeated material range warns before pausing and includes precise location',async t=>{
+test('repeated material range warns then recovers internally with precise location',async t=>{
  const base=await setup(t);let calls=0;
  const result=await runAgent(options(base,async messages=>{
   const s=JSON.parse(messages.at(-1).content);calls++;
   if(calls===4){assert.equal(s.toolResults.at(-1).notExecuted,true);assert.match(s.toolResults.at(-1).instruction,/query/);}
   return {content:JSON.stringify({action:'inspect_source',id:s.materials[0].id,entry:'icons.json',pointer:'/icons',offset:30000})};
- },{executeTool:async()=>({text:'svg',offset:30000,next:40000,total:90000})}));
- assert.equal(calls,4);
+ },{maxSteps:6,executeTool:async()=>({text:'svg',offset:30000,next:40000,total:90000})}));
+ assert.equal(calls,5);
  const events=result.agentRun.events;assert.equal(events.filter(e=>e.type==='inspect_source').length,2);
  assert.ok(events.some(e=>e.type==='repeat_warning'));
- const last=events.at(-1);assert.equal(last.type,'no_progress');assert.equal(last.detail.offset,30000);assert.equal(last.detail.pointer,'/icons');assert.match(last.detail.message,/icons.json/);
+ const last=events.filter(e=>e.type==='loop_recovery').at(-1);assert.ok(last);assert.equal(last.detail.offset,30000);assert.equal(last.detail.pointer,'/icons');assert.ok(last.detail.message);
 });
 test('material reread after changed file content is permitted and retains read evidence',async t=>{
  const base=await setup(t);let i=0;
@@ -393,9 +393,9 @@ test('rewriting identical file content does not reset repeat-read detection',asy
  const base=await setup(t),w=await createWorkspace(base,task);await fs.writeFile(path.join(w.files,'same.txt'),'same');let i=0;
  const result=await runAgent(options(base,async messages=>{
   const s=JSON.parse(messages.at(-1).content),read={action:'read_material',id:s.materials[0].id};
-  return {content:JSON.stringify([plan,read,read,{action:'write_file',path:'same.txt',content:'same'},read,read][i++])};
- }));
- assert.equal(result.agentRun.events.at(-1).type,'no_progress');assert.ok(result.agentRun.events.some(e=>e.type==='repeat_warning'));
+  return {content:JSON.stringify([plan,read,read,{action:'write_file',path:'same.txt',content:'same'},read,read][i++]||read)};
+ },{maxSteps:9}));
+ assert.ok(result.agentRun.events.some(e=>e.type==='loop_recovery'));assert.ok(result.agentRun.events.some(e=>e.type==='repeat_warning'));
 });
 test('Feishu conversation executes tool and replies with actual result without local delivery artifacts',async t=>{
  const base=await setup(t);let n=0,called=0;

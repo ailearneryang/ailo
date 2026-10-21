@@ -27,7 +27,7 @@ export function DeliveryResult({task,run,onOpen}:{task:Task;run:AgentRun;onOpen:
   <div className="delivery-result-heading"><strong>交付产物 <small>{files.length}</small></strong><button onClick={()=>void reveal()}><Icon name="folder"/>在文件夹中查看</button></div>
   <ul className="delivery-result-files">{(all?files:files.slice(0,5)).map(file=><li key={file.path}><button className="delivery-file-link" title={file.path} onClick={()=>onOpen(file.path)}><Icon name="file"/><span>{file.label||file.path.split('/').at(-1)}</span><small>{file.path.split('/').at(-1)}</small><span aria-hidden="true">↗</span></button></li>)}</ul>
   {files.length>5&&<button className="delivery-show-more" aria-expanded={all} onClick={()=>setAll(v=>!v)}>{all?'收起文件列表':`查看全部 ${files.length} 个产物`}</button>}
-  {run.delivery?.outcome==='limited'&&!!run.completionReview?.unverified.length&&<p className="delivery-result-note">已交付，部分要求待人工确认。详见本轮交付说明。</p>}
+  {run.delivery?.outcome==='limited'&&!!run.completionReview?.unverified.length&&<p className="delivery-result-note">{run.delivery?.visualReviewPending?'任务已完成，视觉效果待人工确认。':'已交付，部分要求待人工确认。'}详见本轮交付说明。</p>}
   {loading&&<p role="status" className="delivery-result-note">正在加载产物预览…</p>}
   {preview&&featured&&<div className={'delivery-result-preview delivery-preview-'+preview.kind}>
    <div className="delivery-preview-heading"><span>{featured.label||featured.path.split('/').at(-1)}</span><button onClick={()=>onOpen(featured.path)}>打开完整预览 <span aria-hidden="true">↗</span></button></div>

@@ -109,7 +109,7 @@ export type RequestContextUsage = {
 };
 export type AgentRun = {
   performance?:{wallMs:number;modelMs:number;modelRequests:number;failedModelRequests:number;processModelMs:number;processModelRequests:number;noActionMs:number;noActionRequests:number;toolMs:number;toolCalls:number;batchItems:number;attachedUpdates:number;reportedUsageRequests:number;inputTokens:number;outputTokens:number;reasoningTokens:number};
-  delivery?:{outcome:'complete'|'limited'|'partial'|'blocked';status?:string;at:string};
+  delivery?:{outcome:'complete'|'limited'|'partial'|'blocked';visualReviewPending?:boolean;unverified?:string[];status?:string;at:string};
   issues?:{id:string;status:'open'|'resolved'|'limitation';description:string;reason?:string;requirementIds:string[]}[];
   executionState?:{goal:string;gaps?:string[];nextAction?:string;expectedResult?:string;blocker?:unknown};
   completionReview?:{summary:string;issues:string[];unverified:string[];revision:number;at:string};

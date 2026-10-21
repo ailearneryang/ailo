@@ -28,12 +28,12 @@ async function verifyBatch(workspace,action,track){
   let sha256,evidence,observationPath,sources,observedScope,rendererState,fileSet;
   const requirement=criteria(run).find(c=>c.id===check.criterionId);
   if(check.kind==='command'){
-   const event=run.events.find(e=>e.id===check.evidenceId&&['run_command','build_android'].includes(e.type));
-   if(!event)throw Error('验收命令证据无效，请使用 run_command/build_android 事件 ID');
+   const event=await proof.lookup(workspace,check.evidenceId);
+   if(!event||!['run_command','build_android'].includes(event.type))throw Error('验收命令证据无效，请使用 run_command/build_android 事件 ID');
    await proof.event(workspace,check.evidenceId);
    sources=event.detail.result.sources;fileSet=event.detail.result.fileSet;observedScope=event.detail.result.scope;evidence=event.id;
   }else if(['visual','observation'].includes(check.kind)){
-   const event=run.events.find(e=>e.id===check.evidenceId&&e.type==='browser');
+   const referenced=await proof.lookup(workspace,check.evidenceId),event=referenced?.type==='browser'?referenced:undefined;
    const image=run.visualObservations?.find(o=>o.eventId===check.evidenceId&&o.delivered);
    if(check.kind==='visual'){
     if(!image)throw Error('视觉证据尚未传给模型或已过期；先 browser 或 view_image，再依据图像检查');
@@ -85,7 +85,7 @@ async function verifyBatch(workspace,action,track){
 async function assertAccepted(workspace,{unverifiedVisualIds=[]}={}){
  for(const criterion of criteria(workspace.run)){
   if(unverifiedVisualIds.includes(criterion.id)){
-   if(criterion.type!=='visual'||workspace.run.observationCapabilities?.images!==false)throw Error('只能在缺少图像能力时保留视觉要求为未核验');
+   if(criterion.type!=='visual'||!require('./visual-limitation.cjs').unavailable(workspace.run))throw Error('只能在缺少图像能力时保留视觉要求为未核验');
    continue;
   }
   const check=criterion.check;

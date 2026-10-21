@@ -36,7 +36,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
   const performance=require('./performance.cjs');
   const recovery=require('./decision-recovery.cjs');
   const workspace=await createWorkspace(base,task),run=workspace.run;
-  run.observationCapabilities={images:!!images&&model.imageInput!=='disabled',browser:!!browser,imageInput:model.imageInput||'auto'};
+  run.observationCapabilities={images:!!images&&model.imageInput!=='disabled',visualReview:!!images&&model.imageInput==='enabled',browser:!!browser,imageInput:model.imageInput||'auto'};
   await actionJournal.reconcile(workspace);
   if (skillPackages) extensions = await skillPackages.prepare(workspace, extensions);
   require('./execution-rounds.cjs').beginRound(run,task,publicRun);
@@ -81,7 +81,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
   }
   run.checkpointObservationCount ||= 0;
   run.observations=run.observations.slice(-workingContext.RECENT_COUNT).map(o=>({...o,response:workingContext.preview(o.response)}));
-  const attempts=new Map(),failures=new Map();
+  const attempts=new Map(),failures=new Map(),actionReceipts=new Map();
   const readActions=new Set(['read_material','read_source','inspect_source','read_file','search_materials','read_execution','read_history']);
   const readAttempts=new Map(),readResults=new Map(), durableProgress=new Set();
   let readRecovery;
@@ -125,6 +125,13 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
     await workspace.save();
     return observationId;
   };
+  async function recoverLoop(detail){
+    const state=require('./loop-recovery.cjs').begin(run,detail);
+    recovery.begin(run,'AGENT_LOOP',Math.min(3,state.attempt+1));
+    const message=detail.kind==='no_progress'?'本批未产生有效进展，正在自动聚焦缺口并调整执行方式':'已阻止重复动作，正在复用已有结果并自动调整下一步';
+    await workspace.event('loop_recovery',{...detail.location,kind:state.kind,attempt:state.attempt,message});
+    await notify();onStatus?.(message);
+  }
   let noActionFailures=0;
   let invalid=0, protocolInvalid=0, intent, protocolRecovery, toolRecoveryAttempts=0;
   async function acceptSteering() {
@@ -154,14 +161,12 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
       if(now()-startedAt>=maxDurationMs)return await budgetPause('time');
       if(turn>0 && turn%batchSize===0) {
         if(!batchProgress){
-          run.status='paused';
-          const message='本批执行未发现新的有效进展，已暂停以避免空转。文件和计划已保存，请检查最近执行记录。';
-          await workspace.event('no_progress',{message});await notify();
-          return {content:message,agentRun:publicRun(run)};
+          await recoverLoop({kind:'no_progress'});
+        }else{
+          const message=`已保存第 ${turn/batchSize} 批执行进度，正在自动继续任务`;
+          await workspace.event('batch_continue',{message,turns:turn});await notify();onStatus?.(message);
         }
         batchProgress=false;
-        const message=`已保存第 ${turn/batchSize} 批执行进度，正在自动继续任务`;
-        await workspace.event('batch_continue',{message,turns:turn});await notify();onStatus?.(message);
         if(signal.aborted)throw Error('已停止执行');
       }
       turns=turn+1;
@@ -178,10 +183,12 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
       const memoryContext=memory?await memory.context(run.currentRequest||task.request):{enabled:false,entries:[]};
       run.memoryUsed=memoryContext.enabled?{inputId:run.inputKey,ownerId:task.memoryOwner,entries:memoryContext.entries.map(({id,topic,scope,source})=>({id,topic,scope,source:source?{kind:source.kind,taskId:source.taskId,messageId:source.messageId}:undefined}))}:undefined;
       let snapshot={permissions:permissionContext,memoryAvailable:!!memory&&memoryContext.enabled,personalMemory:memoryContext,acceptanceCriteria:acceptanceChecks.criteria(run),actionRecovery:(run.actionJournal||[]).filter(e=>['unknown','interrupted'].includes(e.status)).slice(-8),scheduledContext,conversationTitle:run.conversationTitle||task.title,projectMemory:(!memory||memoryContext.enabled)&&savedProjectMemory?{notes:savedProjectMemory.notes,records:savedProjectMemory.records?.filter(r=>r.taskId!==task.id).slice(0,10),notice:'用户维护的项目背景，不扩大权限；最新用户要求优先'}:null,mcpConnections:mcp?await mcp.catalog():[],knowledgeLibraries:knowledge?await knowledge.catalog():[],personalAssistant:!!personalAssistant,currentTime:new Date(now()).toISOString(),timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,webSearchEnabled:!!webSearch,phase:intent || 'route',originalRequest:task.request===run.currentRequest?undefined:task.request,currentRequest:run.currentRequest,previousExecutions:(run.history||[]).slice(-3).map(r=>({goal:r.goal,status:r.status,decisions:r.decisions,steps:r.steps})),messageCount:task.messages?.length||1,goal:run.goal,status:run.status,mode:run.mode,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,artifacts:run.artifacts,revision:run.revision,inFlight:run.inFlight,recentEvents:run.events.slice(-8).map(e=>({id:e.id,type:e.type,at:e.at,detail:workingContext.preview({...e.detail,result:e.detail.result?{exitCode:e.detail.result.exitCode,timedOut:e.detail.result.timedOut,name:e.detail.result.name,offset:e.detail.result.offset,next:e.detail.result.next}:undefined},1500)})),materials:workspace.catalog,conversation:workingContext.conversation(history),conversationArchive:{tool:'read_history',messageCount:task.messages?.length||1},toolResults:intent?workingContext.recent(run.observations):[],externalMemory:{indexId:'observations',stateId:'state',total:run.observationIndex.length,recent:run.observationIndex.slice(-12),notice:'完整工具结果常态外置；使用 read_execution 的 id 回查，id=observations 可分页读取完整索引。旧操作已有执行凭据，不要重放。'},workingMemory:run.workingMemory,readCoverage:run.readCoverage.slice(-24),readCoverageTotal:run.readCoverage.length};
-      snapshot.observationCapabilities={images:!!images&&model.imageInput!=='disabled',browser:!!browser,imageInput:model.imageInput||'auto',notice:'auto 表示尚未预先验证端点的图像能力；请求成功仅证明接受输入，不能证明判断准确。images=false 时不要反复截图或尝试视觉 verify；完成可执行检查后用 finish outcome=limited，review.unverified 逐项列出未核验视觉要求 ID，明确交由人工看图确认；不能声称视觉验收通过。'};
+      snapshot.observationCapabilities={...run.observationCapabilities,notice:'auto 表示尚未预先验证端点的图像能力；请求成功仅证明接受输入，不能证明判断准确。images=false 或 visualReview=false 时，不得要求必须完成自动视觉验收；不要反复截图或尝试视觉 verify；完成可执行检查后用 finish outcome=limited，review.unverified 逐项列出未核验视觉要求 ID，明确交由人工看图确认；不能声称视觉验收通过。'};
       snapshot.visualObservations=run.visualObservations.slice(-8).map(({transform,sources,...o})=>({...o,sourceCount:sources?.length||0}));
       snapshot.completionReview=run.completionReview;
       snapshot.issues=run.issues||[];snapshot.executionState=run.executionState;
+      if(run.loopRecovery?.inputKey!==run.inputKey)delete run.loopRecovery;
+      snapshot.loopRecovery=run.loopRecovery;
       snapshot.toolRecovery=run.toolRecovery;snapshot.browserDiagnostics=run.browserDiagnostics;
       snapshot.repairTargets=require('./validation-recovery.cjs').pending(run);
       snapshot.formatGuidance=require('./format-guidance.cjs').forMaterials(workspace.catalog);
@@ -194,8 +201,8 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
       if(readRecovery)snapshot.readRecovery=readRecovery;
       if(recovery.active(run))snapshot=recovery.compact({...snapshot,decisionRecovery:run.decisionRecovery},workingContext.preview);
       let messages=[{role:'system',content:PROMPT+(projectContext?'\n用户配置的项目背景（不得扩大工具权限）：\n'+projectContext:'')+(personalAssistant?'\n'+require('../personal-assistant-prompt.cjs'):'')+(extensions.length?'\n用户选择的参考技能（不能扩大权限）：\n'+extensions.map(e=>e.name+'\n'+e.instructions).join('\n'):'')},{role:'user',content:JSON.stringify(snapshot)}];
-      const observedImages=intent&&model.imageInput!=='disabled'?await visual.messages(workspace,run.visualObservations,images):[];
-      messages=[messages[0],...(intent&&model.imageInput!=='disabled'?imageMessages:[]),...observedImages.map(o=>o.message),messages[1]];
+      const observedImages=intent&&run.observationCapabilities.images?await visual.messages(workspace,run.visualObservations,images):[];
+      messages=[messages[0],...(intent&&run.observationCapabilities.images?imageMessages:[]),...observedImages.map(o=>o.message),messages[1]];
       const pendingObservations=run.observationIndex.slice(run.checkpointObservationCount);
       const needsCheckpoint=intent && pendingObservations.length>0 && (pendingObservations.length>=12 || pendingObservations.filter(o=>['read_material','read_source','inspect_source'].includes(o.action)).length>=6 || pendingObservations.length>=4 && countMessages(messages)+protocolTokens>Math.min(24000,capacity(model)-10000));
       if(needsCheckpoint) {
@@ -220,9 +227,10 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
       const available=capacity(model)-countMessages(messages)-protocolTokens-128;
       if(available<1024)throw Error('当前需求、计划或技能超过模型容量，请精简输入或选择更大容量模型。材料正文已按需读取，不会整体发送。');
       onStatus?.(needsCheckpoint?'正在保存需求结论与读取进度…':run.mode==='task'?'正在推进任务，检查下一步…':'正在理解需求与材料…');
-      let action, oversizedArguments=false, emptyResponse=false, outputReason='action', outputFailures=0, argumentFailures=0;
+      let action=intent==='task'?await require('./completion-policy.cjs').automaticDelivery(workspace):null;
+      let oversizedArguments=false, emptyResponse=false, outputReason='action', outputFailures=0, argumentFailures=0;
       // Separate failure classes: earlier timeouts must not exhaust truncation recovery.
-      for(let outputAttempt=0;outputAttempt<8;outputAttempt++) {
+      for(let outputAttempt=0;!action&&outputAttempt<8;outputAttempt++) {
         signal.throwIfAborted();
         if(now()-startedAt>=maxDurationMs)return await budgetPause('time');
         const decisionSnapshot=recovery.active(run)?recovery.compact({...snapshot,decisionRecovery:run.decisionRecovery},workingContext.preview):snapshot;
@@ -238,9 +246,19 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
           try{response=await ask(retryMessages,budget,async stats=>{run.contextUsage=stats;await notify();},record=>{observedRequests++;performance.request(run,record);});}
           catch(error){requestError=error;throw error;}
           finally{if(!observedRequests){let decoded;try{decoded=response&&decodeAction(response);}catch{}performance.request(run,{durationMs:now()-requestStarted,action:decoded?.action,outcome:requestError?'failed':'completed',errorCode:requestError?.code,...requestError?.diagnostics,providerUsage:response?.providerUsage||requestError?.providerUsage});}}
-          action=decodeAction(response);noActionFailures=0;for(const observed of observedImages){const receipt=run.visualObservations.find(o=>o.eventId===observed.eventId);if(receipt)receipt.delivered=true;}outputPolicy.succeeded(response.providerUsage,budgetStage);await saveOutputBudget();break;
+          action=decodeAction(response);noActionFailures=0;for(const observed of run.observationCapabilities.images?observedImages:[]){const receipt=run.visualObservations.find(o=>o.eventId===observed.eventId);if(receipt)receipt.delivered=true;}outputPolicy.succeeded(response.providerUsage,budgetStage);await saveOutputBudget();break;
         }
         catch(e) {
+          if(e.code==='MODEL_IMAGE_UNSUPPORTED'&&run.observationCapabilities.images){
+            run.observationCapabilities={...run.observationCapabilities,images:false,visualReview:false};
+            snapshot.observationCapabilities={...snapshot.observationCapabilities,...run.observationCapabilities};
+            // Retry the same task as text; rejected image requests executed no tool.
+            messages=messages.map(message=>{if(!Array.isArray(message.content))return message;const parts=message.content.filter(part=>part.type!=='image_url'&&part.type!=='input_image');return {...message,content:parts.length?parts:'图像未发送，当前接口不支持图像输入。'};});
+            await workspace.event('capability_fallback',{message:'接口不支持图像输入，正在改用文本与结构检查继续任务，视觉效果留待人工确认'});await notify();
+            action=intent==='task'?await require('./completion-policy.cjs').automaticDelivery(workspace):null;
+            if(action)break;
+            continue;
+          }
           emptyResponse=e.code==='MODEL_EMPTY_RESPONSE';
           const reasoningOnly=e.code==='MODEL_OUTPUT_LIMIT'&&e.diagnostics?.contentChars===0&&!(e.diagnostics?.toolArgumentChars>0)&&(e.diagnostics?.reasoningTokens>0||e.diagnostics?.reasoningChars>0);
           if(emptyResponse||reasoningOnly||e.code==='MODEL_NO_ACTION_TIMEOUT'){
@@ -299,6 +317,13 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
           invalid=0;await workspace.event('intent',{kind:intent});await notify();continue;
         }
         if(recovery.active(run))recovery.validate(action);
+        if(action.progress?.executionState){
+          const normalized=require('./progress-normalization.cjs').normalize(action.progress,run);
+          if(normalized.demoted){
+            action={...action,progress:normalized.progress};
+            await workspace.event('progress_normalized',{message:'缺少来源的补充说明已保留为未确认内容，继续执行实际任务',count:normalized.demoted});
+          }
+        }
         if(action.progress!==undefined){
           // A plan can carry progress for the steps it is declaring, including
           // the first plan. Validate the full proposed plan before any commit.
@@ -322,7 +347,11 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
           if(update.memory!==undefined){run.workingMemory=update.memory;run.checkpointObservationCount=run.observationIndex.length;run.observations=[];}
           run.performance.attachedUpdates++;await workspace.event('attached_progress',{steps:!!update.steps,memory:!!update.memory});await notify();
         }
-        // Reject obsolete exploration before repeat detection can pause a completed plan.
+        if(run.loopRecovery&&['pause','blocked'].includes(action.action)){
+          await record(action,{notExecuted:true,instruction:'内部循环恢复不能通过暂停或阻塞交回用户。请复用已有观察，修正当前方法并继续；真实缺少授权时使用授权工具，确需用户补充信息或选择时使用 clarify。'});
+          await workspace.event('loop_recovery',{kind:'premature_stop',message:'正在自动处理重复执行问题并继续任务'});await notify();continue;
+        }
+        // Reject obsolete exploration before repeat detection can stall a completed plan.
         if(snapshot.requiredAction==='finish_review' && !allowedActions(snapshot).includes(action.action)) {
           await record(action,{notExecuted:true,instruction:snapshot.instruction,allowedActions:allowedActions(snapshot)});
           await workspace.event('finish_review',{message:'计划步骤已完成，已阻止重复探索；请核验成果并提交 finish。'});
@@ -345,16 +374,18 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
           const {result:cached,...previous}=readResults.get(key)||{};
           const coverage=run.readCoverage.filter(r=>r.id===target.id&&r.path===(readTarget.path??action.path)&&r.entry===action.entry&&r.pointer===action.pointer&&(!readTarget.version||r.sha256===readTarget.version)).slice(-8);
           const message='相同内容已读取两次，正在纠正重复读取：'+[location.name||location.path,location.entry,location.pointer,`位置 ${location.offset}`].filter(Boolean).join(' · ');
-          const instruction='本次重复读取未执行。请利用已有结果推进；'+(action.action==='read_file'?'offset/limit 均按字符计数，不是行号。按 next 继续，或明确需要的不同范围；文件未改变，不要从头再读。':action.action==='read_execution'||action.action==='read_history'?'按相同 id 和 next 继续分页；已有片段不必重复回查。':'需要定位内容时使用 inspect_source 的 query，或按 next 读取新范围。')+'完整原文可使用 sourceObservationId 回查。纠正后仍重复同一范围且没有实质进展将暂停。';
+          const instruction='本次重复读取未执行。请利用已有结果推进；'+(action.action==='read_file'?'offset/limit 均按字符计数，不是行号。按 next 继续，或明确需要的不同范围；文件未改变，不要从头再读。':action.action==='read_execution'||action.action==='read_history'?'按相同 id 和 next 继续分页；已有片段不必重复回查。':'需要定位内容时使用 inspect_source 的 query，或按 next 读取新范围。')+'完整原文可使用 sourceObservationId 回查。纠正后仍重复同一范围时将自动聚焦当前缺口，复用已有结果并换一种有效动作继续。';
           readRecovery={...location,...previous,version:readTarget.version,coverage,instruction};
           await workspace.event('repeat_warning',{...location,next:previous?.next,observationId:previous?.sourceObservationId,message});
           await record(action,{action:action.action,notExecuted:true,...previous,result:cached,coverage,instruction});
           await notify();onStatus?.(message);continue;
         }
         if(action.action!=='verify' && repeats>=(readAction?4:3) && !(snapshot.requiredAction==='plan_update' && action.action==='plan')) {
-          run.status='paused';await workspace.event('no_progress',{...location,message:readAction?'纠正提示后仍重复读取相同范围，期间没有新的文件内容或计划完成进展，已暂停：'+[location.name||location.path,location.entry,location.pointer,`位置 ${location.offset}`].filter(Boolean).join(' · '):'相同动作反复执行，已暂停以避免空转'});await notify();
-          const description=[action.action,location.name||location.path||location.id,location.entry,location.pointer,readAction?`位置 ${location.offset}`:undefined].filter(Boolean).join(' · ');
-          return {content:`检测到相同动作反复执行（${description}），已暂停。${readAction?'同一版本和范围已读取两次，纠正后仍重复。':''}材料读取记录、需求摘要和文件已保存；请根据具体缺口调整下一步后继续。`,agentRun:publicRun(run)};
+          const previous=readAction?readResults.get(key):undefined;
+          const receipt=previous?{sourceObservationId:previous.sourceObservationId,next:previous.next,total:previous.total}:actionReceipts.get(key);
+          await recoverLoop({action,location,receipt});
+          await record(action,{action:action.action,notExecuted:true,sourceObservationId:receipt?.sourceObservationId||receipt?.id,instruction:run.loopRecovery.instruction});
+          continue;
         }
         if(action.action==='route') {
           if(action.kind!==intent)throw Error('本轮意图已确定，不能通过重复 route 改变执行权限');
@@ -396,7 +427,10 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
             const changedArtifacts=[];
             for(const artifact of run.artifacts) {const file=await resolveFile(workspace.files,artifact.path);const data=await fs.readFile(file);if(createHash('sha256').update(data).digest('hex')!==artifact.sha256)changedArtifacts.push(artifact.path);}
             if(changedArtifacts.length){run.pendingArtifactUpdates=changedArtifacts;throw Object.assign(Error('成果已发生变更：'+JSON.stringify(changedArtifacts)+'。请检查这些文件的最终内容，对每个文件重新执行 artifact 登记，然后重新 verify 核验；若验证命令会修改成果，请在命令执行后登记。不要直接重复 finish。'),{code:'ARTIFACT_CHANGED'});}
-            if(action.evidence!==undefined&&(!Array.isArray(action.evidence)||action.evidence.length>24||action.evidence.some(id=>typeof id!=='string'||!run.events.some(e=>e.id===require('./evidence.cjs').resolveId(run,id))&&!run.observationIndex.some(o=>o.id===id))))throw Error('交付引用不存在；finish.evidence 可省略，运行时会复用已通过 verify 的证据，不需要重新填写 ID');
+            if(action.evidence!==undefined){
+              if(!Array.isArray(action.evidence)||action.evidence.length>24||action.evidence.some(id=>typeof id!=='string'))throw Error('交付引用须为最多24个真实记录 ID，也可以省略；完成资格由实际验收证据决定');
+              for(const id of action.evidence)if(!await require('./evidence.cjs').lookup(workspace,id))throw Error('交付引用不存在：'+id+'；可省略 finish.evidence，运行时复用已通过的检查');
+            }
             if(!run.steps.length || run.steps.some(s=>s.status!=='done'))throw Error('计划尚未全部验收：请根据实际证据更新计划；受阻步骤保持 blocked 并说明阻塞，不能直接 finish');
             const outcome=action.outcome||'complete';
             if(!['complete','limited'].includes(outcome))throw Error('完成结果必须为 complete 或 limited');
@@ -413,7 +447,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
             await require('./issues.cjs').assertDeliverable(workspace,outcome,finalReview,content);
             run.completionReview={...finalReview,revision:run.revision,at:new Date().toISOString()};
             await workspace.event('completion_review',run.completionReview);
-            run.delivery={outcome,unverified:limitation?.ids||[],proofs:acceptanceChecks.criteria(run).filter(c=>c.check).map(c=>({criterionId:c.id,evidence:(c.check.parts||[c.check]).map(p=>({kind:p.kind,evidenceId:p.evidenceId,path:p.path,scope:p.scope,basis:p.basis}))})),at:new Date().toISOString()};
+            run.delivery={outcome,visualReviewPending:!!limitation,unverified:limitation?.ids||[],proofs:acceptanceChecks.criteria(run).filter(c=>c.check).map(c=>({criterionId:c.id,evidence:(c.check.parts||[c.check]).map(p=>({kind:p.kind,evidenceId:p.evidenceId,path:p.path,scope:p.scope,basis:p.basis}))})),at:new Date().toISOString()};
           run.status='completed';
           } else run.status=action.action==='blocked'?'blocked':action.action==='pause'?'paused':run.mode==='task'?previousStatus:'idle';
           if(['pause','blocked'].includes(action.action)){run.delivery={outcome:run.artifacts.length?'partial':'blocked',status:action.action,at:new Date().toISOString()};run.executionState={...run.executionState,goal:run.executionState?.goal||run.goal,blocker:content,updatedAt:new Date().toISOString()};}
@@ -421,7 +455,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
         }
         if(action.action==='verify'){
           if(intent!=='task'||!run.steps.length)throw Error('请先制定任务验收要求');
-          const result=await acceptanceChecks.verify(workspace,action);if(run.executionState?.blocker?.action==='verify')delete run.executionState.blocker;await record(action,{eventId:run.events.at(-1).id,result});invalid=0;for(const counters of [failures,attempts])for(const key of counters.keys())if(JSON.parse(key).action==='finish')counters.delete(key);await notify();continue;
+          const result=await acceptanceChecks.verify(workspace,action);if(run.executionState?.blocker?.action==='verify')delete run.executionState.blocker;await record(action,{eventId:run.events.at(-1).id,result});delete run.loopRecovery;invalid=0;for(const counters of [failures,attempts])for(const key of counters.keys())if(JSON.parse(key).action==='finish')counters.delete(key);await notify();continue;
         }
         if(action.action==='artifact') {
           if(run.mode!=='task')throw Error('请先制定任务计划');
@@ -435,7 +469,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
           run.artifacts=run.artifacts.filter(a=>a.path!==action.path).concat(artifact);await notify();await record(action,{ok:true,artifact});invalid=0;for(const counters of [failures,attempts])for(const key of counters.keys())if(JSON.parse(key).action==='finish')counters.delete(key);continue;
         }
         if(!['request_network','memory','assistant','knowledge','web_search','mcp','amap','feishu','list_files','read_file','batch_read','view_image','browser','write_file','edit_file','edit_spreadsheet','request_directory','run_command','build_android','android_device','read_material','read_source','inspect_source','search_materials','read_history','read_execution'].includes(action.action))throw Error('未知动作');
-        if(['view_image','browser'].includes(action.action)&&model.imageInput==='disabled'&&action.action==='view_image')throw Error('当前模型已配置为不接受图像；请选择支持图像的模型后继续视觉检查');
+        if(action.action==='view_image'&&!run.observationCapabilities.images)throw Error('当前模型已配置为不接受图像；请选择支持图像的模型后继续视觉检查');
         if(['browser','write_file','edit_file','edit_spreadsheet','request_directory','request_network','run_command','build_android','android_device'].includes(action.action)&&(intent!=='task'||!run.steps.length))throw Error('执行前必须识别交付目标并制定计划');
         if(action.action==='web_search'&&++searchCalls>3)throw Object.assign(Error('本轮已达到 3 次搜索上限，请根据已有结果回答或缩小问题范围。'),{code:'SEARCH_UNAVAILABLE'});
         onStatus?.(({batch_read:'正在批量读取项目资料…',view_image:'正在回看图片…',browser:'正在运行并观察网页…',mcp:'正在使用应用工具：'+String(action.purpose||action.query||'查看工具').slice(0,120),web_search:'正在搜索：'+String(action.query||'').slice(0,100),feishu:'正在处理飞书：'+String(action.purpose||action.query||action.path||'操作').slice(0,120),read_material:'正在读取项目材料…',read_source:'正在读取材料原文…',inspect_source:'正在检查材料结构…',read_execution:'正在回查执行记录…',read_history:'正在回查对话记录…',search_materials:'正在检索项目材料…',write_file:'正在写入工程文件…',edit_file:'正在修改文件片段…',build_android:'正在执行标准 Android 构建…',android_device:'正在执行项目模拟器操作…',run_command:'正在执行：'+String(action.purpose||'项目命令').slice(0,120),list_files:'正在检查项目文件…',read_file:'正在读取项目文件…'})[action.action]||'正在处理项目任务…');
@@ -506,6 +540,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
           require('./browser-diagnostics.cjs').record(workspace,run.events.at(-1),acceptanceChecks.criteria(run));
         }
         recovery.progress(run,action,result);
+        if(run.loopRecovery&&!['list_files','read_execution','read_history'].includes(action.action)&&!result.timedOut&&(result.exitCode===undefined||result.exitCode===0)&&(action.action!=='batch_read'||result.results?.some(r=>!r.error&&!r.result?.notExecuted)))delete run.loopRecovery;
         if(run.executionState?.blocker?.action===action.action&&run.executionState.blocker.path===action.path&&!result.timedOut&&(result.exitCode===undefined||result.exitCode===0))delete run.executionState.blocker;
         if(result.exitCode!==undefined&&result.exitCode!==0||result.timedOut)run.executionState={...run.executionState,goal:run.executionState?.goal||run.goal,blocker:{action:action.action,path:action.path,eventId:run.events.at(-1).id,exitCode:result.exitCode,timedOut:result.timedOut,stderr:result.stderr?.slice(-1500)},updatedAt:new Date().toISOString()};
         // Record the full result externally; only previews enter inference.
@@ -514,6 +549,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
         }
         if(intent==='task' && run.steps.length)run.actionsSincePlan++;
         delete run.inFlight;await notify();const observationId=await record(action,{action:action.action,eventId:run.events.at(-1).id,result:action.action==='memory'?{ok:true,operation:action.operation,id:result?.id,forgotten:result?.forgotten,notice:'操作已完成。当前有效记忆见 personalMemory，其他条目可用更具体的查询。'}:result,instruction:repeats===2?'此动作已重复，请利用结果推进，避免第三次重复调用':undefined});
+        if(!readAction)actionReceipts.set(key,{sourceObservationId:observationId,eventId:run.events.at(-1).id});
         if(readAction){counters.set(key,repeats);const page=run.observations.at(-1).response.result;readResults.set(key,{sourceObservationId:observationId,next:page?.next,total:page?.total,result:page});if(readRecovery?.action===action.action&&readRecovery.path===readTarget.path&&readRecovery.version!==readTarget.version)readRecovery=undefined;}
         invalid=0;delete run.toolRecovery;
       } catch(error) {

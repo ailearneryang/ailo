@@ -16,8 +16,8 @@ test('a text-only model delivers checked output with visual requirements explici
   const state=JSON.parse(messages.at(-1).content);assert.equal(state.observationCapabilities.images,false);
   return {content:JSON.stringify(actions[calls++])};
  }});
- assert.equal(calls,6);assert.equal(result.agentRun.status,'completed');assert.equal(result.agentRun.delivery.outcome,'limited');
- assert.deepEqual(result.agentRun.delivery.unverified,['appearance']);assert.match(result.content,/未进行视觉核验/);
+ assert.equal(calls,5);assert.equal(result.agentRun.status,'completed');assert.equal(result.agentRun.delivery.outcome,'limited');
+ assert.equal(result.agentRun.delivery.visualReviewPending,true);assert.deepEqual(result.agentRun.delivery.unverified,['appearance']);assert.match(result.content,/未进行视觉核验/);
  assert.equal(result.agentRun.acceptanceCriteria.find(c=>c.id==='appearance').status,'pending');
  assert.equal(result.agentRun.acceptanceCriteria.find(c=>c.id==='source').status,'passed');
  assert.ok(!result.agentRun.events.some(e=>e.type==='browser'||e.type==='view_image'));
@@ -41,4 +41,15 @@ test('limited delivery cannot omit visual disclosure or bypass content checks',a
  assert.equal(prepare({observationCapabilities:{images:true}},{outcome:'limited'},{issues:[],unverified:['v']},criteria),null);
  const base=await setup(t),w=await createWorkspace(base,{id:'t',request:'生成内容'});w.run.requirementsManaged=true;w.run.requirements=criteria;w.run.observationCapabilities={images:false};
  await assert.rejects(acceptance.assertAccepted(w,{unverifiedVisualIds:['v']}),/尚未核验验收项：内容/);
+});
+
+test('visual requirement IDs with explanatory text normalize without waiving other requirements',()=>{
+ const {prepare}=require('../apps/desktop/agent/visual-limitation.cjs');
+ const run={observationCapabilities:{visualReview:false}},criteria=[{id:'req-artboard-png',text:'画板完整可见',type:'visual'},{id:'report',text:'交付说明完整',type:'content'}];
+ for(const entry of ['req-artboard-png：需人工打开总览确认','req-artboard-png: 源文件各画板主体内容完整可见']){
+  const result=prepare(run,{outcome:'limited'},{issues:[],unverified:[entry]},criteria);
+  assert.deepEqual(result.ids,['req-artboard-png']);assert.deepEqual(result.review.unverified,['req-artboard-png']);
+ }
+ assert.throws(()=>prepare(run,{outcome:'limited'},{issues:[],unverified:['report: 内容待核验']},criteria),/其他要求仍须/);
+ assert.throws(()=>prepare(run,{outcome:'limited'},{issues:[],unverified:['req-artboard-png-other: 不同要求']},criteria),/逐项列出/);
 });

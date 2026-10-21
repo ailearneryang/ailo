@@ -34,12 +34,13 @@ function rememberFailure(workspace,error){
 function resolveFailure(workspace,artifact,event){
  const issue=workspace.run.issues?.find(i=>i.id===issueId(artifact.path)&&i.managedBy==='html-delivery');
  if(!issue||issue.status==='resolved'&&issue.evidenceId===event.id)return;
- issue.status='resolved';issue.evidenceId=event.id;issue.reason=workspace.run.observationCapabilities?.images===false?'当前成果已重新进行页面级结构观察，布局诊断通过；当前无图像能力，视觉质量仍待人工核验':'当前成果已重新进行页面级观察，截图已传给模型且布局诊断通过';
+ issue.status='resolved';issue.evidenceId=event.id;issue.reason=require('./visual-limitation.cjs').unavailable(workspace.run)?'当前成果已重新进行页面级结构观察，布局诊断通过；当前无图像能力，视觉质量仍待人工核验':'当前成果已重新进行页面级观察，截图已传给模型且布局诊断通过';
  issue.history.push({status:issue.status,evidenceId:event.id,reason:issue.reason,at:new Date().toISOString()});
  if(workspace.run.executionState)workspace.run.executionState.gaps=(workspace.run.executionState.gaps||[]).filter(g=>!g.startsWith('HTML '+artifact.path+'：'));
 }
 async function checkArtifact(workspace,artifact){
  const candidates=workspace.run.events.filter(e=>e.type==='browser'&&e.detail.result?.path===artifact.path&&e.detail.result?.screenshot);
+ if(!candidates.length&&workspace.findEvent){const archived=await workspace.findEvent(e=>e.type==='browser'&&e.detail.result?.path===artifact.path&&e.detail.result?.screenshot);if(archived)candidates.push(archived);}
  const issue=workspace.run.issues?.find(i=>i.id===issueId(artifact.path)&&i.managedBy==='html-delivery');
  let lastError;
  for(const event of candidates.slice().reverse()){
@@ -54,7 +55,7 @@ async function checkArtifact(workspace,artifact){
   }
   // Never hide a current defective observation behind a historical good one.
   try{assertPageHealth(result);await proof.event(workspace,event.id);}catch(error){throw failure(artifact,event,error.message);}
-  if(workspace.run.observationCapabilities?.images!==false&&!workspace.run.visualObservations?.some(o=>o.eventId===event.id&&o.delivered))throw failure(artifact,event,'HTML 截图尚未传给模型回看');
+  if(!require('./visual-limitation.cjs').unavailable(workspace.run)&&!workspace.run.visualObservations?.some(o=>o.eventId===event.id&&o.delivered))throw failure(artifact,event,'HTML 截图尚未传给模型回看');
   if(issue?.sourceBaseline?.some(source=>!result.sourceAudit?.sources?.some(s=>s.path===source.path&&s.sha256===source.sha256)))throw failure(artifact,event,'原稿依赖与发现问题时的版本不同；不能修改或删除原稿数据来使产物通过检查，请恢复原稿后修复生成逻辑');
   if(issue?.requiresSourceAudit&&(result.sourceAudit?.status!=='checked'||issue.sourcePaths?.some(p=>!result.sourceAudit.sources.some(s=>s.path===p))))throw failure(artifact,event,'先前发现的原稿缺陷尚未重新检查；不能删除或省略原稿依赖来关闭问题');
   if(result.scope?.kind!=='viewport'||result.dom?.layoutHealth?.scope!=='document'){
@@ -69,7 +70,7 @@ async function assertRepair(workspace,issue,evidenceId){
  const fs=require('node:fs/promises'),{resolveFile}=require('./workspace.cjs');
  const artifact={path,sha256:proof.hash(await fs.readFile(await resolveFile(workspace.files,path)))};
  const event=await checkArtifact(workspace,artifact),id=proof.resolveId(workspace.run,evidenceId);
- const cited=workspace.run.events.find(e=>e.id===id);
+ const cited=await proof.lookup(workspace,id);
  const sameScreenshot=cited?.type==='view_image'&&cited.detail.result?.path===event.detail.result.screenshot&&cited.detail.result?.rendererState?.id===event.detail.result.rendererState?.id&&cited.detail.result?.rendererState?.version===event.detail.result.rendererState?.version;
  if(id!==event.id&&!sameScreenshot)throw Error('关闭系统问题须引用当前通过页面检查的 browser 证据，不能用旧截图或普通命令替代');
  return event;

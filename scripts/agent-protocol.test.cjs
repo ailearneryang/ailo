@@ -261,14 +261,21 @@ test('accepted tools with prose responses switch to named tools then JSON, with 
  });assert.equal((await chat.complete(input)).content,'已恢复');assert.equal(calls,4);
 });
 
-test('an explicit image-input rejection is reported without logging provider content or retrying formats',async t=>{
+test('an image-input rejection retries as text without leaking provider details or switching protocol formats',async t=>{
  const storage=await fixture(t);let calls=0;
  const task=(await storage.readWorkspace()).tasks[0];
  const w=await require('../apps/desktop/agent/workspace.cjs').createWorkspace(storage.agentDirectory,task);await fs.writeFile(path.join(w.files,'screen.png'),'image');
  storage.imageObserver={async prepare(){return {image:{type:'image_url',image_url:{url:'data:image/png;base64,TEST'}}};}};
- const chat=createChat(storage,async(_url,options)=>{calls++;if(calls===1)return native({action:'route',kind:'task'});if(calls===2)return native({action:'view_image',path:'screen.png'});const request=JSON.parse(options.body);assert.ok(request.messages.some(m=>Array.isArray(m.content)&&m.content.some(p=>p.type==='image_url')),JSON.stringify(JSON.parse(request.messages.at(-1).content).toolResults));return new Response(JSON.stringify({error:{message:'image input not supported; provider-private-detail'}}),{status:400});});
+ const chat=createChat(storage,async(_url,options)=>{
+  calls++;if(calls===1)return native({action:'route',kind:'chat'});if(calls===2)return native({action:'view_image',path:'screen.png'});
+  const request=JSON.parse(options.body),hasImage=request.messages.some(m=>Array.isArray(m.content)&&m.content.some(p=>p.type==='image_url'));
+  assert.ok(request.tools);assert.equal(request.response_format,undefined);
+  if(calls===3){assert.ok(hasImage);return new Response(JSON.stringify({error:{message:'image input not supported; provider-private-detail'}}),{status:400});}
+  assert.equal(hasImage,false);assert.equal(JSON.parse(request.messages.at(-1).content).observationCapabilities.images,false);
+  return native({action:'reply',text:'当前接口不支持图像输入，无法判断图片内容。'});
+ });
  const result=await chat.complete(input);
- assert.equal(calls,3);assert.equal(result.agentRun.status,'blocked');assert.match(result.content,/不支持图像/);assert.ok(!result.content.includes('provider-private-detail'));
+ assert.equal(calls,4);assert.equal(result.agentRun.status,'idle');assert.match(result.content,/不支持图像/);assert.ok(!result.content.includes('provider-private-detail'));
 });
 
 test('tool name metadata alone cannot evade the no-action deadline',async t=>{

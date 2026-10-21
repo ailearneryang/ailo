@@ -105,9 +105,25 @@ async function createWorkspace(base, task) {
   // Seed the archive once so upgrading does not orphan earlier execution records.
   try {await fs.writeFile(runFile+'.jsonl',run.events.map(e=>JSON.stringify(e)+'\n').join(''),{mode:0o600,flag:'wx'});}
   catch(e){if(e.code!=='EEXIST')throw e;}
+  const eventCache=new Map();
+  async function scanEvents(predicate,last=false){
+    const input=require('node:fs').createReadStream(runFile+'.jsonl',{encoding:'utf8'}),lines=require('node:readline').createInterface({input,crlfDelay:Infinity});let found;
+    try{for await(const line of lines){let event;try{event=JSON.parse(line);}catch{continue;}if(predicate(event)){found=event;if(!last)return event;}}return found;}
+    catch(error){if(error.code!=='ENOENT')throw error;}finally{lines.close();input.destroy();}
+  }
   const lookup=id=>catalog.find(m=>m.id===id||m.aliases?.includes(id));
   async function save() {run.updatedAt=new Date().toISOString();await writeJson(runFile,run);}
   return {files,project,catalog,run,save,lookup,
+    async archivedEvent(id){
+      const current=run.events.find(e=>e.id===id);if(current)return current;
+      if(typeof id!=='string'||! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id))return;
+      if(eventCache.has(id))return eventCache.get(id);
+      const event=await scanEvents(e=>e.id===id);if(event)eventCache.set(id,event);return event;
+    },
+
+    async findEvent(predicate){
+      return run.events.slice().reverse().find(predicate)||await scanEvents(predicate,true);
+    },
     async archiveObservation(action,response){
       const id=randomUUID(),directory=runFile+'.observations';
       await fs.mkdir(directory,{recursive:true,mode:0o700});
