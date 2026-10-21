@@ -16,7 +16,7 @@ function beginRound(run,task,snapshot) {
       const anchor=messages.slice(0,index).findLast(m=>m.role==='assistant');
       run.history.push({...snapshot(run),history:undefined,afterMessageId:anchor?.id});
     }
-    Object.assign(run,{loadedExtensions:[],progressInputId:undefined,executionId:randomUUID(),status:'understanding',mode:'chat',goal:'',steps:[],decisions:[],acceptance:[],events:[],observations:[],observationIndex:[],checkpointObservationCount:0,actionsSincePlan:0,inFlight:undefined,contextUsage:undefined,question:undefined,acceptanceResults:{},actionJournal:[],pendingArtifactUpdates:[]});
+    Object.assign(run,{loadedExtensions:[],progressInputId:undefined,executionId:randomUUID(),status:'understanding',mode:'chat',goal:'',steps:[],decisions:[],acceptance:[],events:[],observations:[],observationIndex:[],checkpointObservationCount:0,actionsSincePlan:0,inFlight:undefined,contextUsage:undefined,question:undefined,requirements:undefined,requirementsManaged:undefined,issues:[],executionState:undefined,delivery:undefined,observationStates:{},acceptanceResults:{},acceptanceTypes:[],visualObservations:[],completionReview:undefined,performance:undefined,decisionRecovery:undefined,actionJournal:[],pendingArtifactUpdates:[]});
     if(task.editedInputId===trigger)run.workingMemory='';
   }
   run.executionId ||= randomUUID();

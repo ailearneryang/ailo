@@ -11,6 +11,9 @@ export function ExtensionCenter({ initialTab='expert', items, busy, onSave, onUs
   const [error, setError] = useState('');
   const [importing, setImporting] = useState(false);
   const file = useRef<HTMLInputElement>(null);
+  const removal = useRef<HTMLDialogElement>(null);
+  const [removing, setRemoving] = useState<Extension | null>(null);
+  const [deleting, setDeleting] = useState(false);
   function create() { setError(''); setDraft({ id: crypto.randomUUID(), kind: tab === 'expert' ? 'expert' : 'skill', name: '', description: '', instructions: '', enabled: true }); }
   async function importSkill(f?: File) {
     if (!f || importing) return;
@@ -39,10 +42,25 @@ export function ExtensionCenter({ initialTab='expert', items, busy, onSave, onUs
       </form>}
       {error && <p className="error" role="alert">{error}</p>}
       <div className="extension-grid">{items.filter(i => i.kind === tab && (i.name + i.description).toLowerCase().includes(query.toLowerCase())).map(item => <article className={'extension-card ' + (!item.enabled ? 'extension-disabled' : '')} key={item.id}>
-        <div className="extension-card-top"><span className="extension-symbol"><Icon name={item.kind === 'expert' ? 'user' : 'sparkles'}/></span><small>{item.enabled ? '已启用' : '已停用'}</small></div><h2>{item.name}</h2><p>{item.description || '自定义工作指令'}</p><div className="extension-actions"><button className="primary" disabled={busy || importing || !item.enabled} onClick={() => onUse(item)}>在对话中使用</button><button disabled={busy || importing} onClick={() => setDraft({...item})}>编辑</button><button disabled={busy || importing} onClick={() => void onSave(items.map(i => i.id === item.id ? {...i,enabled:!i.enabled} : i))}>{item.enabled ? '停用' : '启用'}</button></div>
+        <div className="extension-card-top"><span className="extension-symbol"><Icon name={item.kind === 'expert' ? 'user' : 'sparkles'}/></span><small>{item.enabled ? '已启用' : '已停用'}</small></div><h2>{item.name}</h2><p>{item.description || '自定义工作指令'}</p><div className="extension-actions"><button className="primary" disabled={busy || importing || !item.enabled} onClick={() => onUse(item)}>在对话中使用</button><button disabled={busy || importing} onClick={() => setDraft({...item})}>编辑</button><button disabled={busy || importing} onClick={() => void onSave(items.map(i => i.id === item.id ? {...i,enabled:!i.enabled} : i))}>{item.enabled ? '停用' : '启用'}</button>{item.kind === 'skill' && <button className="extension-delete" disabled={busy || importing || deleting} onClick={() => { setRemoving(item); setError(''); removal.current?.showModal(); }}>删除</button>}</div>
       </article>)}</div>
       {!items.some(i => i.kind === tab && (i.name+i.description).toLowerCase().includes(query.toLowerCase())) && <p className="extension-empty">没有匹配的扩展，试试其他关键词或创建一个。</p>}
     </>}
+    <dialog ref={removal} className="extension-removal" aria-labelledby="extension-removal-title" onClose={() => setRemoving(null)} onCancel={e => { if (deleting) e.preventDefault(); }}>
+      <h2 id="extension-removal-title">删除技能“{removing?.name}”？</h2>
+      <p>将从技能列表、对话选择和项目默认中移除。历史对话会保留，需要时可重新导入技能。</p>
+      <div className="extension-actions"><button disabled={deleting} onClick={() => removal.current?.close()}>取消</button><button className="extension-delete" disabled={busy || importing || deleting || !removing} onClick={async () => {
+        if (!removing || deleting) return;
+        setDeleting(true);
+        try {
+          if (await onSave(items.filter(i => i.id !== removing.id))) {
+            if (draft?.id === removing.id) setDraft(null);
+            removal.current?.close();
+          } else { removal.current?.close(); }
+        } catch (e) { setError(String(e).replace(/^Error: /, '')); removal.current?.close(); }
+        finally { setDeleting(false); }
+      }}>{deleting ? '正在删除…' : '确认删除'}</button></div>
+    </dialog>
   </div>;
 }
 export function ExtensionPicker({items, value, disabled, onChange, onManage, onDefault}: {items:Extension[]; value:string[]; disabled:boolean; onChange:(ids:string[])=>void; onManage:()=>void; onDefault?:()=>void}) {

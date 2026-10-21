@@ -7,10 +7,10 @@ async function setup(t){const base=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-
 test('acceptance checks bind each requirement, fail atomically, and reject stale or changed files',async t=>{
  const {w}=await setup(t);await fs.writeFile(path.join(w.files,'lesson.md'),'标题');await fs.writeFile(path.join(w.files,'progress.json'),'{}');
  const checks=[{criterionId:acceptance.criterionId(w.run.acceptance[0]),kind:'text_contains',path:'lesson.md',contains:['标题','案例'],reason:'核验两个必需章节'},{criterionId:acceptance.criterionId(w.run.acceptance[1]),kind:'json_valid',path:'progress.json',reason:'验证进度JSON格式'}];
- await assert.rejects(acceptance.verify(w,{checks}),/缺少内容/);assert.equal(w.run.acceptanceResults,undefined);
+ await assert.rejects(acceptance.verify(w,{checks}),/未匹配到原文/);assert.equal(w.run.acceptanceResults,undefined);
  await fs.writeFile(path.join(w.files,'lesson.md'),'标题 案例');await acceptance.verify(w,{checks});await acceptance.assertAccepted(w);
  await fs.writeFile(path.join(w.files,'lesson.md'),'changed');await assert.rejects(acceptance.assertAccepted(w),/已变化/);
- w.run.revision++;await assert.rejects(acceptance.assertAccepted(w),/尚未核验/);
+ w.run.revision++;await assert.rejects(acceptance.assertAccepted(w),/尚未核验|依赖文件已变化/);
 });
 test('a successful command does not satisfy requirements until explicitly bound, invalid evidence rejected',async t=>{
  const {w}=await setup(t);w.run.acceptance=['构建成功'];await w.event('run_command',{revision:w.run.revision,result:{exitCode:0},command:'build'});

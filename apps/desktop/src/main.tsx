@@ -1,4 +1,5 @@
-import {taskPresentation,mergeSessionSnapshot,type LiveSession} from './task-presentation';
+import {taskPresentation,mergeSessionSnapshot,syncLiveTaskRuns,type LiveSession} from './task-presentation';
+import {attachChatScroll} from './chat-scroll';
 import {ConversationActions,ConversationActionDialog,ArchivedConversations} from './conversation-management';
 import {FileLibrary} from './file-library';
 import {NotificationCenter,NotificationButton} from './notification-center';
@@ -45,7 +46,10 @@ import type { ClarificationAnswer } from "./types";
 import { Icon } from "./icon";
 import { ContextMeter } from "./context-meter";
 import { serializeMessage } from "../context.mjs";
+import {DeliveryResult} from './delivery-result';
+import {deliveryForMessage} from './delivery-artifacts';
 import { ArtifactPanel } from "./artifact-panel";
+import {ReplyDetails} from './reply-details';
 import { TaskActivity } from "./task-activity";
 import {progressAnchor} from "./progress-placement";
 import { TaskProgress, ExecutionHistory } from "./task-progress";
@@ -82,6 +86,7 @@ function App() {
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
   const [rightPanel,setRightPanel] = useState<'artifacts'|null>(null);
+  const [artifactSelection,setArtifactSelection]=useState<{path:string}|undefined>();
   const rightPanelToggle=useRef<HTMLButtonElement>(null);
   const [user, setUser] = useState<User | null>(null);
   const [accountReady, setAccountReady] = useState(false);
@@ -153,9 +158,12 @@ function App() {
       if(polling)return;polling=true;
       try{
         const running=await window.ailo.sessions();if(cancelled)return;
-        const before=Object.keys(requests.current).length;
+        const previousIds=new Set(Object.values(requests.current).map(s=>s.id));
         requests.current=mergeSessionSnapshot(requests.current,running,finishedRequests.current);
-        if(Object.keys(requests.current).length<before){const state=await window.ailo.read();if(!cancelled)setData(state);}
+        const nextIds=new Set(Object.values(requests.current).map(s=>s.id));
+        if(previousIds.size!==nextIds.size||[...nextIds].some(id=>!previousIds.has(id))){
+          const state=await window.ailo.read();if(!cancelled)setData({...state,tasks:syncLiveTaskRuns(state.tasks,requests.current)});
+        }else setData(state=>({...state,tasks:syncLiveTaskRuns(state.tasks,requests.current)}));
         syncSessions();
       }catch{/* IPC may be closing; retry on next tick. */}finally{polling=false;}
     }
@@ -165,7 +173,6 @@ function App() {
   const [searchOpen,setSearchOpen]=useState(false);
   useEffect(()=>{const key=(event:KeyboardEvent)=>{if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'&&!event.altKey&&!event.isComposing){event.preventDefault();setSearchOpen(true);}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[]);
   const cancelledRef = useRef<string | null>(null);
-  const threadEnd = useRef<HTMLDivElement>(null);
   const composerBusy = saving || importing;
   const busy = composerBusy || !!pending;
   const messagesFor = (t: Task): Message[] =>
@@ -178,9 +185,6 @@ function App() {
         createdAt: t.created,
       },
     ];
-  useEffect(() => {
-    threadEnd.current?.scrollIntoView({ block: "end" });
-  }, [active, data.tasks, pending]);
   useEffect(() => {
     window.ailo
       .account()
@@ -299,6 +303,7 @@ function App() {
     }
   }
   function select(id: string | null) {
+    setArtifactSelection(undefined);
     if(task?.temporary&&id!==task.id){discardedTemporary.current.add(task.id);delete drafts.current[task.id];void window.ailo.temporaryConversation({id:task.id}).catch(()=>{});setData(d=>({...d,tasks:d.tasks.filter(t=>t.id!==task.id)}));}
 
     setMessageEdit(null);
@@ -351,8 +356,10 @@ function App() {
       lastError: undefined,
       partialReply: undefined,
     };
+    let taskSaved = false;
     try {
       const saved=await window.ailo.patchTask(updated.id,updated);
+      taskSaved = true;
       setData(previous=>({...previous,tasks:previous.tasks.some(t=>t.id===saved.id)?previous.tasks.map(t=>t.id===saved.id?{...t,...saved}:t):[saved,...previous.tasks]}));
       setTurnExtensions(previous=>({...previous,[connectionKey]:[]}));
       if (clearDraft) {
@@ -382,6 +389,7 @@ function App() {
         content: result.content,
         clarification: result.clarification,
         modelName: result.modelName,
+        replyDetails: result.replyDetails,
       };
       const finished=await window.ailo.patchTask(updated.id,{contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens,lastError:undefined,partialReply:undefined},[assistant]);
       setData(previous=>({...previous,tasks:previous.tasks.map(t=>t.id===finished.id?{...t,...finished}:t)}));
@@ -392,6 +400,7 @@ function App() {
       const existing=running.find(s=>s.taskId===nextTask.id);
       if(existing){requests.current[nextTask.id]={...existing,attached:true};syncSessions();setNotice('已连接到正在执行的任务。');return;}
       try {
+        if (!taskSaved) throw e;
         const failed=await window.ailo.patchTask(updated.id,{lastError:message,partialReply:requests.current[updated.id]?.content||undefined});
         setData(previous=>({...previous,tasks:previous.tasks.map(t=>t.id===failed.id?{...t,...failed}:t)}));
       } catch {
@@ -649,14 +658,15 @@ function App() {
           </div>
         </header>
         <div className="workspace">
-          <section className={"conversation" + (view === "assistant" ? " assistant-conversation" : "") + (isConversation && !task ? " conversation-home" : "")}>
+          {/* Conversation identity owns the entire page lifecycle, including progress and activity. */}
+          <section key={`${view}:${task?.id || 'new'}`} className={"conversation" + (view === "assistant" ? " assistant-conversation" : "") + (isConversation && !task ? " conversation-home" : "")}>
             {view === "assistant" && <MyAilo compact={!!task} data={data} runningIds={Object.keys(sessions)} onOpen={select} onResolve={async(id,messageId,answers,materials)=>{setData(await window.ailo.resumeTask({id,messageId,answers,materials}));}} onSchedules={()=>setView("schedules")} onPets={()=>setView("pets")} />}
             {view === 'files' ? <FileLibrary workspace={data} onOpen={select}/> : view === 'notifications' ? <NotificationCenter key={user?.id||'local'} taskIds={data.tasks.map(t=>t.id)} onOpen={select}/> : view === 'archived' ? <ArchivedConversations tasks={data.tasks} onOpen={select} onAction={(id,action)=>void operateConversation(id,action)}/> : view === "profile" ? <PersonalProfile onUser={setUser} onWorkspace={setData} onOpen={select} onCreate={text=>{select(null);setInput(text);}} onFeedback={(id,text)=>{select(id);setInput(text);}} onConnections={()=>{setExtensionTab("connector");setView("extensions");}}/> : view === "pets" ? <PetSettings workspace={data} runningIds={Object.keys(sessions)} onOpen={select} onFeedback={(id,text)=>{select(id);setInput(text);}} onProject={id=>{setProjectId(id);setView("project");}}/> : view === "permissions" ? <PermissionCenter key={user?.id||"local"} ownerId={user?.id||"local"} workspace={data} onOpen={select} onConnections={()=>{setExtensionTab("connector");setView("extensions");}}/> : view === "memory" ? <PersonalMemory key={user?.id||"local"} ownerId={user?.id||"local"} workspace={data} onOpen={select}/> : view === "appearance" ? <AppearanceSettings/> : view === "knowledge" ? <KnowledgeCenter onUse={id=>{select(null);setNewKnowledgeIds([id]);setView("chat");setNotice("已选择知识库，发送问题即可检索资料。");}}/> : view === "schedules" ? <Schedules projects={data.projects} key={scheduleTarget||"all"} initialId={scheduleTarget||undefined} focusHistory={!!scheduleTarget} onChanged={async()=>setData(await window.ailo.read())} tasks={data.tasks} models={models} defaultModelId={data.defaultModelId} onFeishu={()=>{setExtensionTab("connector");setView("extensions");}} onModels={()=>setView("models")} onOpen={async id=>{const latest=await window.ailo.read();if(!latest.tasks.some(t=>t.id===id))throw Error('对话已删除或尚未创建');setData(latest);select(id);const opened=latest.tasks.find(t=>t.id===id)!;setModelId(opened.modelId||latest.defaultModelId);setProjectId(opened.projectId||"");setExtensionIds(opened.extensionIds||[]);}}/> : view === "project" && data.projects.some(p=>p.id===projectId) ? <ProjectOverview onSaved={project=>setData(d=>({...d,projects:d.projects.map(p=>p.id===project.id?project:p)}))} key={projectId} project={data.projects.find(p=>p.id===projectId)!} tasks={data.tasks.filter(t=>t.projectId===projectId&&!t.archived&&!t.temporary)} onSelect={select} onNew={()=>{const id=projectId;select(null);selectProject(id);}}/> : view === "extensions" ? (
               <ExtensionCenter initialTab={extensionTab} items={availableExtensions} busy={busy || !ready}
                 onTryConnection={(text,connector)=>{if(typeof connector==='object')changeMCPConnections([...new Set([...mcpConnectionIds,connector.mcpId])]);else if(connector==='amap')setAMapChoices(v=>({...v,[connectionKey]:true}));else setConnectionChoices(v=>({...v,[connectionKey]:true}));setView(active === ASSISTANT_ID ? "assistant" : "chat");setInput(text);setError("");}}
                 onImporting={setImporting}
                 onMaterial={material=>{setMaterials(items=>[...items,material]);setView(active === ASSISTANT_ID ? "assistant" : "chat");setError("");}}
-                onSave={async items => { const ok = await commit({...data, extensions:items}); if (ok) setExtensionIds(ids => ids.filter(id => items.some(i => i.id === id && i.enabled))); return ok; }}
+                onSave={async items => { const ok = await commit({...data, extensions:items}); if (ok) { const keep = (id:string) => items.some(i => i.id === id && i.enabled); setExtensionIds(ids => ids.filter(keep)); setTurnExtensions(turns => Object.fromEntries(Object.entries(turns).map(([key,ids]) => [key,ids.filter(keep)]))); } return ok; }}
                 onUse={item => {
                   if (item.kind === "skill") {
                     if (!turnIds.includes(item.id) && turnIds.filter(id => availableExtensions.find(e => e.id === id)?.kind === "skill").length >= 5) { setError("最多选择 5 个技能，请先在聊天框移除一个。"); return; }
@@ -726,7 +736,7 @@ function App() {
               </div>
             ) : (
               <div className="conversation-stage">
-              <div className="thread">
+              <div className="thread" key={task.id} ref={attachChatScroll}>
                 <ConversationNavigation messages={messagesFor(task)} conversationId={task.id}/>
                 <div className="thread-content">
                 <div className="day">
@@ -752,6 +762,7 @@ function App() {
                         <small>{message.modelName}</small>
                       </div>
                     )}
+                    {message.role==="assistant"&&<ReplyDetails message={message}/>}
                     <div
                       className={
                         message.role === "user" ? `bubble${message.clarificationReplyTo ? ' clarification-reply' : ''}` : "assistant-text"
@@ -766,6 +777,7 @@ function App() {
                         {message.materials.map((material,i)=><span className="message-file" key={i} title={material.name}><Icon name="file"/><span>{material.name}</span></span>)}
                       </div>}
                     </div>
+                    {message.role==='assistant'&&(()=>{const delivery=deliveryForMessage(task,messagesFor(task),message.id);return delivery?<DeliveryResult key={task.id+':'+(delivery.executionId||message.id)} task={task} run={delivery} onOpen={path=>{setArtifactSelection(path?{path}:undefined);setRightPanel('artifacts');}}/>:null;})()}
                     {messageEdit?.taskId!==task.id&&<MessageActions onBranch={!task.temporary?()=>void forkConversation(message.id):undefined} onRegenerate={!task.temporary&&message.role==='assistant'?()=>void forkConversation(message.id,true):undefined} message={message} createdAt={message.createdAt||(index===0&&message.role==='user'?task.created:undefined)} disabled={busy}
                       onEdit={message.role==='user'&&latestUserMessageId===message.id&&!pending?()=>setMessageEdit({taskId:task.id,messageId:message.id,content:message.content}):undefined}/>}
                     {message.role==='assistant'&&index===messagesFor(task).length-1&&!busy&&<CompanionResultAction task={task}/>}
@@ -781,6 +793,7 @@ function App() {
                     {task.agentRun?.history?.filter(r=>r.afterMessageId===message.id).map((r,i)=><ExecutionHistory key={r.executionId||i} task={task} run={r} onOpenArtifacts={()=>setRightPanel('artifacts')}/>)}
                   </div>
                 ))}
+                {task && pending===task.id && <TaskActivity task={task} status={chatStatus} session={sessions[task.id]}/>}
                 {pending === task.id ? (visibleReply(streamText) && (
                   <div className="reply">
                     <div className="byline">
@@ -815,15 +828,13 @@ function App() {
                   )
                 )}
 
-                <div ref={threadEnd} />
                 </div>
               </div>
-              {isConversation && rightPanel && <ArtifactPanel key={task.id} task={task} materials={[...task.materials,...materials]} onAttach={()=>void attach()} attaching={busy || importing} onRequest={text=>setInput(text)} onClose={()=>{setRightPanel(null);rightPanelToggle.current?.focus({preventScroll:true});}}/>}
+              {isConversation && rightPanel && <ArtifactPanel key={task.id} task={task} selectionRequest={artifactSelection} materials={[...task.materials,...materials]} onAttach={()=>void attach()} attaching={busy || importing} onRequest={text=>setInput(text)} onClose={()=>{setRightPanel(null);rightPanelToggle.current?.focus({preventScroll:true});}}/>}
               </div>
             )}
             {isConversation && (
               <div className={"compose-area " + (task ? "chat-compose" : "")}>
-                {task && pending===task.id && <TaskActivity task={task} status={chatStatus} session={sessions[task.id]}/>}
                 {task && queued.some(m=>m.taskId===task.id) && <div className="message-queue" aria-label="待发送消息">
                   <p><Icon name="queue"/>待发送 · {queued.filter(m=>m.taskId===task.id).length}</p>
                   {queued.filter(m=>m.taskId===task.id).map(item=><div className="queued-message" key={item.id}>

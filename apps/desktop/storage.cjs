@@ -23,6 +23,8 @@ function createStorage(directory, safeStorage) {
       throw error;
     }
   }
+  // Local conversation history grows over time; do not cap the entire workspace.
+  // Keep field validation at the entry points and preserve atomic, serialized writes.
   async function write(name, data) {
     await fs.mkdir(directory, { recursive: true });
     await fs.writeFile(file(name) + ".tmp", JSON.stringify(data), {
@@ -52,7 +54,7 @@ function createStorage(directory, safeStorage) {
   }
   return {
     skillPackages,
-    mutateWorkspace(action){return queue(async()=>{const state=await read('workspace',{tasks:[],projects:[],models:[]});const result=await action(state);if(JSON.stringify(state).length>2000000)throw Error('工作空间超过容量限制');await write('workspace',state);return result;});},
+    mutateWorkspace(action){return queue(async()=>{const state=await read('workspace',{tasks:[],projects:[],models:[]});const result=await action(state);await write('workspace',state);return result;});},
     async profile(){
       await writes.catch(()=>{});
       const accounts=await read('accounts',{users:[]}),user=accounts.users.find(u=>u.id===accounts.currentUserId);
@@ -70,8 +72,9 @@ function createStorage(directory, safeStorage) {
     recordModelRequest(record){return queue(async()=>{
       const usage=await read('usage',require('./profile.cjs').emptyUsage());if(require('./profile.cjs').recordRequest(usage,record))await write('usage',usage);
       const fields=['id','modelId','taskId','attempt','phase','startedAt','transport','headersMs','responseHeadersTimeoutMs','timeoutStage','requestBytes','messageCount','requestedOutputTokens','providerRequestId','httpStatus','chunks','bytes','maxChunkGapMs','firstByteMs','firstContentMs','streamCancelled','outcome','errorCode','abortRequested','durationMs','systemProxyMode'];
-      fields.push('networkCode');
+      fields.push('noActionTimeoutMs','reasoningEffort','toolStreaming','recoveryMode','recoveryStage','networkCode','action','firstActionMs','contentChars','toolCalls','toolArgumentChars','reasoningChars','reasoningTokens');
       const safe=Object.fromEntries(fields.filter(k=>['string','number','boolean'].includes(typeof record[k])).map(k=>[k,typeof record[k]==='string'?record[k].slice(0,128):record[k]]));
+      for(const [field,key] of [['inputTokens','inputTokens'],['outputTokens','outputTokens'],['reasoningTokens','reasoningTokens']])if(Number.isSafeInteger(record.providerUsage?.[key]))safe[field]=record.providerUsage[key];
       const records=await read('model-requests',[]);await write('model-requests',[...records.slice(-199),safe]);
     });},
     async modelCredentials(id) {
@@ -97,6 +100,7 @@ function createStorage(directory, safeStorage) {
         apiKey,
         contextWindow: model.contextWindow,
         maxOutputTokens: model.maxOutputTokens,
+        imageInput:model.imageInput,
       };
     },
     async readWorkspace() {
@@ -162,7 +166,7 @@ function createStorage(directory, safeStorage) {
         const task={...previous,...fields,id,messages:merged};
         if(typeof task.request!=='string'||(!task.request.trim()&&!task.materials?.length)||!Array.isArray(task.materials)||(!!task.projectId&&!state.projects.some(p=>p.id===task.projectId))||merged.some(m=>!m||!['user','assistant'].includes(m.role)||typeof m.content!=='string'))throw Error('任务数据无效');
         state.tasks=previous?state.tasks.map(t=>t.id===id?task:t):[task,...state.tasks];
-        if(JSON.stringify(state).length>2000000)throw Error('工作空间超过容量限制');
+
         await write('workspace',state);return task;
       });
     },
@@ -179,7 +183,7 @@ function createStorage(directory, safeStorage) {
         task.editedInputId=task.messages.at(-1).id;
         if(index===0)task.request=content.trim();
         delete task.contextCheckpoint;delete task.promptTokens;delete task.partialReply;delete task.lastError;delete task.lastErrorCode;delete task.modelRequestDiagnostics;
-        if(JSON.stringify(state).length>2000000)throw Error('工作空间超过容量限制');
+
         // Keep the replaced question and its replies outside active model history.
         // Write the backup first: a failure must not discard the original reply.
         const backups=path.join(directory,'message-edits');
@@ -201,10 +205,9 @@ function createStorage(directory, safeStorage) {
           !state ||
           !Array.isArray(state.tasks) ||
           !Array.isArray(state.projects) ||
-          !Array.isArray(state.models) ||
-          JSON.stringify(state).length > 2000000
+          !Array.isArray(state.models)
         )
-          throw Error("工作空间数据格式不正确或超过容量限制。");
+          throw Error("工作空间数据格式不正确。");
         const previous = await read("workspace", { models: [] });
         const ids = new Set();
         const models = state.models.map((model) => {
@@ -222,6 +225,7 @@ function createStorage(directory, safeStorage) {
           if (model.contextWindow !== undefined && (!Number.isInteger(model.contextWindow) || model.contextWindow < 4096 || model.contextWindow > 2000000))
             throw Error("上下文容量须为 4096–2000000 之间的整数。");
           if(model.maxOutputTokens !== undefined && (!Number.isInteger(model.maxOutputTokens)||model.maxOutputTokens<256||model.maxOutputTokens>2000000||(model.contextWindow && model.maxOutputTokens>=model.contextWindow)))throw Error('最大输出额度须为256–2000000之间的整数，且小于上下文容量；请按服务商限制填写。');
+          if(model.imageInput!==undefined&&!['auto','enabled','disabled'].includes(model.imageInput))throw Error('图像输入配置无效');
           ids.add(model.id);
           const url = new URL(model.baseUrl);
           if (
@@ -255,6 +259,7 @@ function createStorage(directory, safeStorage) {
             name: model.name.trim(),
             ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
             ...(model.maxOutputTokens !== undefined ? {maxOutputTokens:model.maxOutputTokens} : {}),
+            imageInput:model.imageInput||'auto',
             model: model.model.trim(),
             baseUrl: url.href.replace(/\/$/, ""),
             ...(encryptedKey ? { encryptedKey } : {}),
@@ -289,7 +294,7 @@ function createStorage(directory, safeStorage) {
           throw Error("任务数据无效。");
         await write("workspace", {
           extensions,
-          tasks: preserveTasks ? (previous.tasks || []) : state.tasks,
+          tasks: (preserveTasks ? (previous.tasks || []) : state.tasks).map(task => task.extensionIds ? {...task, extensionIds: task.extensionIds.filter(id => extensions.some(e => e.id === id))} : task),
           projects,
           models,
           defaultModelId: ids.has(state.defaultModelId)

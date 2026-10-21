@@ -177,3 +177,16 @@ test('chat main-process path loads ZIP resources only for the explicitly selecte
   await withoutSkill.complete({ id: 'plain-request', taskId: task.id, modelId: 'm', messages: task.messages });
   await assert.rejects(fs.access(path.join(workspace.files, '.runtime/ailo-skills', item.package.id)), { code: 'ENOENT' });
 });
+test('deleting an imported skill persists and clears selections while retaining conversation history', async t => {
+  const { base } = await setup(t), storage = createStorage(base, {});
+  const item = await importZip(storage.skillPackages, await zip([['SKILL.md', markdown]]));
+  const task = { id: 'delete-skill', request: '保留历史', materials: [], extensionIds: [item.id], messages: [{role:'user',content:'保留历史'}] };
+  await storage.saveWorkspace({ ...(await storage.readWorkspace()), extensions: [item], projects: [{id:'project',name:'项目',extensionIds:[item.id]}], tasks: [task] });
+  const before = await storage.readWorkspace();
+  await storage.saveWorkspace({...before, extensions: []});
+  const state = await createStorage(base, {}).readWorkspace();
+  assert.deepEqual(state.extensions, []);
+  assert.deepEqual(state.projects[0].extensionIds, []);
+  assert.deepEqual(state.tasks[0].extensionIds, []);
+  assert.deepEqual(state.tasks[0].messages, task.messages);
+});

@@ -2236,3 +2236,26 @@ select:focus-visible {
 .task-nav-title > span { display: inline-block; white-space: nowrap; vertical-align: bottom; }
 .task-nav-name > .task-nav-title.revealing { text-overflow: clip; }
 .task-nav-row.selected:is(:hover,:focus-within) { background:color-mix(in srgb, var(--muted,#687563) 16%, transparent); }
+
+.task-activity-details { min-width:0; }
+.task-activity-details > summary { cursor:pointer; list-style:none; }
+.task-activity-details > summary::-webkit-details-marker { display:none; }
+.task-activity-current > .task-activity-chevron { flex:0 0 auto; display:inline-block; font:16px monospace; transition:transform .15s; }
+.task-activity-details[open] > summary > .task-activity-chevron { transform:rotate(90deg); }
+.task-activity-details > summary:focus-visible { outline:2px solid currentColor; outline-offset:4px; border-radius:4px; }
+.task-activity-details > .execution-event-list { margin:8px 0 8px 22px; max-height:320px; overflow:auto; font-size:calc(12px * var(--font-scale, 1)); line-height:1.6; }
+.execution-event-list p { overflow-wrap:anywhere; }
+.execution-event-list pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+
+.reply-details { margin: 8px 0 14px; color:var(--muted); font-size:calc(12px * var(--font-scale, 1)); }
+.reply-details > summary { display:flex; align-items:center; gap:8px; width:fit-content; cursor:pointer; list-style:none; }
+.reply-details > summary::-webkit-details-marker { display:none; }
+.reply-details-chevron { display:inline-block; font:16px monospace; transition:transform .15s; }
+.reply-details[open] > summary .reply-details-chevron { transform:rotate(90deg); }
+.reply-details > summary:focus-visible { outline:2px solid currentColor; outline-offset:4px; border-radius:3px; }
+.reply-details-content { margin-top:10px; padding:4px 12px; border-left:2px solid var(--border); max-height:320px; overflow:auto; line-height:1.6; overflow-wrap:anywhere; }
+.reply-details-content p { margin:6px 0; }
+
+/* Expanded execution details belong to the scrollable conversation. */
+.thread-content > .task-activity { margin:18px 0 12px; }
+.thread-content > .task-activity .execution-event-list { max-height:min(320px, 40vh); overscroll-behavior-y:contain; }

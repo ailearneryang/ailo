@@ -33,7 +33,7 @@ test('finish cannot silently convert blocked steps to done despite valid files a
  else if(n===2)action={action:'plan',goal:'构建',decisions:[],acceptance:['APK 构建成功'],steps:[{id:'apk',title:'Gradle 构建',status:'blocked'}]};
  else if(n===3){const w=await createWorkspace(base,task);await fs.writeFile(path.join(w.files,'README.md'),'尚未构建 APK');action={action:'artifact',path:'README.md',label:'说明'};}
  else if(n===4)action={action:'run_command',command:'true',purpose:'检查说明文件'};
- else if(n===5)action={action:'finish',text:'完成',evidence:[s.recentEvents.find(e=>e.type==='run_command').id]};
+ else if(n===5)action={action:'finish',review:{summary:'已对照要求检查当前成果',issues:[],unverified:[]},text:'完成',evidence:[s.recentEvents.find(e=>e.type==='run_command').id]};
  else {assert.match(s.toolResults.at(-1).error,/尚未全部验收/);action={action:'blocked',text:'APK 构建受阻'};}
  return {content:JSON.stringify(action)};
  }});assert.equal(result.agentRun.status,'blocked');assert.equal(result.agentRun.steps[0].status,'blocked');

@@ -227,7 +227,16 @@ export function ModelSettings({ data, saving, commit }: SettingsProps) {
               value={editing.maxOutputTokens ?? ""}
               onChange={e => setEditing({ ...editing, maxOutputTokens: e.target.value ? Number(e.target.value) : undefined })}
               placeholder="Agent 未配置时使用 8192" />
-            <span className="muted">按服务商支持的最大输出额度填写，与上下文容量不同。Agent 从最多 8192 开始，截断后最多重试两次并逐步增加额度，始终不超过此值及上下文余量。</span>
+            <span className="muted">按服务商支持的最大输出额度填写，与上下文容量不同。Agent 从最多 8192 开始，有效动作截断后最多重试两次并适度增加额度；只有思考或空响应时不增加额度，仅重试一次。始终受此值及上下文余量限制。</span>
+          </label>
+          <label>
+            图像输入
+            <select value={editing.imageInput||'auto'} onChange={e=>setEditing({...editing,imageInput:e.target.value as Model['imageInput']})}>
+              <option value="auto">尝试图像输入（端点能力未验证）</option>
+              <option value="enabled">已确认支持图像</option>
+              <option value="disabled">仅文本模型（不发送图像）</option>
+            </select>
+            <span className="muted">仅有 LLM 时请选择“仅文本模型”；Ailo 会执行可用的内容与结构检查，并把视觉核验列为人工待确认，不会声称已看图。尝试或启用图像输入会将图片附件和成果截图发给当前服务商；接口接受图像不代表视觉判断准确。</span>
           </label>
           <label>
             API 地址

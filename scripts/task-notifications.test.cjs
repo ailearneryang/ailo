@@ -1,3 +1,24 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
 const {createTaskNotifications}=require('../apps/desktop/task-notifications.cjs');
+test('deleted-source notifications can be removed individually and stay removed after restart',async t=>{
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-notices-clear-'));
+ t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ let owner='a',changes=0;
+ const options={directory,account:async()=>({id:owner}),changed:()=>changes++};
+ const store=createTaskNotifications(options);
+ await store.publish({id:'deleted',title:'来源已删除'},{error:true},'r1');
+ await store.publish({id:'existing',title:'保留'}, {},'r2');
+ const before=await store.read(),deleted=before.items.find(i=>i.taskId==='deleted');
+ const count=changes;
+ const after=await store.update({action:'clear',id:deleted.id});
+ assert.equal(changes,count+1);
+ assert.deepEqual(after.items.map(i=>i.taskId),['existing']);
+ assert.equal(after.items.filter(i=>!i.read).length,1);
+ assert.equal((await createTaskNotifications(options).read()).items.length,1);
+ owner='b';await store.update({action:'clear'});owner='a';
+ assert.equal((await store.read()).items.length,1);
+ await assert.rejects(store.update({action:'clear',id:''}),/通知标识无效/);
+ assert.equal((await store.read()).items.length,1);
+ assert.equal((await store.update({action:'clear'})).items.length,0);
+});
 test('notifications deduplicate requests, honor settings and isolate accounts; temporary tasks never enter history',async t=>{const directory=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-notices-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));let owner='a';const native=[];const store=createTaskNotifications({directory,account:async()=>({id:owner}),native:item=>native.push(item)});const task={id:'t',title:'任务'};await store.publish(task,{},'r');await store.publish(task,{},'r');assert.equal((await store.read()).items.length,1);await store.publish({...task,temporary:true},{error:true},'r2');assert.equal((await store.read()).items.length,1);await store.update({action:'settings',value:{native:true}});await store.publish(task,{agentRun:{status:'waiting_permission'}},'r3');assert.equal(native.length,1);await store.update({action:'read'});assert.ok((await store.read()).items.every(x=>x.read));owner='b';assert.equal((await store.read()).items.length,0);assert.equal((await store.read()).settings.native,false);owner='a';await store.update({action:'settings',value:{enabled:false}});await store.publish(task,{},'r4');assert.equal((await store.read()).items.length,2);});

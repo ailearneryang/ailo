@@ -114,7 +114,7 @@ test('legacy history is externalized, paginated and recoverable through checkpoi
  const summary='已保存中文约束、完成的写入和二十条执行凭据，原文已归档，下一步按需回查并继续验收。';
  await runAgent({base,task,model,signal:new AbortController().signal,executeTool:async(...args)=>{readonlyCalls++;assert.equal(args[1].action,'read_execution');return execute(...args);},ask:async(messages,budget)=>{
   const s=JSON.parse(messages.at(-1).content);totals.push(Buffer.byteLength(JSON.stringify(messages)));
-  assert.equal(messages.length,2);assert.ok(s.toolResults.length<=3);assert.equal(s.currentRequest,task.request);assert.ok(s.readCoverage.length<=24);assert.equal(s.readCoverageTotal,40);
+  assert.equal(messages.length,2);assert.ok(s.toolResults.length<=6);assert.equal(s.currentRequest,task.request);assert.ok(s.readCoverage.length<=24);assert.equal(s.readCoverageTotal,40);
   if(n++===0){assert.equal(budget,4096);assert.ok(!JSON.stringify(messages).includes('payload-0:'));return {content:JSON.stringify({action:'route',kind:'task'})};}
   if(n===2){assert.equal(s.requiredAction,'checkpoint');return {content:JSON.stringify({action:'read_execution',id:'observations',offset:0})};}
   if(n===3){oldId=JSON.parse(s.toolResults.at(-1).result.text.split('\n')[0]).id;return {content:JSON.stringify({action:'read_execution',id:oldId,offset:0})};}

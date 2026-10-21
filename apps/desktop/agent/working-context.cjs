@@ -1,6 +1,6 @@
 // Raw observations live in the workspace archive. This is only a preview for
 // the next inference; receipts and archive IDs survive pause and restart.
-const RECENT_COUNT=3, PREVIEW_CHARS=6000;
+const RECENT_COUNT=6, PREVIEW_CHARS=6000;
 function preview(value,limit=PREVIEW_CHARS){
  if(JSON.stringify(value).length<=limit)return value;
  let remaining=Math.floor(limit*.7),truncated=false;

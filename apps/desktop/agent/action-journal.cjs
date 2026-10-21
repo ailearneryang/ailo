@@ -2,8 +2,8 @@ const fs=require('node:fs/promises');
 const {randomUUID,createHash}=require('node:crypto');
 const {resolveFile}=require('./workspace.cjs');
 const stable=value=>value&&typeof value==='object'?(Array.isArray(value)?value.map(stable):Object.fromEntries(Object.keys(value).sort().map(k=>[k,stable(value[k])]))):value;
-const fingerprint=action=>createHash('sha256').update(JSON.stringify(stable({...action,purpose:undefined,stepId:undefined}))).digest('hex');
-const reads=new Set(['request_network','read_file','list_files','read_material','read_source','inspect_source','search_materials','read_execution','read_history']);
+const fingerprint=action=>createHash('sha256').update(JSON.stringify(stable({...action,purpose:undefined,stepId:undefined,progress:undefined}))).digest('hex');
+const reads=new Set(['request_network','read_file','batch_read','view_image','list_files','read_material','read_source','inspect_source','search_materials','read_execution','read_history']);
 function begin(run,action){
  run.actionJournal ||= [];
  const hash=fingerprint(action);

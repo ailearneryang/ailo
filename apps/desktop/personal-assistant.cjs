@@ -8,7 +8,7 @@ function createPersonalAssistant({storage,chat,schedules,notify=()=>{}}){
       messages:(task.messages||[]).map(({role,content})=>({role,content})),
       onRun:run=>notify({id,taskId:task.id,run}),onStatus:message=>notify({id,taskId:task.id,message}),onText:content=>notify({id,taskId:task.id,content})});
     launches.set(task.id,promise);
-    void promise.then(result=>storage.patchTask(task.id,{contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens,lastError:undefined},[{id:id+'-assistant',role:'assistant',content:result.content,clarification:result.clarification,modelName:result.modelName}]))
+    void promise.then(result=>storage.patchTask(task.id,{contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens,lastError:undefined},[{id:id+'-assistant',role:'assistant',content:result.content,clarification:result.clarification,replyDetails:result.replyDetails,modelName:result.modelName}]))
       .catch(error=>storage.patchTask(task.id,{lastError:String(error.message||error)}))
       .finally(()=>{launches.delete(task.id);notify({id,taskId:task.id,finished:true});}).catch(error=>console.error('Assistant task persistence failed:',error.message));
     return id;

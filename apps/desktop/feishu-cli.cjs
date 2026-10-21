@@ -27,8 +27,15 @@ function apiArgs(action){
   if(!spec)throw Error('可用飞书快捷功能：'+Object.keys(shortcuts).join('、'));
   const args=action.query.split(' ');
   if(action.operation==='help')return [...args,'--help'];
-  const params=action.params||{};
-  if(typeof params!=='object'||Array.isArray(params)||JSON.stringify(params).length>20000)throw Error('飞书快捷参数无效或过长');
+  const inputParams=action.params||{};
+  if(typeof inputParams!=='object'||Array.isArray(inputParams)||JSON.stringify(inputParams).length>20000)throw Error('飞书快捷参数无效或过长');
+  // API responses use snake_case; the CLI requires kebab-case flags.
+  const params=Object.create(null);
+  for(const [inputKey,value] of Object.entries(inputParams)){
+   const key=inputKey.replace(/_/g,'-');
+   if(Object.hasOwn(params,key))throw Error('飞书快捷参数重复：'+key);
+   params[key]=value;
+  }
   for(const [key,inputValue] of Object.entries(params)){
    let value=inputValue;
    if(key==='page-size'&&typeof value==='number'&&Number.isInteger(value))value=String(value);

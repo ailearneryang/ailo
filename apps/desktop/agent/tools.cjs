@@ -29,23 +29,25 @@ async function runCommand(root,command,signal,timeout=120000,options={}) {
   // No inherited API keys or unrestricted fallback when sandbox setup fails.
   return new Promise((resolve,reject)=>{
     if(signal.aborted)return reject(Error('已停止执行'));
-    const child=spawn('/usr/bin/sandbox-exec',['-p',sandboxProfile(root,sdk,!!options.build,javaHome,options.readDirectories,options.networkOutbound!==false),'/bin/sh','-c',command],{cwd:root,env,detached:true,stdio:['ignore','pipe','pipe']});
-    let output='',truncated=false,timedOut=false;
+    const child=spawn('/usr/bin/sandbox-exec',['-p',sandboxProfile(root,sdk,!!options.build,javaHome,options.readDirectories,options.networkOutbound!==false),'/bin/bash','-o','pipefail','-c',command],{cwd:root,env,detached:true,stdio:['ignore','pipe','pipe']});
+    let output='',stdout='',stderr='',truncated=false,timedOut=false;
     const kill=()=>{try{process.kill(-child.pid,'SIGKILL');}catch{child.kill('SIGKILL');}};
     const timer=setTimeout(()=>{timedOut=true;kill();},timeout);
     let lastUpdate=0;
     const collect=b=>{output+=b.toString();if(output.length>24000){output=output.slice(-24000);truncated=true;}if(Date.now()-lastUpdate>1000){lastUpdate=Date.now();options.onOutput?.(output.slice(-800));}};
-    child.stdout.on('data',collect);child.stderr.on('data',collect);
+    child.stdout.on('data',b=>{stdout=(stdout+b.toString()).slice(-24000);collect(b);});child.stderr.on('data',b=>{stderr=(stderr+b.toString()).slice(-24000);collect(b);});
     signal.addEventListener('abort',kill,{once:true});
     const cleanup=()=>{clearTimeout(timer);signal.removeEventListener('abort',kill);};
     child.on('error',e=>{cleanup();reject(e);});
-    child.on('close',(exitCode,terminationSignal)=>{cleanup();kill();if(signal.aborted)return reject(Error('已停止执行'));resolve({exitCode,terminationSignal,output,truncated,timedOut});});
+    child.on('close',(exitCode,terminationSignal)=>{cleanup();kill();if(signal.aborted)return reject(Error('已停止执行'));resolve({exitCode,terminationSignal,output,stdout,stderr,truncated,timedOut,pipelineFailurePreserved:true});});
   });
 }
 async function execute(workspace,action,signal,options={}) {
   const {files}=workspace;
   switch(action.action) {
     case 'list_files':return listFiles(files,action.path === undefined ? '' : action.path);
+    case 'view_image':return require('./visual-observation.cjs').imageObservation(workspace,action,options.images);
+    case 'browser':{if(!options.browser)throw Error('当前运行环境没有网页观察服务');return options.browser.execute(workspace,action,signal);}
     case 'read_file': {
       const file=await resolveFile(files,action.path);const stat=await fs.stat(file);
       if(!stat.isFile()||! /\.(pdf|xlsx|pptx|ppt)$/i.test(action.path)&&stat.size>2000000)throw Error('请选择文档或 2 MB 以内文本文件');
@@ -60,6 +62,7 @@ async function execute(workspace,action,signal,options={}) {
       const result=await require('../artifact-edit.cjs').editFile(files,require('node:path').join(workspace.project,'backups'),action.path,{version:action.data.version,sheet:action.data.sheet,cells:action.data.cells});
       return {path:action.path,sha256:result.version,updatedCells:action.data.cells,notice:'单元格已修改并保留上一版本；未重算公式。请核对业务要求并登记成果。'};
     }
+    case 'edit_file':return require('./edit-file.cjs').edit(workspace,action);
     case 'write_file': {
       if(typeof action.content!=='string'||action.content.length>200000)throw Error('文件内容超过限制');
       if(action.path?.split('/').includes('.runtime'))throw Error('运行目录不允许写入');

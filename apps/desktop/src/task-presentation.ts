@@ -29,6 +29,14 @@ export function mergeSessionSnapshot(current:Record<string,LiveSession>,snapshot
  for(const session of snapshot)if(session.taskId&&!finished.has(session.id)){const existing=next[session.taskId];if(existing&&existing.id!==session.id&&!existing.attached)continue;next[session.taskId]={...existing,...session,attached:true};}
  return next;
 }
+// Restore progress when attaching to work started in the background or before opening the window.
+export function syncLiveTaskRuns(tasks:Task[],sessions:Record<string,LiveSession>){
+ return tasks.map(task=>{
+  const run=sessions[task.id]?.run;
+  if(!run)return task;
+  return {...task,agentRun:run,...(!task.scheduledTaskId&&run.conversationTitle?{title:run.conversationTitle,titleGenerated:true}:{})};
+ });
+}
 export function activityForSession(run:AgentRun|undefined,session?:LiveSession){
  if(!run||!session?.startedAt)return run;
  const start=Date.parse(session.startedAt);if(!Number.isFinite(start))return run;

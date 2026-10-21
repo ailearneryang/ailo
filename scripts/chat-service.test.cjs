@@ -14,6 +14,23 @@ const input = {
   modelId: "model",
   messages: [{ role: "user", content: "hi" }],
 };
+test('each reply has independent timing metadata that survives storage and restart',async t=>{
+  const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
+  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-reply-timing-'));
+  t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+  const chat=createChat(storage,async()=>new Response(JSON.stringify({choices:[{message:{content:'hello'}}]})));
+  const result=await chat.complete(input),second=await chat.complete({...input,id:'second'});
+  for(const reply of [result,second]){
+    assert.ok(Number.isFinite(Date.parse(reply.replyDetails.startedAt)));
+    assert.ok(reply.replyDetails.durationMs>=0);
+    assert.ok(Math.abs(Date.parse(reply.replyDetails.completedAt)-Date.parse(reply.replyDetails.startedAt)-reply.replyDetails.durationMs)<=2);
+  }
+  assert.notEqual(result.replyDetails,second.replyDetails);
+  const {createStorage}=require('../apps/desktop/storage.cjs');
+  const store=createStorage(directory,{});
+  await store.patchTask('t',{request:'hi',materials:[]},[{id:'a',role:'assistant',content:result.content,replyDetails:result.replyDetails}]);
+  assert.deepEqual((await createStorage(directory,{}).readWorkspace()).tasks[0].messages[0].replyDetails,result.replyDetails);
+});
 test("appends endpoint, includes history and keeps credentials in header", async () => {
   let seen;
   const chat = createChat(storage, async (url, options) => {

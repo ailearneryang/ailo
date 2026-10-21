@@ -38,7 +38,7 @@ async function readCompletion(response, { signal, onActivity, onText, onThinking
       if(current.function.name.length>200||current.id.length>1000)throw Object.assign(Error('模型工具元数据无效，请重试。'),{code:'AGENT_PROTOCOL',reason:'tool_metadata_too_long',diagnostics});
       if(current.function.arguments.length>250000)throw Object.assign(Error('单次工具参数超过 250000 字符，请拆分为更小的动作。'),{code:'MODEL_TOOL_ARGUMENT_LIMIT',diagnostics});
       calls.set(index,current);
-      onActivity(); onToolActivity?.();
+      onActivity(); onToolActivity?.(current.function.arguments.length);
     }
     const text = textOf(message?.content);
     if (text) {

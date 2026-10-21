@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import {isBigmodel53} from "../reasoning.cjs";
 import { demoModel, type Model } from "./types";
 
 export function ModelPicker({
@@ -188,7 +189,7 @@ export function ModelPicker({
             <div className="model-popover-heading">
               选择模型<span>用于下一条消息</span>
             </div>
-            {reasoningSupported&&<fieldset className="model-reasoning"><legend>思考强度</legend><div>{([['low','轻度'],['medium','标准'],['high','深度']] as const).map(([effort,label])=><button key={effort} type="button" disabled={disabled} aria-pressed={reasoningEffort===effort} onClick={()=>onReasoningChange?.(effort)}>{label}</button>)}</div><p>更高强度适合复杂任务，通常耗时和消耗更多。用于当前会话后续消息。</p></fieldset>}
+            {reasoningSupported&&<fieldset className="model-reasoning"><legend>思考强度</legend><div>{([['low','轻度'],['medium','标准'],['high','深度']] as const).map(([effort,label])=><button key={effort} type="button" disabled={disabled} aria-pressed={reasoningEffort===effort} onClick={()=>onReasoningChange?.(effort)}>{label}</button>)}</div><p>更高强度适合复杂任务，通常耗时和消耗更多。用于当前会话后续消息。{isBigmodel53(current)&&' 智谱 GLM-5.3：轻度/标准/深度对应 low/high/max；始终开启思考。'}</p></fieldset>}
             <div className="project-search model-search">
               <svg
                 width="18"

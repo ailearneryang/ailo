@@ -32,6 +32,7 @@ export type ContextCheckpoint = { summary: string; covered: number; fingerprint:
 export type Model = {
   contextWindow?: number;
   maxOutputTokens?: number;
+  imageInput?:'auto'|'enabled'|'disabled';
   id: string;
   name: string;
   model: string;
@@ -40,7 +41,9 @@ export type Model = {
   apiKey?: string;
 };
 export type Project = {instructions?:string;sources?:import('./experience-types').ProjectSource[];defaultTools?:import('./experience-types').DefaultTools;settingsRevision?:number; description?:string; pinned?:boolean; localPath?:string; source?:'local'; id: string; name: string; extensionIds?: string[] };
+export type ReplyDetails = {startedAt:string;completedAt:string;durationMs:number;status?:string;goal?:string;events?:AgentRun['events']};
 export type Message = {
+  replyDetails?: ReplyDetails;
   createdAt?: string;
   clarification?: Clarification;
   clarificationReplyTo?: string;
@@ -105,10 +108,15 @@ export type RequestContextUsage = {
   providerUsage?: {inputTokens?:number;outputTokens?:number;reasoningTokens?:number};
 };
 export type AgentRun = {
+  performance?:{wallMs:number;modelMs:number;modelRequests:number;failedModelRequests:number;processModelMs:number;processModelRequests:number;noActionMs:number;noActionRequests:number;toolMs:number;toolCalls:number;batchItems:number;attachedUpdates:number;reportedUsageRequests:number;inputTokens:number;outputTokens:number;reasoningTokens:number};
+  delivery?:{outcome:'complete'|'limited'|'partial'|'blocked';status?:string;at:string};
+  issues?:{id:string;status:'open'|'resolved'|'limitation';description:string;reason?:string;requirementIds:string[]}[];
+  executionState?:{goal:string;gaps?:string[];nextAction?:string;expectedResult?:string;blocker?:unknown};
+  completionReview?:{summary:string;issues:string[];unverified:string[];revision:number;at:string};
   currentOutcome?:string;currentInputId?:string;currentIntent?:'chat'|'task';
   memoryUsed?:{inputId?:string;ownerId?:string;entries:{id:string;topic:string;scope:string;source?:import("./memory-types").MemorySource}[]};
   loadedExtensions?: {id:string;name:string;kind:"skill"|"expert"}[];
-  acceptanceCriteria?:{id:string;text:string;status:'passed'|'pending'}[];
+  acceptanceCriteria?:{id:string;text:string;type?:string;basis?:'model_assessment'|'machine_check';status:'passed'|'recorded'|'pending'}[];
   recoverySummary?:{retried:number;recovered:number;unknown:number};
   conversationTitle?: string;
   executionId?: string;
@@ -237,7 +245,7 @@ declare global {
   mcpConnectionIds?: string[];
   searchEnabled?: boolean;
         messages: { role: "user" | "assistant"; content: string }[];
-      }) => Promise<{ content: string; clarification?: Clarification; modelName: string; contextCheckpoint?: ContextCheckpoint; promptTokens?: number }>;
+      }) => Promise<{ content: string; replyDetails?:ReplyDetails; clarification?: Clarification; modelName: string; contextCheckpoint?: ContextCheckpoint; promptTokens?: number }>;
       onChatStatus: (callback: (status: { id: string; message?: string; content?: string; taskId?:string; finished?:boolean; run?:AgentRun;failure?:{code:string;requestDiagnostics?:Record<string,unknown>;retryCount:number} }) => void) => () => void;
       cancel: (id: string) => Promise<void>;
       sessions: () => Promise<(import('./task-presentation').LiveSession & {taskId:string;updatedAt?:string})[]>;

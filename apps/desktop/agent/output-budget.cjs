@@ -14,11 +14,13 @@ function createOutputBudget(model,configuredLimit,saved){
   snapshot(){return {key,version:2,stages:structuredClone(stages)};},
   reset(name='action'){name=stage(name);stages[name]={preferred:Math.min(settings[name][0],configuredLimit),smallSuccesses:0};},
   limited(budget,diagnostics={},name='action'){
-   name=stage(name);const value=stages[name];value.preferred=Math.min(configuredLimit,settings[name][1],Math.max(value.preferred,budget*2));value.smallSuccesses=0;
+   const reasoning=diagnostics.contentChars===0&&!(diagnostics.toolArgumentChars>0)&&(diagnostics.reasoningChars>0||diagnostics.reasoningTokens>0);
+   name=stage(name);const value=stages[name];if(reasoning){value.preferred=Math.min(value.preferred,settings[name][0]);value.smallSuccesses=0;return 'reasoning';}
+   value.preferred=Math.min(configuredLimit,settings[name][1],Math.max(value.preferred,budget*2));value.smallSuccesses=0;
    return diagnostics.contentChars===0&&diagnostics.toolCalls===0&&(diagnostics.reasoningChars>0||diagnostics.reasoningTokens>0)?'reasoning':'action';
   },
   succeeded(usage,name='action'){
-   const used=usage?.outputTokens;if(!Number.isSafeInteger(used)||used<=0)return;
+   const used=Number.isSafeInteger(usage?.reasoningTokens)&&Number.isSafeInteger(usage?.outputTokens)?usage.outputTokens-usage.reasoningTokens:usage?.outputTokens;if(!Number.isSafeInteger(used)||used<=0)return;
    name=stage(name);const value=stages[name],base=Math.min(configuredLimit,settings[name][0]);
    const target=Math.min(configuredLimit,settings[name][1],Math.max(base,Math.ceil(used*1.25/1024)*1024));
    if(target>value.preferred){value.preferred=target;value.smallSuccesses=0;}

@@ -3,8 +3,10 @@ const limits={goal:1000,items:12,item:800,steps:12,id:40,title:200};
 const statuses=['pending','running','waiting_sync','done','blocked'];
 const nonempty=max=>({type:'string',minLength:1,maxLength:max,pattern:'\\S'});
 const fields={
+ requirements:require('./requirements.cjs').schema,
  goal:nonempty(limits.goal),
  decisions:{type:'array',maxItems:limits.items,items:nonempty(limits.item)},
+ acceptanceTypes:{type:'array',minItems:1,maxItems:limits.items,items:{type:'string',enum:['presence','content','behavior','visual']}},
  acceptance:{type:'array',minItems:1,maxItems:limits.items,items:nonempty(limits.item)},
  steps:{type:'array',minItems:1,maxItems:limits.steps,items:{type:'object',additionalProperties:false,required:['id','title','status'],properties:{
   id:{type:'string',minLength:1,maxLength:limits.id,pattern:'^[a-zA-Z0-9_-]+$'},
@@ -23,6 +25,7 @@ function validatePlan(action) {
   if(!Array.isArray(list)||list.length<min||list.length>limits.items)errors.push(`${field} 必须是含 ${min}–${limits.items} 项的数组`);
   else list.forEach((v,i)=>checkText(v,`${field}[${i}]`,limits.item));
  }
+ if(action.acceptanceTypes!==undefined&&(!Array.isArray(action.acceptanceTypes)||action.acceptanceTypes.length!==action.acceptance?.length||action.acceptanceTypes.some(v=>!['presence','content','behavior','visual'].includes(v))))errors.push('acceptanceTypes 必须与 acceptance 一一对应，使用 presence/content/behavior/visual');
  if(!Array.isArray(action.steps)||!action.steps.length||action.steps.length>limits.steps)errors.push(`steps 必须包含 1–${limits.steps} 个步骤`);
  else {
   const ids=new Set();

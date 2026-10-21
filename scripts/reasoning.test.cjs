@@ -20,3 +20,17 @@ test('all three levels reach provider; gateway receives no reasoning controls',a
   assert.equal(body.enable_thinking,model==='glm-5.2'?true:undefined);
  }
 });
+
+test('official GLM-5.3 effort mapping and tool streaming are scoped to documented endpoints',()=>{
+ const {toolStreamingParameters,recoveryReasoningParameters}=require('../apps/desktop/reasoning.cjs');
+ const model={baseUrl:'https://open.bigmodel.cn/api/paas/v4',model:'glm-5.3-flash'};
+ assert.ok(supportsReasoning(model));
+ for(const [ui,wire] of [['low','low'],['medium','high'],['high','max']])assert.deepEqual(reasoningParameters(model,ui),{thinking:{type:'enabled'},reasoning_effort:wire});
+ assert.deepEqual(toolStreamingParameters(model),{tool_stream:true});assert.equal(recoveryReasoningParameters(model).reasoning_effort,'low');
+ for(const unknown of [{...model,baseUrl:'https://open.bigmodel.cn.evil.example/v1'},{...model,model:'other'},{...model,baseUrl:'http://open.bigmodel.cn/api/paas/v4'}]){assert.deepEqual(toolStreamingParameters(unknown),{});assert.deepEqual(recoveryReasoningParameters(unknown),{});}
+});
+
+test('lightweight reasoning is limited to documented simple decision stages',()=>{
+ const {decisionReasoningParameters}=require('../apps/desktop/reasoning.cjs'),model={baseUrl:'https://open.bigmodel.cn/api/paas/v4',model:'glm-5.3-flash'};
+ assert.equal(decisionReasoningParameters(model,'route').reasoning_effort,'low');assert.equal(decisionReasoningParameters(model,'state').reasoning_effort,'low');assert.deepEqual(decisionReasoningParameters(model,'action'),{});assert.deepEqual(decisionReasoningParameters({...model,baseUrl:'https://example.com'},'route'),{});
+});

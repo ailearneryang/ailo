@@ -9,13 +9,14 @@ const {
   nativeImage,
   powerMonitor,
 } = require("electron");
+require('electron').protocol.registerSchemesAsPrivileged([{scheme:'ailo-project',privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
 app.setName("Ailo");
 const { readMaterial, importPastedMaterials } = require("./materials.cjs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 if (process.env.AILO_DATA_DIR)
   app.setPath("userData", process.env.AILO_DATA_DIR);
-console.info(`[Ailo ${app.getVersion()}] 主进程启动；任务决策等待上限 600 秒`);
+console.info(`[Ailo ${app.getVersion()}] 主进程启动；任务无动作等待上限 180 秒`);
 const primaryInstance=app.requestSingleInstanceLock();
 if(!primaryInstance)app.quit();
 let win;
@@ -33,6 +34,8 @@ storage.modelNetworkContext=async url=>{
  const proxy=await require('electron').session.defaultSession.resolveProxy(url.href);
  return {systemProxyMode:proxy==='DIRECT'?'direct':/PROXY|SOCKS/i.test(proxy)?'configured':'unknown'};
 };
+storage.imageObserver=require('./agent/image-observer.cjs').createImageObserver(nativeImage);
+storage.browserObserver=require('./agent/browser-observer.cjs').createBrowserObserver(require('electron'));
 storage.agentDirectory = path.join(app.getPath("userData"), "agent");
 const {experience,dictation}=require('./experience-ipc.cjs').attachExperience({app,ipcMain,storage,chat,trusted,getWin:()=>win,dialog,shell,workspaceState,readMaterial,createWindow:()=>create()});
 storage.permissions=require('./permissions.cjs').createPermissions({directory:app.getPath('userData'),base:storage.agentDirectory,account:()=>storage.account(),workspace:()=>storage.readWorkspace(),patchTask:(id,patch)=>storage.patchTask(id,patch),notify:owner=>{if(win&&!win.isDestroyed())win.webContents.send('permissions:changed',owner);},
@@ -113,7 +116,7 @@ ipcMain.handle("chat:complete", async (e, input) => {
   if(chat.sessions().some(s=>s.taskId===input.taskId))throw Error('此会话正在执行或排队，请补充消息或等待完成。');
   try {
     const result=await chat.complete({...input,onRun:run=>send({run}),onText:content=>send({content}),onStatus:message=>send({message})});
-    if(input.taskId)await storage.patchTask(input.taskId,{contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens,lastError:undefined,lastErrorCode:undefined,modelRequestDiagnostics:undefined,partialReply:undefined},[{id:input.id+'-assistant',role:'assistant',content:result.content,clarification:result.clarification,modelName:result.modelName}]);
+    if(input.taskId)await storage.patchTask(input.taskId,{contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens,lastError:undefined,lastErrorCode:undefined,modelRequestDiagnostics:undefined,partialReply:undefined},[{id:input.id+'-assistant',role:'assistant',content:result.content,clarification:result.clarification,replyDetails:result.replyDetails,modelName:result.modelName}]);
     send({finished:true});return result;
   }catch(error){
     if(error.code||error.requestDiagnostics)send({failure:{code:error.code||'MODEL_RESPONSE_ERROR',requestDiagnostics:error.requestDiagnostics,retryCount:error.retryCount||0}});
@@ -142,11 +145,12 @@ ipcMain.handle("chat:cancel", (e, id) => {
 const schedules=require('./scheduled-tasks.cjs').createScheduledTasks({
   directory:app.getPath('userData'),cancel:id=>chat.cancel(id),
   execute:async(task,run)=>{
+    const send=value=>{if(win&&!win.isDestroyed())win.webContents.send('chat:status',{id:run.id,taskId:run.taskId,...value});};
     const prompt=task.prompt+'\n\n[定时执行时间：'+new Date().toLocaleString('zh-CN')+'。请直接完成任务并报告结果；缺少信息或权限时请说明，不要假装已经完成。]';
     await storage.patchTask(run.taskId,{projectId:task.projectId,scheduledTaskId:task.id,scheduledContextMode:task.contextMode||'continuity',scheduledRunId:run.id,scheduledAt:run.at,title:'定时 · '+task.title,request:prompt,materials:[],created:new Date().toISOString(),modelId:task.modelId,feishuEnabled:task.feishuEnabled===true,searchEnabled:task.searchEnabled},[{id:run.id+'-user',role:'user',content:prompt}]);
     try{
-      const result=await chat.complete({id:run.id,taskId:run.taskId,modelId:task.modelId,feishuEnabled:task.feishuEnabled===true,searchEnabled:task.searchEnabled,messages:[{role:'user',content:prompt}]});
-      await storage.patchTask(run.taskId,{modelName:result.modelName,contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens},[{id:run.id+'-assistant',role:'assistant',content:result.content,modelName:result.modelName,clarification:result.clarification}]);
+      const result=await chat.complete({id:run.id,taskId:run.taskId,modelId:task.modelId,feishuEnabled:task.feishuEnabled===true,searchEnabled:task.searchEnabled,messages:[{role:'user',content:prompt}],onRun:run=>send({run}),onText:content=>send({content}),onStatus:message=>send({message})});
+      await storage.patchTask(run.taskId,{modelName:result.modelName,contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens},[{id:run.id+'-assistant',role:'assistant',content:result.content,replyDetails:result.replyDetails,modelName:result.modelName,clarification:result.clarification}]);
       if(result.clarification||['blocked','waiting_permission','paused','running','understanding'].includes(result.agentRun?.status))throw Error('任务需要人工处理，请查看对话继续。');
     }catch(error){await storage.patchTask(run.taskId,{lastError:error.message});throw error;}
   },
@@ -410,7 +414,7 @@ app.whenReady().then(async () => {
 let quitting=false;
 app.on("before-quit", e => {
   if(quitting)return;
-  e.preventDefault();memoryWorker.stop();storage.permissions.cancelAll();schedules.stop();chat.cancelAll();
+  e.preventDefault();storage.browserObserver.dispose();memoryWorker.stop();storage.permissions.cancelAll();schedules.stop();chat.cancelAll();
   Promise.allSettled([experience.dispose(),dictation.cancel(),storage.androidManager.dispose(),feishuCli.dispose(),storage.amap.dispose(),storage.mcpConnections.dispose()]).finally(()=>{quitting=true;app.quit();});
 });
 app.on("window-all-closed", () => {

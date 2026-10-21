@@ -21,7 +21,7 @@ const fs=require('node:fs/promises'),path=require('node:path'),http=require('nod
    else if(!state.artifacts.length)action={action:'artifact',path:'deliverables/weather.md',label:'天气项目说明'};
    else if(state.steps.some(s=>s.status!=='done'))action={action:'plan',goal:state.goal,decisions:state.decisions,acceptance:state.acceptance,steps:state.steps.map(s=>({...s,status:'done'}))};
    else if(state.acceptanceCriteria.some(c=>c.check?.status!=='passed'))action={action:'verify',checks:state.acceptanceCriteria.map(c=>({criterionId:c.id,kind:'text_contains',path:'deliverables/weather.md',contains:['Verified deliverable'],reason:'检查交付文件内容'}))};
-   else action={action:'finish',text:'项目文件已生成，文件检查通过。可以在成果区预览。',evidence:[state.recentEvents.find(e=>e.type==='run_command').id]};
+   else action={action:'finish',review:{summary:'已对照要求检查当前成果',issues:[],unverified:[]},text:'项目文件已生成，文件检查通过。可以在成果区预览。',evidence:[state.recentEvents.find(e=>e.type==='run_command').id]};
    res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({choices:[{index:0,delta:{tool_calls:[{index:0,id:'call1',type:'function',function:{name:'ailo_action',arguments:JSON.stringify(action)}}]},finish_reason:'tool_calls'}]})+'\n\ndata: '+JSON.stringify({choices:[],usage:{prompt_tokens:1234,completion_tokens:234,completion_tokens_details:{reasoning_tokens:100}}})+'\n\ndata: [DONE]\n\n');
   }catch(e){res.writeHead(500);res.end(e.message);}
  });

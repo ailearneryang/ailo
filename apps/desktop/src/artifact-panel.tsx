@@ -25,13 +25,14 @@ function ResourceList<T>({items,render}:{items:T[];render:(item:T,index:number)=
   const [all,setAll]=useState(false);
   return <><div className="resource-file-list">{(all?items:items.slice(0,5)).map(render)}</div>{items.length>5&&<button className="resource-more" aria-expanded={all} onClick={()=>setAll(v=>!v)}>{all?'收起':`展开更多（${items.length-5}）`}</button>}</>;
 }
-export function ArtifactPanel({task,materials=task.materials,onClose,onRequest,onAttach,attaching=false}:{task:Task;materials?:Material[];onClose:()=>void;onRequest:(text:string)=>void;onAttach?:()=>void;attaching?:boolean}) {
+export function ArtifactPanel({task,selectionRequest,materials=task.materials,onClose,onRequest,onAttach,attaching=false}:{task:Task;selectionRequest?:{path:string};materials?:Material[];onClose:()=>void;onRequest:(text:string)=>void;onAttach?:()=>void;attaching?:boolean}) {
   const [expanded,setExpanded]=useState(false),[selected,setSelected]=useState<Selection>(),[view,setView]=useState<View>('overview');
   const panel=useRef<HTMLElement>(null),backButton=useRef<HTMLButtonElement>(null),lastResource=useRef<string|undefined>(undefined);
   const [preview,setPreview]=useState<ArtifactPreview>(),[error,setError]=useState(''),[loading,setLoading]=useState(false);
   const [files,setFiles]=useState<FileEntry[]>([]),[filesLoading,setFilesLoading]=useState(true),[filesError,setFilesError]=useState('');
   const [truncated,setTruncated]=useState(false),[refresh,setRefresh]=useState(0),[materialOffset,setMaterialOffset]=useState(0);
   const deliveries=task.agentRun?.artifacts||[];
+  useEffect(()=>{if(selectionRequest){setView('delivery');setSelected({scope:'delivery',path:selectionRequest.path});}},[selectionRequest]);
   const projectFiles=view==='overview'?files.filter(f=>!deliveries.some(a=>a.path===f.path)):files;
   const scope=selected?.scope==='project'?'project':'delivery';
   const artifact=selected&&selected.scope!=='material'?(scope==='project'?files:deliveries).find(a=>a.path===selected.path):undefined;

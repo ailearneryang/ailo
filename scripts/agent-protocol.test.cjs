@@ -172,11 +172,10 @@ test('agent thinking outlives chat deadline, reports activity and accepts tool-o
  assert.equal((await chat.complete({...input,onStatus:s=>statuses.push(s)})).content,'完成思考');
  assert.ok(statuses.some(s=>s.includes('模型仍在思考')));assert.ok(!statuses.join('').includes('hidden reasoning'));
 });
-test('agent reasoning is bounded, releases session and can retry after timeout',async t=>{
+test('two idle decisions recover automatically without requiring a manual retry',async t=>{
  const storage=await fixture(t);let calls=0;
- const chat=createChat(storage,async()=>++calls===1?slowDecision({}, {reasoning:100}):native(calls===2?{action:'route',kind:'chat'}:{action:'reply',text:'恢复成功'}),{first:200,idle:200,text:20,decision:55,total:1000});
- await assert.rejects(chat.complete(input),/未开始返回下一步动作/);assert.deepEqual(chat.sessions(),[]);
- assert.equal((await chat.complete(input)).content,'恢复成功');
+ const chat=createChat(storage,async()=>++calls<=2?slowDecision({}, {reasoning:100}):native(calls===3?{action:'route',kind:'chat'}:{action:'reply',text:'恢复成功'}),{first:200,idle:200,text:20,decision:55,total:1000});
+ assert.equal((await chat.complete(input)).content,'恢复成功');assert.equal(calls,4);assert.deepEqual(chat.sessions(),[]);
 });
 test('agent tool output still obeys idle timeout after decision timer clears',async t=>{
  const storage=await fixture(t);let calls=0;
@@ -210,14 +209,14 @@ test('empty agent response retries without replaying tools, preserves diagnostic
  const storage=await fixture(t);let calls=0;const statuses=[];
  const chat=createChat(storage,async()=>++calls===1?new Response(JSON.stringify({choices:[{message:{content:null,reasoning_content:'private'},finish_reason:'stop'}]})):native(calls===2?{action:'route',kind:'chat'}:{action:'reply',text:'已恢复'}));
  const result=await chat.complete({...input,onStatus:s=>statuses.push(s)});assert.equal(result.content,'已恢复');assert.equal(calls,3);
- assert.ok(statuses.some(s=>s.includes('正在重试')));
+ assert.ok(statuses.some(s=>s.includes('正在自动恢复')));
  const {createWorkspace}=require('../apps/desktop/agent/workspace.cjs');const w=await createWorkspace(storage.agentDirectory,(await storage.readWorkspace()).tasks[0]);
  const e=w.run.events.find(e=>e.type==='empty_response');assert.equal(e.detail.reasoningChars,7);assert.ok(!JSON.stringify(e).includes('private'));
 });
-test('empty agent responses stop after two retries while filtering is never retried',async t=>{
+test('persistent empty responses exhaust staged recovery while filtering is never retried',async t=>{
  const storage=await fixture(t);let calls=0;
  const chat=createChat(storage,async()=>{calls++;return new Response(JSON.stringify({choices:[{message:{content:''},finish_reason:'stop'}]}));});
- await assert.rejects(chat.complete(input),/已自动重试 2 次/);assert.equal(calls,3);assert.deepEqual(chat.sessions(),[]);
+ const paused=await chat.complete(input);assert.equal(paused.agentRun.status,'blocked');assert.match(paused.content,/尚未完成/);assert.equal(calls,4);assert.deepEqual(chat.sessions(),[]);
  calls=0;const filtered=createChat(storage,async()=>{calls++;return new Response(JSON.stringify({choices:[{message:{content:''},finish_reason:'content_filter'}]}));});
  await assert.rejects(filtered.complete(input),e=>e.code==='MODEL_CONTENT_FILTER');assert.equal(calls,1);
 });
@@ -260,4 +259,37 @@ test('accepted tools with prose responses switch to named tools then JSON, with 
   assert.match(state.protocolRecovery.instruction,/包含字符串 action/);
   return new Response(JSON.stringify({choices:[{message:{content:'{"action":"reply","text":"已恢复"}'}}]}));
  });assert.equal((await chat.complete(input)).content,'已恢复');assert.equal(calls,4);
+});
+
+test('an explicit image-input rejection is reported without logging provider content or retrying formats',async t=>{
+ const storage=await fixture(t);let calls=0;
+ const task=(await storage.readWorkspace()).tasks[0];
+ const w=await require('../apps/desktop/agent/workspace.cjs').createWorkspace(storage.agentDirectory,task);await fs.writeFile(path.join(w.files,'screen.png'),'image');
+ storage.imageObserver={async prepare(){return {image:{type:'image_url',image_url:{url:'data:image/png;base64,TEST'}}};}};
+ const chat=createChat(storage,async(_url,options)=>{calls++;if(calls===1)return native({action:'route',kind:'task'});if(calls===2)return native({action:'view_image',path:'screen.png'});const request=JSON.parse(options.body);assert.ok(request.messages.some(m=>Array.isArray(m.content)&&m.content.some(p=>p.type==='image_url')),JSON.stringify(JSON.parse(request.messages.at(-1).content).toolResults));return new Response(JSON.stringify({error:{message:'image input not supported; provider-private-detail'}}),{status:400});});
+ const result=await chat.complete(input);
+ assert.equal(calls,3);assert.equal(result.agentRun.status,'blocked');assert.match(result.content,/不支持图像/);assert.ok(!result.content.includes('provider-private-detail'));
+});
+
+test('tool name metadata alone cannot evade the no-action deadline',async t=>{
+ const storage=await fixture(t);let calls=0,cancelled=0;
+ const chat=createChat(storage,async()=>{calls++;let timer;return new Response(new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('data: '+JSON.stringify({choices:[{delta:{tool_calls:[{index:0,id:'call',type:'function',function:{name:'ailo_action',arguments:''}}]}}]})+'\n\n'));timer=setInterval(()=>controller.enqueue(new TextEncoder().encode('data: '+JSON.stringify({choices:[{delta:{reasoning_content:'r'}}]})+'\n\n')),5);},cancel(){clearInterval(timer);cancelled++;}}),{headers:{'content-type':'text/event-stream'}});},{connect:200,first:200,idle:200,decision:30,total:1000});
+ const result=await chat.complete(input);assert.equal(result.agentRun.status,'blocked');assert.equal(calls,4);assert.equal(cancelled,4);assert.equal(result.agentRun.performance.noActionRequests,4);assert.equal(result.agentRun.performance.toolCalls,0);
+});
+
+test('GLM routes with low effort, honors selected effort for execution, and recovers with low effort',async t=>{
+ const storage=await fixture(t),bodies=[],records=[];
+ storage.modelCredentials=async()=>({baseUrl:'https://open.bigmodel.cn/api/paas/v4',model:'glm-5.3-flash'});storage.recordModelRequest=async record=>records.push({...record});
+ let n=0;const chat=createChat(storage,async(_url,options)=>{const body=JSON.parse(options.body);bodies.push(body);n++;if(n===2)return new Response(JSON.stringify({choices:[{message:{content:null,reasoning_content:'r'},finish_reason:'stop'}]}));return native(n===1?{action:'route',kind:'task'}:{action:'pause',text:'缩小后恢复'});});
+ const result=await chat.complete({...input,reasoningEffort:'high'});
+ assert.equal(result.content,'缩小后恢复');assert.deepEqual(bodies.map(b=>b.reasoning_effort),['low','max','low']);assert.ok(bodies.every(b=>b.tool_stream===true));assert.equal(records.at(-1).noActionTimeoutMs,90000);assert.equal(records.at(-1).recoveryMode,true);
+ const state=JSON.parse(bodies.at(-1).messages.at(-1).content);assert.equal(state.decisionRecovery.maxWriteChars,8000);assert.equal(bodies.at(-1).tools[0].function.parameters.properties.content.maxLength,8000);
+});
+
+test('streamed GLM arguments cancel the no-action timer but execute only after complete JSON arrives',async t=>{
+ const storage=await fixture(t);storage.modelCredentials=async()=>({baseUrl:'https://open.bigmodel.cn/api/paas/v4',model:'glm-5.3-flash'});let calls=0;
+ const chat=createChat(storage,async(_url,options)=>{assert.equal(JSON.parse(options.body).tool_stream,true);if(++calls>1)return native({action:'reply',text:'完整参数后执行'});const encoder=new TextEncoder();let timer;
+  return new Response(new ReadableStream({start(controller){const send=delta=>controller.enqueue(encoder.encode('data: '+JSON.stringify({choices:[{index:0,delta}]})+'\n\n'));send({tool_calls:[{index:0,id:'c',type:'function',function:{name:'ailo_action',arguments:'{"action":'}}]});timer=setTimeout(()=>{send({tool_calls:[{index:0,function:{arguments:'"route","kind":"chat"}'}}]});controller.enqueue(encoder.encode('data: '+JSON.stringify({choices:[{index:0,delta:{},finish_reason:'tool_calls'}]})+'\n\ndata: [DONE]\n\n'));controller.close();},60);},cancel(){clearTimeout(timer);}}),{headers:{'content-type':'text/event-stream'}});
+ },{connect:200,first:200,idle:200,decision:30,total:1000});
+ const result=await chat.complete(input);assert.equal(result.content,'完整参数后执行');assert.equal(calls,2);
 });

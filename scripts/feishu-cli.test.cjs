@@ -1,7 +1,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const {createFeishuCli,apiArgs,authURL,clean,findBinary,command}=require('../apps/desktop/feishu-cli.cjs');
 const connected={code:0,data:{identities:{user:{status:'ready',userName:'Tester'}}}};
-async function setup(t,extra={}){const directory=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-feishu-cli-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));return {directory,cli:createFeishuCli({directory,locate:async()=>'/fake/lark-cli',run:async()=>connected,...extra})};}
+async function setup(t,extra={}){const directory=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-feishu-cli-'));const cli=createFeishuCli({directory,locate:async()=>'/fake/lark-cli',run:async()=>connected,...extra});t.after(async()=>{await cli.dispose();await fs.rm(directory,{recursive:true,force:true});});return {directory,cli};}
 async function connect(cli){await cli.begin();for(let i=0;i<50;i++){const s=await cli.status();if(s.connected)return;await new Promise(r=>setTimeout(r,2));}assert.fail('not connected');}
 const action={operation:'api',method:'POST',path:'/open-apis/im/v1/messages',params:{receive_id_type:'chat_id'},data:{receive_id:'oc_test',msg_type:'text',content:'{"text":"test"}'},purpose:'发送测试'};
 test('business bridge rejects shell, credential endpoints, absolute URLs and file directives',()=>{
@@ -129,4 +129,19 @@ test('message search workflow supports bounded pagination, boolean filters and r
  assert.throws(()=>apiArgs({operation:'shortcut',query:'im +chat-messages-list',params:{}}));
  const calls=[];const {cli}=await setup(t,{confirmWrite:()=>assert.fail('read must not request write approval'),run:async(b,args)=>{calls.push(args);return args.includes('+messages-search')?{code:0,data:{ok:true,data:{items:[{message_id:'om_one'}],has_more:true,page_token:'next'}}}:connected;}});await connect(cli);
  const r=await cli.execute({operation:'shortcut',query:'im +messages-search',params:{'page-size':20}});assert.equal(JSON.parse(r.output).data.page_token,'next');assert.ok(calls.some(a=>a.includes('+messages-search')));
+});
+
+test('shortcut snake_case aliases normalize before validation without changing API params',()=>{
+ for(const query of ['im +messages-search','im +chat-search','im +chat-messages-list','docs +search']){
+  const target=query==='im +chat-messages-list'?{chat_id:'oc_1'}:{};
+  const params={...target,page_token:'next',page_size:20};
+  const canonical=Object.fromEntries(Object.entries(params).map(([k,v])=>[k.replace(/_/g,'-'),v]));
+  assert.deepEqual(apiArgs({operation:'shortcut',query,params}),apiArgs({operation:'shortcut',query,params:canonical}));
+ }
+ assert.ok(apiArgs({operation:'shortcut',query:'im +messages-search',params:{is_at_me:true}}).includes('--is-at-me=true'));
+ assert.throws(()=>apiArgs({operation:'shortcut',query:'docs +search',params:{page_token:'a','page-token':'b'}}),/参数重复/);
+ for(const params of [{page_all:true},{page_token:'@/etc/passwd'},{page_size:21}])assert.throws(()=>apiArgs({operation:'shortcut',query:'docs +search',params}));
+ const params={page_token:'next',page_size:20};
+ const args=apiArgs({operation:'api',method:'GET',path:'/open-apis/im/v1/messages',params});
+ assert.deepEqual(JSON.parse(args[args.indexOf('--params')+1]),params);
 });
