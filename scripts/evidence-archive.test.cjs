@@ -33,3 +33,21 @@ test('an archived browser defect cannot be hidden by referring to its screenshot
  const id=w.run.events.at(-1).id;w.run.visualObservations=[{eventId:id,delivered:true,path:'shot.png',sha256:proof.hash(Buffer.from('pixels'))}];
  await assert.rejects(proof.event(w,id),/大量内容被容器裁剪/);
 });
+test('read_execution accepts event and observation IDs after eviction and restart, including missing observation files',async t=>{
+ const {base,w}=await setup(t),result={running:true,output:'real application log\n'.repeat(900)};
+ await w.event('android_device',{operation:'logs',result});const eventId=w.run.events.at(-1).id;
+ const observationId=await w.archiveObservation({action:'android_device',operation:'logs'},{eventId,result});
+ w.run.observationIndex=[{id:observationId,eventId}];
+ for(const reference of [observationId,eventId,eventId.slice(0,8)]){
+  const first=await w.observation(reference,0,4000,'result'),second=await w.observation(reference,first.next,4000,'result');
+  assert.equal(first.text+second.text,result.output.slice(0,8000));
+ }
+ await evict(w);await w.save();
+ const restored=await createWorkspace(base,{id:'t',request:'检查文件'});
+ assert.equal((await restored.observationRecord(eventId)).response.result.output,result.output);
+ const file=path.join(w.project,'runs',proof.hash('t')+'.json.observations',observationId+'.json');await fs.rm(file);
+ assert.equal((await restored.observation(eventId,0,12000,'result')).text,result.output.slice(0,12000));
+ const foreign=await createWorkspace(base,{id:'foreign',request:'其他任务'});
+ await assert.rejects(foreign.observation(eventId),e=>e.code==='EXECUTION_RECORD_NOT_FOUND');
+ await assert.rejects(restored.observation('../state'),/ID 无效/);
+});

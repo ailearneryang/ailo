@@ -6,9 +6,12 @@ const {decodeAction,parseAction,tool,allowedActions,parameterHint}=require('./pr
 
 const stable=value=>value&&typeof value==='object'?(Array.isArray(value)?value.map(stable):Object.fromEntries(Object.keys(value).sort().map(k=>[k,stable(value[k])]))):value;
 async function readIdentity(workspace,action) {
- const fields={list_files:['path'],read_file:['path'],read_material:['id'],read_source:['id','entry'],inspect_source:['id','entry','pointer','query'],search_materials:['query'],read_execution:['id'],read_history:[]}[action.action];
+ const fields={list_files:['path'],read_file:['path'],read_material:['id'],read_source:['id','entry'],inspect_source:['id','entry','pointer','query'],search_materials:['query'],read_execution:['id','view'],read_history:[]}[action.action];
  const target={action:action.action,...Object.fromEntries(fields.filter(k=>action[k]!==undefined).map(k=>[k,action[k]]))};
  if(action.action==='list_files')target.revision=workspace.run.revision;
+ if(action.action==='read_history')target.inputKey=workspace.run.inputKey;
+ if(action.action==='read_execution'&&action.id==='observations')target.indexSize=workspace.run.observationIndex?.length||0;
+ if(action.action==='read_execution'&&action.id==='state')target.stateVersion=createHash('sha256').update(JSON.stringify([workspace.run.revision,workspace.run.steps,workspace.run.executionState,workspace.run.artifacts])).digest('hex');
  if(action.action!=='search_materials')target.offset=action.offset??0;
  if(['read_file','read_material','read_execution','read_history'].includes(action.action))target.limit=action.limit??(action.action==='read_material'||action.action==='read_execution'&&!action.id?6000:10000);
  if(action.action==='read_file') {
@@ -25,7 +28,7 @@ const acceptanceChecks=require('./acceptance.cjs');
 const actionJournal=require('./action-journal.cjs');
 const {validatePlan}=require('./plan.cjs');
 function publicRun(run) {
-  return {currentOutcome:run.currentOutcome,currentInputId:run.inputKey,currentIntent:run.currentIntent,memoryUsed:run.memoryUsed,loadedExtensions:run.loadedExtensions,conversationTitle:run.conversationTitle,progressInputId:run.progressInputId,executionId:run.executionId,history:run.history||[],inFlight:run.inFlight,contextUsage:run.contextUsage,delivery:run.delivery,issues:run.issues||[],executionState:run.executionState,acceptanceCriteria:acceptanceChecks.criteria(run).map(({id,text,type,scope,scopes,check})=>({id,text,type,scope,scopes,basis:check?.basis,status:check?.status==='passed'&&(run.freshAcceptanceIds||[]).includes(id)?'passed':'pending'})),recoverySummary:{retried:(run.actionJournal||[]).filter(e=>e.retries>0).length,recovered:(run.actionJournal||[]).filter(e=>e.recovered).length,unknown:(run.actionJournal||[]).filter(e=>e.status==='unknown').length},performance:run.performance,status:run.status,mode:run.mode,goal:run.goal,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,completionReview:run.completionReview,artifacts:run.artifacts,updatedAt:run.updatedAt,events:run.events.slice(-12).map(e=>({id:e.id,type:e.type,at:e.at,detail:{purpose:e.detail.purpose,exitCode:e.detail.result?.exitCode,path:e.detail.path,name:e.detail.name,offset:e.detail.offset,entry:e.detail.entry,pointer:e.detail.pointer,message:e.detail.message,output:['run_command','build_android','android_device','feishu'].includes(e.type)?e.detail.result?.output?.slice(-2000):undefined}}))};
+  return {designRegionIssues:require('./design-regions.cjs').issues(run).map(({regionId,region,reason})=>({regionId,region,reason})),currentOutcome:run.currentOutcome,currentInputId:run.inputKey,currentIntent:run.currentIntent,memoryUsed:run.memoryUsed,loadedExtensions:run.loadedExtensions,conversationTitle:run.conversationTitle,progressInputId:run.progressInputId,executionId:run.executionId,history:run.history||[],inFlight:run.inFlight,contextUsage:run.contextUsage,delivery:run.delivery,issues:run.issues||[],executionState:run.executionState,acceptanceCriteria:acceptanceChecks.criteria(run).map(({id,text,type,scope,scopes,check})=>({id,text,type,scope,scopes,basis:check?.basis,status:check?.status==='passed'&&(run.freshAcceptanceIds||[]).includes(id)?'passed':'pending'})),recoverySummary:{retried:(run.actionJournal||[]).filter(e=>e.retries>0).length,recovered:(run.actionJournal||[]).filter(e=>e.recovered).length,unknown:(run.actionJournal||[]).filter(e=>e.status==='unknown').length},performance:run.performance,status:run.status,mode:run.mode,goal:run.goal,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,completionReview:run.completionReview,artifacts:run.artifacts,updatedAt:run.updatedAt,events:run.events.slice(-12).map(e=>({id:e.id,type:e.type,at:e.at,detail:{operation:e.detail.operation,purpose:e.detail.purpose,exitCode:e.detail.result?.exitCode,path:e.detail.path,name:e.detail.name,offset:e.detail.offset,entry:e.detail.entry,pointer:e.detail.pointer,message:e.detail.message,output:['run_command','build_android','android_device','feishu'].includes(e.type)?e.detail.result?.output?.slice(-2000):undefined}}))};
 }
 async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[],skillPackages,images,browser,android,authorizeBuild,directoryAccess,feishuCli,webSearch,amap,mcp,knowledge,personalAssistant,projectContext,projectMemoryContext,scheduledContext,memory,permissions,maxSteps=240,batchSize=48,maxDurationMs=2*60*60*1000,now=Date.now,executeTool=execute,getSteering=async()=>[]}) {
   // Status is presentation only. A broken observer must never cancel a tool.
@@ -36,10 +39,11 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
   const performance=require('./performance.cjs');
   const recovery=require('./decision-recovery.cjs');
   const workspace=await createWorkspace(base,task),run=workspace.run;
-  run.observationCapabilities={images:!!images&&model.imageInput!=='disabled',visualReview:!!images&&model.imageInput==='enabled',browser:!!browser,imageInput:model.imageInput||'auto'};
+  run.observationCapabilities={images:!!images&&model.imageInput!=='disabled',visualReview:!!images&&model.imageInput!=='disabled',imageUnderstanding:model.imageInput==='enabled'?'user_confirmed':'unconfirmed',browser:!!browser,imageInput:model.imageInput||'auto'};
   await actionJournal.reconcile(workspace);
   if (skillPackages) extensions = await skillPackages.prepare(workspace, extensions);
   require('./execution-rounds.cjs').beginRound(run,task,publicRun);
+  recovery.resume(run);
   const performanceBaseWall=performance.init(run).wallMs;
   // Report only extensions whose resources were successfully prepared.
   run.loadedExtensions=extensions.filter(e=>e.enabled!==false).map(({id,name,kind})=>({id,name,kind}));
@@ -54,6 +58,8 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
   const protocolTokens=countMessages([{role:'system',content:JSON.stringify(tool)}])+128;
   const notify=async()=>{run.freshAcceptanceIds=[];for(const c of acceptanceChecks.criteria(run))if(c.check){try{await require('./evidence.cjs').assertFresh(workspace,c.check);run.freshAcceptanceIds.push(c.id);}catch{}}run.performance.wallMs=performanceBaseWall+Math.max(0,now()-startedAt);await workspace.save();await onRun?.(publicRun(run));};
   const imageMessages = model.imageInput==='disabled'?[]:await workspace.images(task.messages ? task.messages.slice(-10).flatMap(message => message.materials || []) : task.materials || []);
+  // Imported attachments do not require the native screenshot observer.
+  let attachmentImagesEnabled=model.imageInput!=='disabled';
   let history=(task.messages||[{role:'user',content:task.request}]).slice(-10).map(m=>({role:m.role,content:m.content,clarification:m.clarification,answers:m.clarificationAnswers,materials:m.materials?.map(f=>f.name)}));
   run.observations = (run.observations || []).filter(o=>o.action?.action!=='protocol_error');
   run.readCoverage ||= [];
@@ -69,6 +75,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
     run.actionsSincePlan=run.steps.length ? run.events.slice(lastPlan+1).filter(e=>progressTools.includes(e.type)||e.type==='tool_error').length : 0;
   }
   const workingContext=require('./working-context.cjs');
+  const sourceMemory=require('./source-memory.cjs');
   run.observationIndex ||= [];
   // Upgrade legacy in-memory history only after archiving every original.
   for(const observation of run.observations){
@@ -80,12 +87,27 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
     if(!run.observationIndex.some(r=>r.id===observation.observationId))run.observationIndex.push(workingContext.receipt(observation));
   }
   run.checkpointObservationCount ||= 0;
-  run.observations=run.observations.slice(-workingContext.RECENT_COUNT).map(o=>({...o,response:workingContext.preview(o.response)}));
+  run.observations=run.observations.slice(-workingContext.RECENT_COUNT).map(o=>({...o,response:workingContext.toolPreview(o.response)}));
+  await sourceMemory.hydrate(workspace);
   const attempts=new Map(),failures=new Map(),actionReceipts=new Map();
   const readActions=new Set(['read_material','read_source','inspect_source','read_file','search_materials','read_execution','read_history']);
-  const readAttempts=new Map(),readResults=new Map(), durableProgress=new Set();
+  const readAttempts=new Map(run.readAttempts||[]),readResults=new Map(), durableProgress=new Set();
+  for(const observation of run.observations){
+    if(!readActions.has(observation.action.action)||observation.response.error||observation.response.notExecuted)continue;
+    const identity=await readIdentity(workspace,observation.action),result=observation.response.result;
+    if(identity.version&&result?.sha256!==identity.version)continue;
+    readResults.set(JSON.stringify(stable(identity)),{sourceObservationId:observation.observationId,next:result?.next,total:result?.total,result});
+  }
+  const sourceRevisits=new Map();
+  async function repeatedSource(action,identity,presented){
+    const source=await sourceMemory.readSource(workspace,action,identity);
+    if(!source||!sourceMemory.covered(presented,source))return;
+    const key=JSON.stringify([source.path,source.sha256]),count=(sourceRevisits.get(key)||0)+1;
+    sourceRevisits.set(key,count);return count>=(recovery.active(run)?2:3)?source:undefined;
+  }
+
   let readRecovery;
-  const advanceReads=value=>{const key=createHash('sha256').update(JSON.stringify(stable(value))).digest('hex');if(!durableProgress.has(key)){durableProgress.add(key);readAttempts.clear();readRecovery=undefined;}};
+  const advanceReads=value=>{const key=createHash('sha256').update(JSON.stringify(stable(value))).digest('hex');if(!durableProgress.has(key)){durableProgress.add(key);readRecovery=undefined;}};
   let unplannedReads=0, batchProgress=false, turns=0;
   const progressSeen=new Set();
   const markProgress=value=>{
@@ -105,9 +127,15 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
     if(safeAction.content)safeAction.content='[内容已写入项目文件]';
     response={...response,arguments:safeAction};
     const observationId=await workspace.archiveObservation(safeAction,response);
+    // Cache the original result before any UI/context preview truncates it.
+    if(action.action==='read_file'&&!response.error&&!response.notExecuted)sourceMemory.remember(run,response.result,observationId);
+    if(action.action==='read_execution'&&action.id&&!response.error&&!response.notExecuted){
+      const source=await sourceMemory.archivedSource(workspace,action.id);
+      if(source)await sourceMemory.rememberCurrent(workspace,source,source.observationId);
+    }
     const observation={action:safeAction,response,observationId};
     run.observationIndex.push(workingContext.receipt(observation));
-    const responsePreview=workingContext.preview(action.action==='batch_read'?{...response,arguments:undefined}:response);
+    const responsePreview=workingContext.toolPreview(action.action==='batch_read'?{...response,arguments:undefined}:response);
     run.observations.push({...observation,response:responsePreview});
     const observed=responsePreview.result;
     // Keep complete short files available across checkpoints. Receipts alone do
@@ -122,6 +150,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
       if(!run.readCoverage.some(r=>JSON.stringify(r)===JSON.stringify(receipt)))run.readCoverage.push(receipt);
     }
     run.observations=run.observations.slice(-workingContext.RECENT_COUNT);
+    run.readAttempts=[...readAttempts].slice(-256);
     await workspace.save();
     return observationId;
   };
@@ -133,6 +162,8 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
     await notify();onStatus?.(message);
   }
   let noActionFailures=0;
+  let latestBuild=await workspace.findEvent(e=>e.type==='build_android');
+  let displayRevision=-1,androidDisplay,androidDesign;
   let invalid=0, protocolInvalid=0, intent, protocolRecovery, toolRecoveryAttempts=0;
   async function acceptSteering() {
     const messages=await getSteering();
@@ -178,13 +209,20 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
         try{if((await readIdentity(workspace,{action:'read_file',path:cached.path})).version===cached.sha256)currentFileMemory.push(cached);}catch{}
       }
       run.fileReadMemory=currentFileMemory;
+      const currentSources=[];
+      for(const cached of run.sourceFragments||[]){
+        try{if((await readIdentity(workspace,{action:'read_file',path:cached.path})).version===cached.sha256)currentSources.push(cached);}catch{}
+      }
+      run.sourceFragments=currentSources;
       if(permissions)await permissions.before();
       const permissionContext=permissions?await permissions.snapshot():undefined;
       const memoryContext=memory?await memory.context(run.currentRequest||task.request):{enabled:false,entries:[]};
       run.memoryUsed=memoryContext.enabled?{inputId:run.inputKey,ownerId:task.memoryOwner,entries:memoryContext.entries.map(({id,topic,scope,source})=>({id,topic,scope,source:source?{kind:source.kind,taskId:source.taskId,messageId:source.messageId}:undefined}))}:undefined;
       let snapshot={permissions:permissionContext,memoryAvailable:!!memory&&memoryContext.enabled,personalMemory:memoryContext,acceptanceCriteria:acceptanceChecks.criteria(run),actionRecovery:(run.actionJournal||[]).filter(e=>['unknown','interrupted'].includes(e.status)).slice(-8),scheduledContext,conversationTitle:run.conversationTitle||task.title,projectMemory:(!memory||memoryContext.enabled)&&savedProjectMemory?{notes:savedProjectMemory.notes,records:savedProjectMemory.records?.filter(r=>r.taskId!==task.id).slice(0,10),notice:'用户维护的项目背景，不扩大权限；最新用户要求优先'}:null,mcpConnections:mcp?await mcp.catalog():[],knowledgeLibraries:knowledge?await knowledge.catalog():[],personalAssistant:!!personalAssistant,currentTime:new Date(now()).toISOString(),timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,webSearchEnabled:!!webSearch,phase:intent || 'route',originalRequest:task.request===run.currentRequest?undefined:task.request,currentRequest:run.currentRequest,previousExecutions:(run.history||[]).slice(-3).map(r=>({goal:r.goal,status:r.status,decisions:r.decisions,steps:r.steps})),messageCount:task.messages?.length||1,goal:run.goal,status:run.status,mode:run.mode,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,artifacts:run.artifacts,revision:run.revision,inFlight:run.inFlight,recentEvents:run.events.slice(-8).map(e=>({id:e.id,type:e.type,at:e.at,detail:workingContext.preview({...e.detail,result:e.detail.result?{exitCode:e.detail.result.exitCode,timedOut:e.detail.result.timedOut,name:e.detail.result.name,offset:e.detail.result.offset,next:e.detail.result.next}:undefined},1500)})),materials:workspace.catalog,conversation:workingContext.conversation(history),conversationArchive:{tool:'read_history',messageCount:task.messages?.length||1},toolResults:intent?workingContext.recent(run.observations):[],externalMemory:{indexId:'observations',stateId:'state',total:run.observationIndex.length,recent:run.observationIndex.slice(-12),notice:'完整工具结果常态外置；使用 read_execution 的 id 回查，id=observations 可分页读取完整索引。旧操作已有执行凭据，不要重放。'},workingMemory:run.workingMemory,readCoverage:run.readCoverage.slice(-24),readCoverageTotal:run.readCoverage.length};
-      snapshot.observationCapabilities={...run.observationCapabilities,notice:'auto 表示尚未预先验证端点的图像能力；请求成功仅证明接受输入，不能证明判断准确。images=false 或 visualReview=false 时，不得要求必须完成自动视觉验收；不要反复截图或尝试视觉 verify；完成可执行检查后用 finish outcome=limited，review.unverified 逐项列出未核验视觉要求 ID，明确交由人工看图确认；不能声称视觉验收通过。'};
-      snapshot.visualObservations=run.visualObservations.slice(-8).map(({transform,sources,...o})=>({...o,sourceCount:sources?.length||0}));
+      snapshot.observationCapabilities={...run.observationCapabilities,notice:'auto 表示尚未预先验证端点的图像能力；请求成功仅证明接受输入，不能证明判断准确。images=false 或 visualReview=false 时，不得要求必须完成自动视觉验收。仍须按原稿实现背景、组件、文字和交互，并修复已知差异；不能把尚未实现的内容改称待人工核验。完成实现和可执行检查后才可 outcome=limited，逐项披露未核验视觉要求，不能声称视觉验收通过。'};
+      snapshot.visualObservations=run.visualObservations.slice(-8).map(({transform,sources,designManifest,uiHierarchy,...o})=>({...o,designManifest:designManifest?{id:designManifest.id,regionCount:designManifest.regions.length}:undefined,uiHierarchy:uiHierarchy?{path:uiHierarchy.path,nodeCount:uiHierarchy.nodeCount,available:uiHierarchy.available}:undefined,sourceCount:sources?.length||0}));
+      snapshot.designComparisons=(run.visualComparisons||[]).map(({eventId,path,reference,comparison,designBinding})=>({eventId,path,reference,comparison,designBinding,notice:'这是最近一次对照，不是验收通过；修改实现后重建、截图并成对复核。'}));
+      snapshot.designRegionIssues=require('./design-regions.cjs').issues(run).map(({boardId,regionId,region,reason,eventId})=>({boardId,regionId,region,reason,eventId}));
       snapshot.completionReview=run.completionReview;
       snapshot.issues=run.issues||[];snapshot.executionState=run.executionState;
       if(run.loopRecovery?.inputKey!==run.inputKey)delete run.loopRecovery;
@@ -194,17 +232,44 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
       snapshot.formatGuidance=require('./format-guidance.cjs').forMaterials(workspace.catalog);
       snapshot.pageChecks=run.events.filter(e=>e.type==='browser').slice(-3).map(e=>({evidenceId:e.id,path:e.detail.result?.path,layoutHealth:e.detail.result?.dom?.layoutHealth,sourceAudit:e.detail.result?.sourceAudit,repairRequired:e.detail.result?.repairRequired}));
       for(const c of snapshot.acceptanceCriteria)if(c.check){try{await require('./evidence.cjs').assertFresh(workspace,c.check);const summary=({status,basis,kind,reason,evidenceId,scope})=>({status,basis,kind,reason,evidenceId,scope});c.check={...summary(c.check),...(c.check.parts?{parts:c.check.parts.map(summary)}:{})};}catch{c.check=undefined;}}
+      if(intent==='task'&&latestBuild){const result=latestBuild.detail.result||{};snapshot.androidBuild={eventId:latestBuild.id,revision:latestBuild.detail.revision,current:latestBuild.detail.revision===run.revision,exitCode:result.exitCode,buildArtifacts:result.buildArtifacts,scopes:result.scopes,...require('./android-build.cjs').diagnostics(result),instruction:'优先依据 errors 定位源码并修复；已有明确错误时不要逐页重读整份构建记录。成功构建可用本事件作 command 证据，scopes 绑定实际 APK；buildArtifacts 可直接登记 artifact。仍须核验版本，不必再用 ls/grep 伪造构建证明。'};}
+      if(intent==='task'&&latestBuild&&latestBuild.detail.result?.exitCode!==0)snapshot.repairContext=await require('./repair-context.cjs').collect(workspace,latestBuild);
       snapshot.failureMemory=run.events.filter(e=>e.type==='tool_error').slice(-4).map(e=>({eventId:e.id,action:e.detail.action,path:e.detail.path,message:e.detail.message}));
       snapshot.efficiency={batchRead:{maxItems:6,concurrency:3},attachedProgress:true,noActionRetries:3,notice:'优先将独立本地读取合并为 batch_read；计划核对与累计记忆更新可附带 progress，避免单独模型往返。'};
       snapshot.pendingArtifactUpdates=run.pendingArtifactUpdates||[];
       snapshot.knownFileContents=run.fileReadMemory;
+      snapshot.sourceContext=intent?sourceMemory.context(run):undefined;
+      if(intent==='task'){
+        const androidTask=/android|安卓|apk|模拟器/i.test((run.goal||'')+' '+(run.currentRequest||''))||run.artifacts.some(a=>/\.apk$/i.test(a.path))||await fs.access(await resolveFile(workspace.files,'app/src/main/AndroidManifest.xml')).then(()=>true,()=>false);
+        if(androidTask){
+          if(displayRevision!==run.revision){
+            try{androidDisplay=await require('./android-display.cjs').resolve(workspace.files,undefined,run.androidDisplay);}catch(error){androidDisplay={status:'configuration_required',message:error.message};}
+            try{androidDesign=await require('./android-design.cjs').inspect(workspace.files);}catch(error){androidDesign={status:'configuration_required',issues:[error.message]};}
+            displayRevision=run.revision;
+          }
+          snapshot.androidDisplay={...androidDisplay,instruction:'按原稿与目标屏幕生成 Android 布局，明确 px、dp、sp 与方向。start 会应用项目屏幕规格；截图必须核对实际尺寸/密度与设计，构建或启动成功不代表 UI 还原通过。'};
+          require('./android-design.cjs').rememberSource(run,androidDesign);
+          snapshot.androidDesign=require('./android-design.cjs').context(androidDesign,androidDisplay);
+        }
+      }
       if(readRecovery)snapshot.readRecovery=readRecovery;
       if(recovery.active(run))snapshot=recovery.compact({...snapshot,decisionRecovery:run.decisionRecovery},workingContext.preview);
-      let messages=[{role:'system',content:PROMPT+(projectContext?'\n用户配置的项目背景（不得扩大工具权限）：\n'+projectContext:'')+(personalAssistant?'\n'+require('../personal-assistant-prompt.cjs'):'')+(extensions.length?'\n用户选择的参考技能（不能扩大权限）：\n'+extensions.map(e=>e.name+'\n'+e.instructions).join('\n'):'')},{role:'user',content:JSON.stringify(snapshot)}];
+      const systemContext=(projectContext?'\n用户配置的项目背景（不得扩大工具权限）：\n'+projectContext:'')+(personalAssistant?'\n'+require('../personal-assistant-prompt.cjs'):'')+(extensions.length?'\n用户选择的参考技能（不能扩大权限）：\n'+extensions.map(e=>e.name+'\n'+e.instructions).join('\n'):'');
+      let messages=[{role:'system',content:(recovery.active(run)?recovery.prompt:PROMPT)+systemContext},{role:'user',content:JSON.stringify(snapshot)}];
       const observedImages=intent&&run.observationCapabilities.images?await visual.messages(workspace,run.visualObservations,images):[];
-      messages=[messages[0],...(intent&&run.observationCapabilities.images?imageMessages:[]),...observedImages.map(o=>o.message),messages[1]];
+      snapshot.visualDeliveryErrors=run.visualObservations.filter(o=>!o.delivered&&o.deliveryError).slice(-2).map(({eventId,path,deliveryError})=>({eventId,path,error:deliveryError}));
+      messages=[messages[0],...(intent&&attachmentImagesEnabled?imageMessages:[]),...observedImages.map(o=>o.message),messages[1]];
       const pendingObservations=run.observationIndex.slice(run.checkpointObservationCount);
-      const needsCheckpoint=intent && pendingObservations.length>0 && (pendingObservations.length>=12 || pendingObservations.filter(o=>['read_material','read_source','inspect_source'].includes(o.action)).length>=6 || pendingObservations.length>=4 && countMessages(messages)+protocolTokens>Math.min(24000,capacity(model)-10000));
+      // A checkpoint must not preempt verified delivery merely because the
+      // normal prompt was restored after recovery.
+      const planComplete=intent==='task'&&run.steps.length&&run.steps.every(s=>s.status==='done');
+      // Summarize compressible observations, not fixed instructions or protected
+      // source ranges that a checkpoint cannot remove. Otherwise a larger tool
+      // schema makes every few tiny reads demand another bookkeeping call.
+      const observationTokens=countMessages([{role:'user',content:JSON.stringify(snapshot.toolResults||[])}]);
+      const observationPressure=observationTokens>Math.min(12000,Math.max(2000,(capacity(model)-10000)/4));
+      const capacityPressure=observationTokens>2000&&countMessages(messages)+protocolTokens>capacity(model)-10000;
+      const needsCheckpoint=intent && !planComplete && pendingObservations.length>0 && (pendingObservations.length>=24 || pendingObservations.filter(o=>['read_material','read_source','inspect_source'].includes(o.action)).length>=12 || pendingObservations.length>=4 && (observationPressure||capacityPressure));
       if(needsCheckpoint) {
         snapshot.requiredAction='checkpoint';
         snapshot.instruction='先保存需求结论、来源记录 id、未解决问题与下一步；可在下一实际动作附带 progress.memory 一并完成，避免独立摘要调用。摘要信息不足时可先用 read_execution/read_history 回查；不得重复执行旧工具，也不得只记录“已读取”。';
@@ -234,22 +299,24 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
         signal.throwIfAborted();
         if(now()-startedAt>=maxDurationMs)return await budgetPause('time');
         const decisionSnapshot=recovery.active(run)?recovery.compact({...snapshot,decisionRecovery:run.decisionRecovery},workingContext.preview):snapshot;
-        const retryMessages=outputAttempt?[...messages.slice(0,-1),{role:'user',content:JSON.stringify({...decisionSnapshot,recovery:emptyResponse?'上一轮在思考阶段或空响应中未产出动作，未执行任何工具。请只选择一个最小的下一步，优先复用已有观察，不重新分析整个任务。请使用 ailo_action 返回当前阶段允许的一个完整动作；不要只返回思考数据。':oversizedArguments?'上一轮工具参数超过250000字符，整条动作未执行。请返回一个完整的小动作，每次只写一个小文件；write_file.content最多200000字符、run_command.command最多8000字符，不要在命令中嵌入整个工程，不要续接残缺 JSON。':outputReason==='reasoning'?'上一轮在思考阶段耗尽输出额度，未产生正文或工具动作。请收敛分析，仅决定当前下一步，并返回一个完整的 ailo_action；不要尝试一次解决整个任务。':'上一轮动作因输出额度耗尽被截断，未执行任何动作。请重新返回一个完整且更小的动作，不要续接残缺 JSON。一次只处理一个小文件或一个步骤；若单文件过大，先拆分模块。摘要与计划应简洁。'})}]:messages;
+        const retryMessages=outputAttempt?[...messages.slice(0,-1),{role:'user',content:JSON.stringify({...decisionSnapshot,recovery:emptyResponse?'上一轮在思考阶段或空响应中未产出动作，未执行任何工具。请只选择一个最小的下一步，优先复用已有观察，不重新分析整个任务。请按 responseContract 返回当前阶段允许的一个完整动作；不要只返回思考数据。':oversizedArguments?'上一轮工具参数超过250000字符，整条动作未执行。请返回一个完整的小动作，每次只写一个小文件；write_file.content最多200000字符、run_command.command最多8000字符，不要在命令中嵌入整个工程，不要续接残缺 JSON。':outputReason==='reasoning'?'上一轮在思考阶段耗尽输出额度，未产生正文或工具动作。请收敛分析，仅决定当前下一步，并按 responseContract 返回一个完整动作；不要尝试一次解决整个任务。':'上一轮动作因输出额度耗尽被截断，未执行任何动作。请重新返回一个完整且更小的动作，不要续接残缺 JSON。一次只处理一个小文件或一个步骤；若单文件过大，先拆分模块。摘要与计划应简洁。'})}]:[...messages];
+        if(recovery.active(run))retryMessages[0]={role:'system',content:recovery.prompt+systemContext};
         const remaining=capacity(model)-countMessages(retryMessages)-protocolTokens-128;
         // Checkpoints need a concise summary, not the previous file-generation
         // budget. Retain bounded escalation if reasoning/output is truncated.
         const budgetStage=!intent?'route':needsCheckpoint?'summary':snapshot.requiredAction==='plan_update'?'review':'action';
-        const budget=Math.min(outputPolicy.budget(remaining,budgetStage),decisionSnapshot.decisionRecovery?.maxOutputTokens||Infinity);
+        const budget=recovery.budget(outputPolicy.budget(remaining,budgetStage),remaining,outputLimit(model),decisionSnapshot.decisionRecovery);
         if(budget<256)throw Error('剩余上下文不足以生成完整动作；已保留任务状态，请调整模型容量或精简扩展。');
         try {
           let observedRequests=0,response,requestError;const requestStarted=now();
           try{response=await ask(retryMessages,budget,async stats=>{run.contextUsage=stats;await notify();},record=>{observedRequests++;performance.request(run,record);});}
           catch(error){requestError=error;throw error;}
           finally{if(!observedRequests){let decoded;try{decoded=response&&decodeAction(response);}catch{}performance.request(run,{durationMs:now()-requestStarted,action:decoded?.action,outcome:requestError?'failed':'completed',errorCode:requestError?.code,...requestError?.diagnostics,providerUsage:response?.providerUsage||requestError?.providerUsage});}}
-          action=decodeAction(response);noActionFailures=0;for(const observed of run.observationCapabilities.images?observedImages:[]){const receipt=run.visualObservations.find(o=>o.eventId===observed.eventId);if(receipt)receipt.delivered=true;}outputPolicy.succeeded(response.providerUsage,budgetStage);await saveOutputBudget();break;
+          action=decodeAction(response);if(!recovery.active(run))noActionFailures=0;for(const observed of run.observationCapabilities.images?observedImages:[]){const receipt=run.visualObservations.find(o=>o.eventId===observed.eventId);if(receipt)receipt.delivered=true;}outputPolicy.succeeded(response.providerUsage,budgetStage);await saveOutputBudget();break;
         }
         catch(e) {
-          if(e.code==='MODEL_IMAGE_UNSUPPORTED'&&run.observationCapabilities.images){
+          if(e.code==='MODEL_IMAGE_UNSUPPORTED'&&(run.observationCapabilities.images||attachmentImagesEnabled&&imageMessages.length)){
+            attachmentImagesEnabled=false;
             run.observationCapabilities={...run.observationCapabilities,images:false,visualReview:false};
             snapshot.observationCapabilities={...snapshot.observationCapabilities,...run.observationCapabilities};
             // Retry the same task as text; rejected image requests executed no tool.
@@ -262,12 +329,19 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
           emptyResponse=e.code==='MODEL_EMPTY_RESPONSE';
           const reasoningOnly=e.code==='MODEL_OUTPUT_LIMIT'&&e.diagnostics?.contentChars===0&&!(e.diagnostics?.toolArgumentChars>0)&&(e.diagnostics?.reasoningTokens>0||e.diagnostics?.reasoningChars>0);
           if(emptyResponse||reasoningOnly||e.code==='MODEL_NO_ACTION_TIMEOUT'){
-            noActionFailures++;outputPolicy.reset(budgetStage);await saveOutputBudget();
+            noActionFailures=Math.max(noActionFailures,recovery.active(run)?run.decisionRecovery.noActionFailures||0:0)+1;
+            if(reasoningOnly)outputPolicy.limited(budget,e.diagnostics,budgetStage);
+            await saveOutputBudget();
             const stopping=noActionFailures>=4;
-            await workspace.event(emptyResponse?'empty_response':reasoningOnly?'output_limit':'no_action_timeout',{attempt:noActionFailures,...e.diagnostics,budget,nextBudget:stopping?null:Math.min(outputPolicy.budget(remaining,budgetStage),recovery.contract.maxOutputTokens),reason:'reasoning',message:stopping?'分阶段自动恢复仍未产出动作，本次恢复预算已用尽':'未产出动作，将自动调整上下文、工具格式与思考模式后继续'});
-            if(stopping)throw Object.assign(Error('模型服务持续未返回可执行动作，已依次尝试小动作、聚焦上下文和单步直出恢复，仍未恢复。已有成果和进度已保存，任务尚未完成。'),{code:'MODEL_NO_ACTION_BUDGET'});
-            recovery.begin(run,e.code,noActionFailures);
-            await workspace.event('no_action_recovery',{attempt:noActionFailures,code:e.code,budget:Math.min(outputPolicy.budget(remaining,budgetStage),recovery.contract.maxOutputTokens),noActionTimeoutMs:recovery.contract.noActionTimeoutMs,maxWriteChars:recovery.contract.maxWriteChars,maxCommandChars:recovery.contract.maxCommandChars,stage:run.decisionRecovery.stage,message:({small_action:'自动恢复：缩小单次动作，保留当前任务已授权的应用工具，并对支持的模型降低思考强度。',refocus:'自动恢复：精简重复上下文、改用具名工具；百炼 GLM-5.2 改用非思考模式生成下一步动作。',direct_action:'自动恢复：仅生成一个明确动作，逐项读取分页，不重放已执行工具。'})[run.decisionRecovery.stage]});
+            if(!stopping){
+              recovery.begin(run,e.code,noActionFailures);
+              run.decisionRecovery.maxOutputTokens=Math.min(32768,Math.max(run.decisionRecovery.maxOutputTokens,outputPolicy.budget(remaining,budgetStage)));
+              run.decisionRecovery.noActionFailures=noActionFailures;
+            }
+            const nextBudget=stopping?null:recovery.budget(outputPolicy.budget(remaining,budgetStage),remaining,outputLimit(model),run.decisionRecovery);
+            await workspace.event(emptyResponse?'empty_response':reasoningOnly?'output_limit':'no_action_timeout',{attempt:noActionFailures,...e.diagnostics,budget,nextBudget,reason:'reasoning',message:stopping?'分阶段自动恢复仍未产出有效进展，本次恢复预算已用尽':'未产出动作，将精简请求并适配输出预算与决策时间后继续'});
+            if(stopping)throw Object.assign(Error('当前步骤在有限恢复期间多次未返回动作，期间的读取也未形成足够的实质进展。已尝试精简上下文、适配输出预算和决策时间；已有成果和进度已保存，任务尚未完成。'),{code:'MODEL_NO_ACTION_BUDGET'});
+            await workspace.event('no_action_recovery',{attempt:noActionFailures,code:e.code,budget:nextBudget,noActionTimeoutMs:run.decisionRecovery.noActionTimeoutMs,maxWriteChars:recovery.contract.maxWriteChars,maxCommandChars:recovery.contract.maxCommandChars,stage:run.decisionRecovery.stage,message:({small_action:'自动恢复：精简决策上下文、缩小单次动作，保留已授权工具并适配输出预算。',refocus:'自动恢复：聚焦当前缺口，使用精简工具定义和当前源码，延长有限决策时间。',direct_action:'自动恢复：保留当前错误与源码，只生成一个修复或验证动作，不重复翻读已有日志。'})[run.decisionRecovery.stage]});
             emptyResponse=true;outputReason='reasoning';onStatus?.('正在自动恢复：'+({small_action:'缩小下一步动作',refocus:'聚焦当前步骤',direct_action:'改用单步动作'})[run.decisionRecovery.stage]+'…');continue;
           }
           if(e.code==='MODEL_TOOL_ARGUMENT_LIMIT') {
@@ -284,7 +358,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
             recovery.begin(run,e.code,outputFailures);
             run.decisionRecovery.maxOutputTokens=Math.min(32768,outputPolicy.budget(remaining,budgetStage));
             // Report the effective request budget, including the recovery cap.
-            const nextBudget=Math.min(outputPolicy.budget(remaining,budgetStage),run.decisionRecovery.maxOutputTokens);
+            const nextBudget=recovery.budget(outputPolicy.budget(remaining,budgetStage),remaining,outputLimit(model),run.decisionRecovery);
             const reason=outputReason==='reasoning'?'模型思考达到单次输出额度':'模型动作输出达到单次额度';
             const message=outputFailures>=4?reason+'，自动重试已用尽':reason+(nextBudget>budget?`，将提高额度至 ${nextBudget} 并自动重试`:'，正在缩小动作、精简上下文并自动重试');
             await workspace.event('output_limit',{attempt:outputFailures,budget,nextBudget,stage:run.decisionRecovery.stage,configuredLimit:outputLimit(model),...e.diagnostics,reason:outputReason,message});
@@ -344,7 +418,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
           else if(update.steps){if(update.steps.filter(step=>step.status==='done').length>run.steps.filter(step=>step.status==='done').length)advanceReads({completed:update.steps.filter(step=>step.status==='done').map(step=>step.id).sort()});run.steps=update.steps.map(step=>({...step}));run.actionsSincePlan=0;markProgress({steps:run.steps.map(({id,status})=>({id,status}))});}
           if(issueUpdates)run.issues=issueUpdates;
           if(stateUpdate)run.executionState=stateUpdate;
-          if(update.memory!==undefined){run.workingMemory=update.memory;run.checkpointObservationCount=run.observationIndex.length;run.observations=[];}
+          if(update.memory!==undefined){run.workingMemory=update.memory;run.checkpointObservationCount=run.observationIndex.length;}
           run.performance.attachedUpdates++;await workspace.event('attached_progress',{steps:!!update.steps,memory:!!update.memory});await notify();
         }
         if(run.loopRecovery&&['pause','blocked'].includes(action.action)){
@@ -365,6 +439,17 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
         const fingerprint=JSON.stringify(stable(target));
         const readAction=readActions.has(action.action);
         const readTarget=readAction?await readIdentity(workspace,{...action,id:target.id}):target;
+        if(intent==='task'&&['read_file','read_execution'].includes(action.action)){
+          const source=await repeatedSource(action,readTarget,snapshot.sourceContext);
+          if(source){
+            const instruction='所需原文已完整提供在 sourceContext 中，本次重复读取未执行。文件和归档引用的是同一版本，不再换偏移量或归档 ID 重读；直接使用 sourceContext 的 sha256 和 ranges.text 执行 edit_file，之后验证。确实缺少的范围才允许继续读取；审计执行参数可显式用 view=record。';
+            readRecovery={kind:'source_reuse',...source,instruction};
+            await recoverLoop({kind:'source_reuse',action,location:{path:source.path,offset:source.offset},receipt:source});
+            await record(action,{action:action.action,notExecuted:true,source,instruction});
+            await workspace.event('source_reuse',{path:source.path,offset:source.offset,message:'已保留当前源码，阻止跨文件与归档工具重复读取，正在推进修复与验证'});
+            await notify();continue;
+          }
+        }
         const readFingerprint=JSON.stringify(stable(readTarget));
         const counters=readAction?readAttempts:attempts, key=readAction?readFingerprint:fingerprint;
         const repeats=(counters.get(key)||0)+1;if(!readAction)counters.set(key,repeats);
@@ -398,7 +483,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
           if(typeof action.text!=='string'||action.text.trim().length<20||action.text.length>10000)throw Error('checkpoint 需要20–10000字的累计任务摘要，包含需求、来源、缺口和下一步');
           run.workingMemory=action.text;
           await workspace.event('checkpoint',{text:action.text});
-          run.observations=[];run.checkpointObservationCount=run.observationIndex.length;outputPolicy.reset('action');await saveOutputBudget();invalid=0;await notify();continue;
+          run.observations=run.observations.slice(-2);run.checkpointObservationCount=run.observationIndex.length;await saveOutputBudget();invalid=0;await notify();continue;
         }
         const text=()=>{if(typeof action.text!=='string'||!action.text.trim()||action.text.length>6000)throw Error('用户说明必须为1–6000字符');return action.text;};
         if(action.action==='plan') {
@@ -437,8 +522,11 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
             const review=require('./completion-review.cjs').validate(action.review,true);
             const limitation=require('./visual-limitation.cjs').prepare(run,action,review,acceptanceChecks.criteria(run));
             if(review.unverified.length&&!limitation)throw Error('仍有未验证要求，不能声明完成；请继续验证或暂停/阻塞交付');
+            visual.assertComparisons(run);
             await acceptanceChecks.assertAccepted(workspace,{unverifiedVisualIds:limitation?.ids});
             await require('./html-delivery.cjs').assertHtmlDelivery(workspace);
+            await require('./android-delivery.cjs').assertAndroidDelivery(workspace);
+            if(run.artifacts.some(a=>/\.apk$/i.test(a.path)))await require('./android-design.cjs').assertDelivery(workspace,images);
             const finalReview=limitation?.review||review;
             if(limitation){
               content+=limitation.notice;
@@ -455,7 +543,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
         }
         if(action.action==='verify'){
           if(intent!=='task'||!run.steps.length)throw Error('请先制定任务验收要求');
-          const result=await acceptanceChecks.verify(workspace,action);if(run.executionState?.blocker?.action==='verify')delete run.executionState.blocker;await record(action,{eventId:run.events.at(-1).id,result});delete run.loopRecovery;invalid=0;for(const counters of [failures,attempts])for(const key of counters.keys())if(JSON.parse(key).action==='finish')counters.delete(key);await notify();continue;
+          const result=await acceptanceChecks.verify(workspace,action);recovery.progress(run,action,result);if(!recovery.active(run))noActionFailures=0;if(run.executionState?.blocker?.action==='verify')delete run.executionState.blocker;await record(action,{eventId:run.events.at(-1).id,result});delete run.loopRecovery;invalid=0;for(const counters of [failures,attempts])for(const key of counters.keys())if(JSON.parse(key).action==='finish')counters.delete(key);await notify();continue;
         }
         if(action.action==='artifact') {
           if(run.mode!=='task')throw Error('请先制定任务计划');
@@ -495,7 +583,9 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
           const batch=require('./batch-read.cjs'),items=batch.validate(action.items),identities=await Promise.all(items.map(item=>readIdentity(workspace,item)));
           const keys=identities.map(identity=>JSON.stringify(stable(identity)));
           const duplicates=new Set();for(const key of keys){if(duplicates.has(key))throw Error('批量读取不能包含相同版本和范围的重复项');duplicates.add(key);}
-          const completed=await batch.execute(items,signal,async item=>{const index=items.findIndex(i=>i.itemId===item.itemId),key=keys[index];if((readAttempts.get(key)||0)>=2){const old=readResults.get(key);return {notExecuted:true,sourceObservationId:old?.sourceObservationId,next:old?.next,notice:'同一范围已读取两次，请使用旧结果或继续下一范围'};}if(permissions)await permissions.before(item,signal);const child={...item};delete child.itemId;return executeTool(workspace,child,signal,{directoryAccess,permissions});});
+          const completed=await batch.execute(items,signal,async item=>{const index=items.findIndex(i=>i.itemId===item.itemId),key=keys[index];const source=intent==='task'?await repeatedSource(item,identities[index],snapshot.sourceContext):undefined;if(source)return {notExecuted:true,sourceReuse:true,source,notice:'原文已在 sourceContext 中完整提供，请直接编辑并验证，不重复批量读取'};if((readAttempts.get(key)||0)>=2){const old=readResults.get(key);return {notExecuted:true,sourceObservationId:old?.sourceObservationId,next:old?.next,notice:'同一范围已读取两次，请使用旧结果或继续下一范围'};}if(permissions)await permissions.before(item,signal);const child={...item};delete child.itemId;return executeTool(workspace,child,signal,{directoryAccess,permissions});});
+          const reused=completed.find(item=>item.result?.sourceReuse);
+          if(reused)await recoverLoop({kind:'source_reuse',location:{path:reused.result.source.path},receipt:reused.result.source});
           run.performance.batchItems+=items.length;
           for(const item of completed){const index=items.findIndex(i=>i.itemId===item.itemId),child={...items[index]};delete child.itemId;item.observationId=await record(child,{action:child.action,...(item.error?{error:item.error}:{result:item.result})});if(!item.error&&!item.result?.notExecuted){const key=keys[index];readAttempts.set(key,(readAttempts.get(key)||0)+1);readResults.set(key,{sourceObservationId:item.observationId,next:item.result?.next,total:item.result?.total,result:item.result});}if(item.result!==undefined)item.result=workingContext.preview(batch.preview(item.result,Math.floor(2400/items.length)),Math.floor(3600/items.length));}
           result={results:completed,notice:'每项独立返回，错误项未成功；成功项已归档，不重放整批。更长原文通过 observationId 回查。'};
@@ -514,6 +604,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
           if(action.action==='request_directory'){run.status='running';await notify();onStatus?.('目录已授权，继续执行');}
         }
         }finally{run.performance.toolMs+=Math.max(0,now()-toolStarted);}
+        if(!result?.timedOut&&(result?.exitCode===undefined||result.exitCode===0)&&!result?.results?.some(r=>r.error||r.result?.notExecuted))run.performance.successfulTools++;
         if(commandBefore){
           const after=await fileState.inventory(workspace.files),changes=fileState.changes(commandBefore,after);
           result.fileChanges=changes;result.changeCoverage=commandBefore.complete&&after.complete?'complete':'bounded';
@@ -530,16 +621,20 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
         // A new successful tool action is evidence of progress, not proof of task completion.
         // Exclude bookkeeping/log scans; repeated requests do not extend execution forever.
         if(!['list_files','read_history','read_execution'].includes(action.action) && (action.action!=='batch_read'||result.results.some(item=>!item.error&&!item.result?.notExecuted)) && !result?.timedOut && (result?.exitCode===undefined||result.exitCode===0))markProgress({...action,purpose:undefined});
-        await workspace.event(action.action,{id:action.id,entry:action.entry,pointer:action.pointer,offset:action.offset,name:result?.name,path:action.path,command:action.command,purpose:action.purpose,revision:run.revision,result:action.action==='memory'?{ok:true,id:result?.id,operation:action.operation}:result});
+        await workspace.event(action.action,{id:action.id,operation:action.operation,entry:action.entry,pointer:action.pointer,offset:action.offset,name:result?.name,path:action.path,command:action.command,purpose:action.purpose,revision:run.revision,result:action.action==='memory'?{ok:true,id:result?.id,operation:action.operation}:result});
+        if(action.action==='build_android')latestBuild=run.events.at(-1);
+        if(action.action==='android_device'&&['start','check'].includes(action.operation)&&result.display){run.androidDisplay=result.display;displayRevision=-1;}
         if(action.action==='view_image'||action.action==='browser'&&result.screenshot){
-          run.visualObservations.push({eventId:run.events.at(-1).id,path:result.screenshot||result.path,sha256:result.sha256,sources:result.sources,revision:run.revision,scope:result.scope,pixelSize:result.pixelSize,rendererState:result.rendererState,transform:action.action==='view_image'&&action.crop?{crop:action.crop}:{},delivered:false});
+          run.visualObservations.push({eventId:run.events.at(-1).id,path:result.screenshot||result.path,sha256:result.sha256,sources:result.sources,revision:run.revision,scope:result.scope,pixelSize:result.pixelSize,displayCheck:result.displayCheck,reference:result.reference,comparison:result.comparison,designBinding:result.designBinding,designManifest:result.designManifest,uiHierarchy:result.uiHierarchy,rendererState:result.rendererState,transform:action.action==='view_image'&&action.crop?{crop:action.crop}:{},delivered:false});
           run.visualObservations=run.visualObservations.slice(-64);
+          require('./android-design.cjs').recordComparison(workspace,run.visualObservations.at(-1));
         }
         if(action.action==='browser'){
           require('./html-delivery.cjs').recordObservation(workspace,run.events.at(-1));
           require('./browser-diagnostics.cjs').record(workspace,run.events.at(-1),acceptanceChecks.criteria(run));
         }
         recovery.progress(run,action,result);
+        if(!recovery.active(run))noActionFailures=0;
         if(run.loopRecovery&&!['list_files','read_execution','read_history'].includes(action.action)&&!result.timedOut&&(result.exitCode===undefined||result.exitCode===0)&&(action.action!=='batch_read'||result.results?.some(r=>!r.error&&!r.result?.notExecuted)))delete run.loopRecovery;
         if(run.executionState?.blocker?.action===action.action&&run.executionState.blocker.path===action.path&&!result.timedOut&&(result.exitCode===undefined||result.exitCode===0))delete run.executionState.blocker;
         if(result.exitCode!==undefined&&result.exitCode!==0||result.timedOut)run.executionState={...run.executionState,goal:run.executionState?.goal||run.goal,blocker:{action:action.action,path:action.path,eventId:run.events.at(-1).id,exitCode:result.exitCode,timedOut:result.timedOut,stderr:result.stderr?.slice(-1500)},updatedAt:new Date().toISOString()};
@@ -550,7 +645,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
         if(intent==='task' && run.steps.length)run.actionsSincePlan++;
         delete run.inFlight;await notify();const observationId=await record(action,{action:action.action,eventId:run.events.at(-1).id,result:action.action==='memory'?{ok:true,operation:action.operation,id:result?.id,forgotten:result?.forgotten,notice:'操作已完成。当前有效记忆见 personalMemory，其他条目可用更具体的查询。'}:result,instruction:repeats===2?'此动作已重复，请利用结果推进，避免第三次重复调用':undefined});
         if(!readAction)actionReceipts.set(key,{sourceObservationId:observationId,eventId:run.events.at(-1).id});
-        if(readAction){counters.set(key,repeats);const page=run.observations.at(-1).response.result;readResults.set(key,{sourceObservationId:observationId,next:page?.next,total:page?.total,result:page});if(readRecovery?.action===action.action&&readRecovery.path===readTarget.path&&readRecovery.version!==readTarget.version)readRecovery=undefined;}
+        if(readAction){counters.set(key,repeats);run.readAttempts=[...readAttempts].slice(-256);const page=run.observations.at(-1).response.result;readResults.set(key,{sourceObservationId:observationId,next:page?.next,total:page?.total,result:page});if(readRecovery?.action===action.action&&readRecovery.path===readTarget.path&&readRecovery.version!==readTarget.version)readRecovery=undefined;}
         invalid=0;delete run.toolRecovery;
       } catch(error) {
         if(signal.aborted)throw error;
@@ -558,6 +653,7 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
         if(['DIRECTORY_DECLINED','DIRECTORY_UNAVAILABLE','DIRECTORY_SYSTEM_PERMISSION'].includes(error.code)){delete run.inFlight;run.status=error.code==='DIRECTORY_UNAVAILABLE'?'blocked':'waiting_permission';await workspace.event('permission_required',{path:action.path,message:error.message});await notify();return {content:error.message,agentRun:publicRun(run)};}
         if(error.code==='ACTION_RESULT_UNKNOWN'||String(error.code||'').startsWith('MCP_')||error.code==='SEARCH_UNAVAILABLE'||error.code==='ANDROID_PERMISSION'||error.code==='FEISHU_DECLINED'||error.code==='FEISHU_PERMISSION'||error.code==='AMAP_UNAVAILABLE'||error.code==='AMAP_DECLINED'){delete run.inFlight;run.status='blocked';await workspace.event('permission_required',{message:error.message});await notify();return {content:error.message,agentRun:publicRun(run)};}
         require('./html-delivery.cjs').rememberFailure(workspace,error);
+        require('./android-design.cjs').rememberFailure(workspace,error);
         const failedPath=typeof action.path==='string'?action.path.slice(0,500):undefined;
         run.executionState={...run.executionState,goal:run.executionState?.goal||run.goal,blocker:{action:action.action,path:failedPath,code:action.action==='verify'?'ACCEPTANCE_FAILED':error.code,message:error.message},updatedAt:new Date().toISOString()};
         delete run.inFlight;await workspace.event('tool_error',{message:error.message,action:action.action,id:action.id,entry:action.entry,offset:action.offset,path:failedPath,...(action.action==='feishu'?{operation:action.operation,query:action.query,method:action.method}:{})});await notify();
@@ -565,6 +661,8 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
         const failureKey=JSON.stringify(stable({...action,purpose:undefined}));
         const failed=(failures.get(failureKey)||0)+1;failures.set(failureKey,failed);
         invalid++;
+        run.performance.toolErrors=(run.performance.toolErrors||0)+1;
+        if(action.action==='verify')run.performance.validationFailures=(run.performance.validationFailures||0)+1;
         // Ordinary execution and validation errors belong inside the task.
         // Change strategy before returning control to the user; retain failure
         // counts so repeated recovery cannot hide an endless loop.
@@ -576,6 +674,15 @@ async function runAgent({base,task,ask,model,signal,onStatus,onRun,extensions=[]
           await workspace.event('tool_recovery',{...run.toolRecovery,message:'正在自动诊断执行问题并调整下一步，不需要手动重试'});
           await notify();invalid=0;
           continue;
+        }
+        if(action.action==='verify'&&(failed>=3||invalid>=3)){
+          // Exhausted verification recovery is an unmet requirement, not an
+          // execution crash. Preserve the artifact and failed checks for repair.
+          const content='最终验收未通过，已尝试自动恢复并保留成果与进度，任务尚未完成：'+error.message;
+          run.status='blocked';run.currentOutcome='blocked';
+          run.delivery={outcome:run.artifacts.length?'partial':'blocked',status:'blocked',at:new Date().toISOString()};
+          await workspace.event('blocked',{text:content});await notify();
+          return {content,agentRun:publicRun(run)};
         }
         if(failed>=3)throw Error('相同动作多次失败，已保留任务状态：'+error.message);
         if(invalid>=3)throw Error('连续动作失败，已保留任务状态：'+error.message);

@@ -17,6 +17,11 @@ function beginRound(run,task,snapshot) {
       run.history.push({...snapshot(run),history:undefined,afterMessageId:anchor?.id});
     }
     Object.assign(run,{loadedExtensions:[],progressInputId:undefined,executionId:randomUUID(),status:'understanding',mode:'chat',goal:'',steps:[],decisions:[],acceptance:[],events:[],observations:[],observationIndex:[],checkpointObservationCount:0,actionsSincePlan:0,inFlight:undefined,contextUsage:undefined,question:undefined,requirements:undefined,requirementsManaged:undefined,issues:[],executionState:undefined,delivery:undefined,observationStates:{},acceptanceResults:{},acceptanceTypes:[],visualObservations:[],completionReview:undefined,performance:undefined,decisionRecovery:undefined,loopRecovery:undefined,actionJournal:[],pendingArtifactUpdates:[]});
+    run.visualComparisons=[];
+    run.designRegionIssues={};run.designRegionReviews={};
+    run.progressEvidence=[];
+    run.readAttempts=[];
+    delete run.androidCheck;
     if(task.editedInputId===trigger)run.workingMemory='';
   }
   run.executionId ||= randomUUID();

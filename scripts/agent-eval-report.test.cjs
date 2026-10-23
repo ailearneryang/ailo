@@ -20,3 +20,23 @@ test('a fast service failure never becomes a valid trial or speed gain, while pa
  const report=JSON.parse(await fs.readFile(path.join(root,'report.json'),'utf8'));
  assert.equal(report.versions.candidate.attempted,2);assert.equal(report.versions.candidate.finished,1);assert.equal(report.versions.candidate.serviceBlocked,1);assert.equal(report.versions.candidate.declaredComplete,0);assert.equal(report.versions.candidate.medianDeclaredCompletionMs,null);assert.equal(report.versions.baseline.knownFalseCompletion,0);assert.equal(report.versions.baseline.verifiedSuccess,0);
 });
+test('limited deliveries and unchecked quality cannot inflate verified task completion',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-quality-report-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ async function put(name,extra){const dir=path.join(root,'candidate',name);await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(dir,'result.json'),JSON.stringify({elapsedMs:100,checks:[{passed:true}],externalChecks:[],humanAcceptance:'passed',...extra}));}
+ await put('web-normal-1',{result:{agentRun:{status:'completed',delivery:{outcome:'limited',visualReviewPending:true,unverified:['visual']}}}});
+ await put('web-repair-1',{result:{agentRun:{status:'completed',delivery:{outcome:'complete'},acceptanceCriteria:[{status:'pending'}]}}});
+ await put('code-normal-1',{humanAcceptance:'pending',result:{agentRun:{status:'completed',delivery:{outcome:'complete'}}}});
+ await put('format-normal-1',{checks:[],externalChecks:[],result:{agentRun:{status:'completed',delivery:{outcome:'complete'}}}});
+ await promisify(execFile)(process.execPath,[path.join(__dirname,'agent-eval-report.cjs'),root]);
+ const report=JSON.parse(await fs.readFile(path.join(root,'report.json'),'utf8')),v=report.versions.candidate;
+ assert.equal(v.limitedDeliveries,1);assert.equal(v.declaredComplete,3);assert.equal(v.verifiedSuccess,0);assert.equal(v.knownFalseCompletion,1);assert.equal(v.qualityPending,2);assert.equal(v.verifiedCompletionRate,null);
+ assert.equal(report.trials.find(t=>t.case==='web-normal').falseCompletion,false);
+ assert.equal(report.trials.find(t=>t.case==='format-normal').automatic,null);
+});
+test('a completion rate is reported only after independent checks and required human reviews are finished',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-verified-rate-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ for(const [name,status]of [['web-normal-1','completed'],['web-repair-1','blocked']]){const dir=path.join(root,'candidate',name);await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(dir,'result.json'),JSON.stringify({elapsedMs:100,checks:[{passed:true}],externalChecks:[],humanAcceptance:'passed',result:{agentRun:{status,delivery:{outcome:status==='completed'?'complete':'partial'}}}}));}
+ await promisify(execFile)(process.execPath,[path.join(__dirname,'agent-eval-report.cjs'),root]);
+ const report=JSON.parse(await fs.readFile(path.join(root,'report.json'),'utf8'));
+ assert.equal(report.versions.candidate.verifiedSuccess,1);assert.equal(report.versions.candidate.verifiedCompletionRate,.5);assert.equal(report.versions.candidate.qualityPending,0);
+});

@@ -22,6 +22,13 @@ function receipt(observation){
  const text=(value,max)=>typeof value==='string'?value.slice(0,max):undefined;
  return {id:observation.observationId,eventId:text(r.eventId,128),action:a.action,path:text(a.path,500),materialId:text(a.id,128),entry:text(a.entry,500),offset:Number.isInteger(a.offset)?a.offset:undefined,purpose:text(a.purpose,200),error:text(r.error,300),exitCode:result.exitCode,timedOut:result.timedOut,next:result.next,revision:result.revision};
 }
-function recent(observations){return observations.slice(-RECENT_COUNT).map(o=>({...preview(o.response),observationId:o.observationId}));}
+function toolPreview(value,limit=PREVIEW_CHARS){
+ const clean={...value};
+ if(clean.arguments){const {progress,...args}=clean.arguments;clean.arguments=args;}
+ // Explicit short reads are working evidence, not history to summarize again.
+ if(typeof clean.result?.text==='string'&&clean.result.text.length<=8000&&JSON.stringify(clean).length<=12000)return clean;
+ return preview(clean,limit);
+}
+function recent(observations){return observations.slice(-RECENT_COUNT).map(o=>({...toolPreview(o.response),observationId:o.observationId}));}
 function conversation(history){return history.slice(-4).map(m=>({...m,content:m.content?.slice(0,3000),...(m.content?.length>3000?{truncated:true,notice:'完整对话使用 read_history 回查，不能将此预览视为完整要求。'}:{})}));}
-module.exports={RECENT_COUNT,preview,receipt,recent,conversation};
+module.exports={RECENT_COUNT,preview,toolPreview,receipt,recent,conversation};

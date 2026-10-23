@@ -113,6 +113,31 @@ async function createWorkspace(base, task) {
   }
   const lookup=id=>catalog.find(m=>m.id===id||m.aliases?.includes(id));
   async function save() {run.updatedAt=new Date().toISOString();await writeJson(runFile,run);}
+  async function observationRecord(reference){
+    if(typeof reference!=='string'||! /^[a-f0-9-]{8,36}$/i.test(reference))throw Error('工具记录 ID 无效');
+    const receipts=[...(run.observationIndex||[]),...(run.observations||[]).map(o=>({id:o.observationId,eventId:o.response?.eventId}))];
+    const known=[...new Set([...receipts.flatMap(r=>[r.id,r.eventId]),...run.events.map(e=>e.id)].filter(Boolean))];
+    const matches=known.filter(id=>id===reference||id.startsWith(reference));
+    if(matches.length>1&&!known.includes(reference))throw Error('工具记录 ID 前缀不唯一，请使用完整 ID');
+    const id=known.includes(reference)?reference:matches.length===1?matches[0]:reference;
+    if(! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id))throw Error('未找到当前任务的工具记录，请使用完整观察记录或事件 ID');
+    async function read(id){
+      try{const text=await fs.readFile(path.join(runFile+'.observations',id+'.json'),'utf8');return {record:JSON.parse(text),text};}
+      catch(error){if(error.code!=='ENOENT')throw error;}
+    }
+    const direct=await read(id);if(direct)return direct;
+    const receipt=receipts.find(r=>r.eventId===id),mapped=receipt&&await read(receipt.id);if(mapped)return mapped;
+    // Events and observations have different IDs. Both are presented to the
+    // model and both must recall the same result, without replaying the tool.
+    const eventId=receipts.find(r=>r.id===id)?.eventId||id;
+    const event=run.events.find(e=>e.id===eventId)||eventCache.get(eventId)||await scanEvents(e=>e.id===eventId);
+    if(event){
+      eventCache.set(eventId,event);
+      const {result,...detail}=event.detail||{};
+      return {record:{id,at:event.at,action:{action:event.type,...detail},response:{eventId:event.id,result:result??detail}}};
+    }
+    throw Object.assign(Error('未找到当前任务的执行记录：'+reference+'。这不表示原操作失败，不能据此重复执行写入、安装或发送。'),{code:'EXECUTION_RECORD_NOT_FOUND'});
+  }
   return {files,project,catalog,run,save,lookup,
     async archivedEvent(id){
       const current=run.events.find(e=>e.id===id);if(current)return current;
@@ -131,19 +156,28 @@ async function createWorkspace(base, task) {
       await fs.appendFile(runFile+'.memory.jsonl',JSON.stringify({...require('./working-context.cjs').receipt({action,response,observationId:id}),executionId:run.executionId})+'\n',{mode:0o600});
       return id;
     },
-    async observation(id,offset=0,limit=10000){
+    async observationRecord(id){
+      return (await observationRecord(id)).record;
+    },
+    async observation(id,offset=0,limit=10000,view='record'){
       if(!Number.isInteger(offset)||offset<0)throw Error('记录读取位置无效');
       if(!Number.isSafeInteger(limit)||limit<1||limit>12000)throw Error('记录读取长度必须为 1–12000 的整数');
-      let text;
+      if(!['record','result'].includes(view))throw Error('记录视图须为 record 或 result');
+      let text,source;
+      if(view==='result'&&['state','observations'].includes(id))throw Error('状态和索引仅支持 record 视图');
       if(id==='observations'){
         try{text=await fs.readFile(runFile+'.memory.jsonl','utf8');}catch(e){if(e.code!=='ENOENT')throw e;text=JSON.stringify(run.observationIndex||[]);}
       }
       else if(id==='state')text=JSON.stringify(run);
       else {
-        if(typeof id!=='string'||! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id))throw Error('工具记录 ID 无效');
-        text=await fs.readFile(path.join(runFile+'.observations',id+'.json'),'utf8');
+        const stored=await observationRecord(id);text=stored.text||JSON.stringify(stored.record);
+        if(view==='result'){
+          const record=stored.record,result=record.response?.result??record.response;
+          text=typeof result?.text==='string'?result.text:typeof result?.output==='string'?result.output:JSON.stringify(result??null);
+          if(record.action?.action==='read_file'&&result?.sha256)source={path:record.action.path,sha256:result.sha256,offset:(result.offset||0)+offset,total:result.total};
+        }
       }
-      return {id,offset,total:text.length,text:text.slice(offset,offset+limit),next:offset+limit<text.length?offset+limit:null};
+      return {id,...(view==='result'?{view,source}:{}),offset,total:text.length,text:text.slice(offset,offset+limit),next:offset+limit<text.length?offset+limit:null};
     },
     async images(materials) {
       const {isImageMaterial} = await import('../attachments.mjs');

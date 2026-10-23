@@ -158,12 +158,16 @@ npm start
 | --- | --- |
 | `npm start` | 构建、打包并启动本机桌面应用。 |
 | `npm run build` | 运行 TypeScript 检查与 Vite 生产构建。 |
+| `npm run test:reliability` | 运行固定故障回归并记录源码指纹与结果。 |
+| `npm run test:reliability:host` | 额外检查 macOS 宿主命令与构建沙箱。 |
 | `npm run make:dmg` | 生成 macOS DMG，默认架构与构建机器相同。 |
 | `npm run make:zip` | 生成应用 ZIP 备用包。 |
 
 安装包输出在 `apps/desktop/out/make/`，版本来自 `apps/desktop/package.json`。签名、公证和上传 Releases 的步骤见 [macOS 发布说明](docs/macos-release.md)。
 
 单元测试位于 `scripts/*.test.cjs` 与 `scripts/*.test.mjs`。桌面交互脚本使用 Playwright 和独立测试数据目录，可通过 `PLAYWRIGHT_MODULE` 指定模块路径。README 截图可通过 `node scripts/readme-screenshots.cjs` 重新生成（macOS，需要先构建并安装 Playwright）。
+
+打包前必须通过固定故障回归，打包后核对运行时代码与测试版本一致。离线测试不等于真实任务完成率或成果质量验收，指标定义与复测规则见[回归与交付质量](docs/reliability-and-quality.md)。
 
 ## 项目结构与文档
 

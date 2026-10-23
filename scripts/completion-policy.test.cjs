@@ -24,13 +24,13 @@ test('a resumed all-done text-only task closes automatically without another mod
  assert.equal(result.agentRun.acceptanceCriteria.find(c=>c.id==='visual').status,'pending');
  assert.match(result.content,/视觉效果待人工确认/);assert.ok(!result.agentRun.events.some(e=>['browser','view_image'].includes(e.type)));
 });
-test('unconfirmed auto image transport does not require a mandatory VLM review',async t=>{
+test('auto image transport keeps visual review pending instead of automatically downgrading to limited delivery',async t=>{
  const {base,task}=await fixture(t);let calls=0;
  const result=await runAgent({base,task,model:{contextWindow:65536,imageInput:'auto'},images:{prepare:()=>assert.fail('no images needed')},signal:new AbortController().signal,ask:async messages=>{
-  const state=JSON.parse(messages.at(-1).content);assert.equal(state.observationCapabilities.images,true);assert.equal(state.observationCapabilities.visualReview,false);calls++;
-  return {content:JSON.stringify({action:'route',kind:'task'})};
+  const state=JSON.parse(messages.at(-1).content);assert.equal(state.observationCapabilities.images,true);assert.equal(state.observationCapabilities.visualReview,true);assert.equal(state.observationCapabilities.imageUnderstanding,'unconfirmed');calls++;
+  return {content:JSON.stringify(calls===1?{action:'route',kind:'task'}:{action:'pause',text:'保留视觉要求，等待实际对照'})};
  }});
- assert.equal(calls,1);assert.equal(result.agentRun.status,'completed');assert.equal(result.agentRun.delivery.outcome,'limited');
+ assert.equal(calls,2);assert.equal(result.agentRun.status,'paused');assert.notEqual(result.agentRun.delivery.outcome,'limited');
 });
 test('automatic completion cannot waive content failures, changed files, unfinished work or real defects',async t=>{
  const {w}=await fixture(t);
@@ -63,14 +63,14 @@ test('an image-unsupported endpoint falls back to text and completes the existin
  assert.ok(rejected);assert.equal(views,1);assert.equal(result.agentRun.status,'completed');assert.equal(result.agentRun.delivery.visualReviewPending,true);
  assert.ok(result.agentRun.events.some(e=>e.type==='capability_fallback'));
 });
-test('long tasks with an existing visual limitation and evicted issue evidence still close in one decision',async t=>{
+test('long text-only tasks with an existing visual limitation and evicted issue evidence still close in one decision',async t=>{
  const {base,task,w}=await fixture(t);
  await w.event('run_command',{revision:w.run.revision,result:{exitCode:0,sources:[{path:'weather.svg',sha256:hash(svg)}],scope:{kind:'file',path:'weather.svg'}}});
  const oldEvidence=w.run.events.at(-1).id;
  w.run.issues=[{id:'prior_fixed_problem',status:'resolved',evidenceId:oldEvidence},{id:'repair_visual',status:'limitation',description:'自动视觉核验不可用，画板主体需人工确认',reason:'visualReview=false',requirementIds:['visual']}];
  for(let i=0;i<105;i++)await w.event('attached_progress',{i});
  let calls=0;
- const result=await runAgent({base,task,model:{contextWindow:65536,imageInput:'auto'},images:{prepare:()=>assert.fail('no image retry')},signal:new AbortController().signal,ask:async()=>{
+ const result=await runAgent({base,task,model:{contextWindow:65536,imageInput:'disabled'},images:{prepare:()=>assert.fail('no image retry')},signal:new AbortController().signal,ask:async()=>{
   assert.equal(++calls,1);return {content:JSON.stringify({action:'route',kind:'task'})};
  }});
  assert.equal(result.agentRun.status,'completed');assert.equal(calls,1);

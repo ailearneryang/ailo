@@ -22,7 +22,7 @@ test('multiple independent provider reads normalize to one batch; mixed writes r
 });
 test('plan and memory review ride with real work, survive restart, and do not imply acceptance',async t=>{
  const {base,task,w}=await setup(t);Object.assign(w.run,{...plan,mode:'task',status:'paused',actionsSincePlan:6});delete w.run.action;
- w.run.observations=[];for(let i=0;i<12;i++)w.run.observations.push({action:{action:'read_file',path:'old'+i},response:{result:{text:'old'}}});await w.save();
+ w.run.observations=[];for(let i=0;i<24;i++)w.run.observations.push({action:{action:'read_file',path:'old'+i},response:{result:{text:'old'}}});await w.save();
  let calls=0;
  const result=await runAgent({base,task,model:{contextWindow:65536},signal:new AbortController().signal,ask:async messages=>{const s=JSON.parse(messages.at(-1).content);if(calls++===0)return reply({action:'route',kind:'task'});if(calls===2){assert.equal(s.requiredAction,'checkpoint');return reply({action:'write_file',path:'actual.txt',content:'actual',progress:{memory,steps:plan.steps}});}assert.equal(s.requiredAction,undefined);assert.equal(s.workingMemory,memory);assert.equal(s.steps[0].status,'running');return reply({action:'pause',text:'继续检查'});}});
  assert.equal(calls,3);assert.equal(await fs.readFile(path.join(w.files,'actual.txt'),'utf8'),'actual');assert.equal(result.agentRun.status,'paused');assert.equal(result.agentRun.performance.attachedUpdates,1);
@@ -42,7 +42,7 @@ test('batch archives child results, shares ordinary read repetition guards, and 
 test('persistent reasoning-only exhaustion has bounded staged recovery and executes no partial tools',async t=>{
  const {base,task}=await setup(t);let n=0;const budgets=[];
  const result=await runAgent({base,task,model:{contextWindow:65536,maxOutputTokens:65536},signal:new AbortController().signal,executeTool:()=>assert.fail('no partial action executes'),ask:async(_messages,budget)=>{if(n++===0)return reply({action:'route',kind:'task'});budgets.push(budget);throw Object.assign(Error('thinking'),{code:'MODEL_OUTPUT_LIMIT',diagnostics:{contentChars:0,toolArgumentChars:0,reasoningTokens:8000}});}});
- assert.deepEqual(budgets,[8192,8192,8192,8192]);assert.equal(result.agentRun.status,'blocked');assert.match(result.content,/尚未完成/);assert.equal(result.agentRun.performance.noActionRequests,4);assert.equal(result.agentRun.performance.toolCalls,0);
+ assert.deepEqual(budgets,[8192,16384,32768,32768]);assert.equal(result.agentRun.status,'blocked');assert.match(result.content,/尚未完成/);assert.equal(result.agentRun.performance.noActionRequests,4);assert.equal(result.agentRun.performance.toolCalls,0);
 });
 test('transport telemetry counts real attempts once rather than double counting logical decisions',async t=>{
  const {base,task}=await setup(t);let n=0;
@@ -80,7 +80,7 @@ test('partial progress merges by known step ID without dropping other steps or r
 test('small-action recovery compacts observations, preserves requirements, persists for the step, and stops repeating retries',async t=>{
  const {base,task,w}=await setup(t);let n=0,observed;
  const withRequirements={...task,request:'保留用户对结果和权限的全部要求，不可降低质量'};
- const result=await runAgent({base,task:withRequirements,model:{contextWindow:100000,maxOutputTokens:65536},signal:new AbortController().signal,ask:async messages=>{const s=JSON.parse(messages.at(-1).content);if(n++===0)return reply({action:'route',kind:'task'});if(n===2)return reply(plan);if(n===3)throw Object.assign(Error('waiting'),{code:'MODEL_NO_ACTION_TIMEOUT'});observed=s;assert.equal(s.currentRequest,withRequirements.request);assert.equal(s.acceptance[0],plan.acceptance[0]);assert.equal(s.decisionRecovery.maxWriteChars,8000);assert.equal(s.decisionRecovery.noActionTimeoutMs,90000);throw Object.assign(Error('waiting again'),{code:'MODEL_NO_ACTION_TIMEOUT'});}});
+ const result=await runAgent({base,task:withRequirements,model:{contextWindow:100000,maxOutputTokens:65536},signal:new AbortController().signal,ask:async messages=>{const s=JSON.parse(messages.at(-1).content);if(n++===0)return reply({action:'route',kind:'task'});if(n===2)return reply(plan);if(n===3)throw Object.assign(Error('waiting'),{code:'MODEL_NO_ACTION_TIMEOUT'});observed=s;assert.equal(s.currentRequest,withRequirements.request);assert.equal(s.acceptance[0],plan.acceptance[0]);assert.equal(s.decisionRecovery.maxWriteChars,8000);assert.ok(s.decisionRecovery.noActionTimeoutMs>=180000&&s.decisionRecovery.noActionTimeoutMs<=300000);throw Object.assign(Error('waiting again'),{code:'MODEL_NO_ACTION_TIMEOUT'});}});
  assert.ok(observed);assert.equal(result.agentRun.status,'blocked');const saved=await createWorkspace(base,withRequirements);const events=saved.run.events;
  assert.equal(events.filter(e=>e.type==='no_action_recovery').length,3);assert.match(events.filter(e=>e.type==='no_action_timeout').at(-1).detail.message,/恢复预算已用尽/);assert.equal(saved.run.decisionRecovery.stepId,'read');
  const recovery=require('../apps/desktop/agent/decision-recovery.cjs');assert.ok(recovery.active(saved.run));saved.run.steps[0].status='done';assert.equal(recovery.active(saved.run),false);

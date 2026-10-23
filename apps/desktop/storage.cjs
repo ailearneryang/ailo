@@ -76,6 +76,16 @@ function createStorage(directory, safeStorage) {
       const safe=Object.fromEntries(fields.filter(k=>['string','number','boolean'].includes(typeof record[k])).map(k=>[k,typeof record[k]==='string'?record[k].slice(0,128):record[k]]));
       for(const [field,key] of [['inputTokens','inputTokens'],['outputTokens','outputTokens'],['reasoningTokens','reasoningTokens']])if(Number.isSafeInteger(record.providerUsage?.[key]))safe[field]=record.providerUsage[key];
       const records=await read('model-requests',[]);await write('model-requests',[...records.slice(-199),safe]);
+      if(typeof record.taskId==='string'&&record.taskId){
+        const key=require('node:crypto').createHash('sha256').update(record.taskId).digest('hex');
+        await fs.mkdir(path.join(directory,'model-request-history'),{recursive:true,mode:0o700});
+        const name='model-request-history/'+key,history=await read(name,[]);
+        await write(name,[...history.slice(-1999),safe]);
+        const index=await read('model-request-history/index',[]);
+        const keys=[...index.filter(k=>k!==key),key];
+        for(const old of keys.slice(0,-50)){if(/^[a-f0-9]{64}$/.test(old))await fs.unlink(file('model-request-history/'+old)).catch(e=>{if(e.code!=='ENOENT')throw e;});}
+        await write('model-request-history/index',keys.slice(-50));
+      }
     });},
     async modelCredentials(id) {
       await writes.catch(() => {});

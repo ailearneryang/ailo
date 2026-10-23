@@ -289,7 +289,7 @@ test('GLM routes with low effort, honors selected effort for execution, and reco
  storage.modelCredentials=async()=>({baseUrl:'https://open.bigmodel.cn/api/paas/v4',model:'glm-5.3-flash'});storage.recordModelRequest=async record=>records.push({...record});
  let n=0;const chat=createChat(storage,async(_url,options)=>{const body=JSON.parse(options.body);bodies.push(body);n++;if(n===2)return new Response(JSON.stringify({choices:[{message:{content:null,reasoning_content:'r'},finish_reason:'stop'}]}));return native(n===1?{action:'route',kind:'task'}:{action:'pause',text:'缩小后恢复'});});
  const result=await chat.complete({...input,reasoningEffort:'high'});
- assert.equal(result.content,'缩小后恢复');assert.deepEqual(bodies.map(b=>b.reasoning_effort),['low','max','low']);assert.ok(bodies.every(b=>b.tool_stream===true));assert.equal(records.at(-1).noActionTimeoutMs,90000);assert.equal(records.at(-1).recoveryMode,true);
+ assert.equal(result.content,'缩小后恢复');assert.deepEqual(bodies.map(b=>b.reasoning_effort),['low','max','low']);assert.ok(bodies.every(b=>b.tool_stream===true));assert.equal(records.at(-1).noActionTimeoutMs,180000);assert.equal(records.at(-1).recoveryMode,true);
  const state=JSON.parse(bodies.at(-1).messages.at(-1).content);assert.equal(state.decisionRecovery.maxWriteChars,8000);assert.equal(bodies.at(-1).tools[0].function.parameters.properties.content.maxLength,8000);
 });
 

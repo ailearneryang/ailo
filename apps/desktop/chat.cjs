@@ -5,6 +5,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
   const { readCompletion } = require("./chat-response.cjs");
   const {abortable,recoverRequest,requestId,cancelBody}=require('./model-request.cjs');
   const limits = typeof timeouts === "number" ? { connect: timeouts, headerStep:0, retryDelay:0, first: timeouts, idle: timeouts, text: timeouts, decision: timeouts, total: timeouts * 10 } : { connect:60000, headerStep:timeouts.connect===undefined?30000:0, first:60000, retries:2, retryDelay:500, idle: 90000, text: 180000, decision: 180000, total: 900000, ...timeouts };
+  const explicitDecisionLimit=typeof timeouts==='number'||Number.isFinite(timeouts.decision);
   const pending = new Map();
   const scheduler=require('./chat-scheduler.cjs').createScheduler(3);
   const steering = new Map();
@@ -116,7 +117,10 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           let proxyTimer;
           const networkContext=Promise.race([Promise.resolve().then(()=>storage.modelNetworkContext?.(url)).catch(()=>undefined),new Promise(resolve=>{proxyTimer=setTimeout(()=>resolve(undefined),250);})]).then(context=>{clearTimeout(proxyTimer);if(['direct','configured','unknown'].includes(context?.systemProxyMode))diagnostic.systemProxyMode=context.systemProxyMode;});
           const requestTimeout=(code,message)=>{requestFailure=Object.assign(Error(message),{code});requestController.abort(requestFailure);};
-          const outputWait = isDecision ? Math.min(limits.decision,requestOptions.recovery?90000:limits.decision) : limits.text;
+          // Recovery must not give a thinking-only model less time than a normal
+          // decision. Explicit caller deadlines and the total bound still win.
+          const decisionWait=requestOptions.recovery&&!explicitDecisionLimit?Math.max(limits.decision,Math.min(300000,requestOptions.noActionTimeoutMs||limits.decision)):limits.decision;
+          const outputWait = isDecision ? Math.min(limits.total,decisionWait) : limits.text;
           diagnostic.noActionTimeoutMs=outputWait;
           let hasText = false, lastThinkingStatus = -Infinity;
           // Reasoning deltas count as network activity, but must not postpone
@@ -274,7 +278,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
             const currentTool=structuredClone(tool);
             if(state.phase==='route'){const schema=actionTools(state)[0].function.parameters;currentTool.function.parameters={...schema,properties:{action:structuredClone(tool.function.parameters.properties.action),...schema.properties},required:['action',...schema.required]};}
             currentTool.function.parameters.properties.action.enum=allowedActions(state);
-            if(state.decisionRecovery){const props=currentTool.function.parameters.properties;if(props.content)props.content.maxLength=8000;if(props.command)props.command.maxLength=2000;if(props.items)props.items.maxItems=3;}
+            if(state.decisionRecovery){const props=currentTool.function.parameters.properties;props.progress=structuredClone(require('./agent/protocol.cjs').compactProgress);if(props.content)props.content.maxLength=8000;if(props.command)props.command.maxLength=2000;if(props.items)props.items.maxItems=3;}
             for (;;) {
               const format = formatMode === 'tools' ? {tools:namedActions?actionTools(state):[currentTool],tool_choice:namedActions?'required':{type:'function',function:{name:'ailo_action'}},...(parallelControl?{parallel_tool_calls:false}:{})}
                 : formatMode === 'json' ? {response_format:{type:'json_object'}} : {};
@@ -293,7 +297,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
               const stats={...requestContextUsage(wireMessages,format,model,Math.min(budget,model.maxOutputTokens||budget)),requestId:require('node:crypto').randomUUID()};
               await onContext?.(stats);
               try {
-                const result=await ask(wireMessages,budget,false,"","任务决策",format,onRequest,{recovery:!!state.decisionRecovery,recoveryStage:state.decisionRecovery?.stage,decisionStage:state.phase==='route'?'route':['checkpoint','plan_update'].includes(state.requiredAction)?'state':'action'});
+                const result=await ask(wireMessages,budget,false,"","任务决策",format,onRequest,{recovery:!!state.decisionRecovery,recoveryStage:state.decisionRecovery?.stage,noActionTimeoutMs:state.decisionRecovery?.noActionTimeoutMs,decisionStage:require('./reasoning.cjs').decisionStage(state)});
                 await onContext?.({...stats,status:'completed',completedAt:new Date().toISOString(),providerUsage:result.providerUsage});
                 return result;
               }

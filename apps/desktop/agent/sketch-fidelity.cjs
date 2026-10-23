@@ -2,32 +2,40 @@ const fs=require('node:fs/promises'),path=require('node:path');
 const {resolveFile}=require('./workspace.cjs'),{hash}=require('./evidence.cjs');
 // Inspect extracted Sketch pages, never execute the generated conversion script.
 // Counts are diagnostics of the selected source graph, not proof of visual fidelity.
-async function audit(root,htmlPath,dom,context={}){
+async function readSource(root){
  const queue=[{dir:'',depth:0}],candidates=[];let entries=0,truncated=false;
  while(queue.length){
   const {dir,depth}=queue.shift();
   for(const item of await fs.readdir(dir?await resolveFile(root,dir):root,{withFileTypes:true})){
    if(++entries>1500){truncated=true;break;}
-   if(item.name.startsWith('.')||['node_modules','__MACOSX'].includes(item.name)||item.isSymbolicLink())continue;
+   if(item.name.startsWith('.')||['node_modules','__MACOSX','build','dist','out','images'].includes(item.name)||item.isSymbolicLink())continue;
    const relative=dir?dir+'/'+item.name:item.name;
    if(item.isDirectory()&&depth<4)queue.push({dir:relative,depth:depth+1});
    if(item.isFile()&&/\.json$/i.test(item.name)&&(path.posix.basename(dir)==='pages'||item.name==='document.json'))candidates.push(relative);
   }
   if(truncated)break;
  }
- const pages=[],documents=[],sources=[];let bytes=0;
+ const pages=[],documents=[],sources=[],seenHashes=new Set();let bytes=0,readBytes=0;
  for(const relative of candidates.slice(0,64)){
   const file=await resolveFile(root,relative),stat=await fs.stat(file);
-  if(stat.size>10*1024*1024||bytes+stat.size>24*1024*1024){truncated=true;continue;}
-  const data=await fs.readFile(file);bytes+=data.length;
+  if(stat.size>10*1024*1024||readBytes+stat.size>48*1024*1024){truncated=true;continue;}
+  const data=await fs.readFile(file);readBytes+=data.length;const sha256=hash(data);
+  // Exporters often leave two identical extraction trees. They are one source
+  // graph, not twice the source-memory budget or two different designs.
+  if(seenHashes.has(sha256))continue;
+  if(bytes+data.length>24*1024*1024){truncated=true;continue;}bytes+=data.length;seenHashes.add(sha256);
   let value;try{value=JSON.parse(data);}catch{continue;}
   if(value?._class==='page'&&Array.isArray(value.layers))pages.push(value);
   else if(value?._class==='document'&&Array.isArray(value.foreignSymbols))documents.push(value);
   else continue;
-  sources.push({path:relative,sha256:hash(data)});
+  sources.push({path:relative,sha256});
  }
- if(!pages.length)return {status:'unavailable',sources:[],issues:[],notice:'未发现可解析的 Sketch 页面；没有原稿完整性结论'};
  if(candidates.length>64)truncated=true;
+ return {pages,documents,sources,truncated};
+}
+async function audit(root,htmlPath,dom,context={}){
+ let {pages,documents,sources,truncated}=await readSource(root);
+ if(!pages.length)return {status:'unavailable',sources:[],issues:[],notice:'未发现可解析的 Sketch 页面；没有原稿完整性结论'};
  const html=await fs.readFile(await resolveFile(root,htmlPath),'utf8'),masters=new Map();
  const escape=text=>text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#x27;');
  function index(layer){if(layer._class==='symbolMaster'&&layer.symbolID)masters.set(layer.symbolID,layer);for(const child of layer.layers||[])index(child);}
@@ -67,4 +75,4 @@ async function audit(root,htmlPath,dom,context={}){
  if(truncated)issues.push('原稿检查超出扫描范围，完整性尚未确认；请缩小或拆分原稿后重新核对');
  return {status:'checked',sources,selectedPages:selected.length,bitmapInstances,textInstances,fontSizes:[...sizes].sort((a,b)=>a-b),unresolvedSymbols:unresolved.size,issues,notice:'按 HTML 中画板名称绑定原稿；静态结构检查不替代截图对照，组件实例覆盖值仍需核对'};
 }
-module.exports={audit};
+module.exports={audit,readSource};

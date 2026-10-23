@@ -24,7 +24,7 @@ test('effective read identity ignores irrelevant fields and correction survives 
  const result=await runAgent({base,task,model:{contextWindow:1048576},signal:new AbortController().signal,executeTool:async(...args)=>{reads++;return execute(...args);},ask:async messages=>{
   const s=JSON.parse(messages.at(-1).content);
   if(n===4){assert.equal(s.toolResults.at(-1).notExecuted,true);assert.equal(s.readRecovery.next,3000);sourceId=s.readRecovery.sourceObservationId;assert.notEqual(sourceId,s.toolResults.at(-1).observationId);}
-  if(n===5){assert.equal(s.toolResults.length,0);assert.equal(s.readRecovery.next,3000);assert.equal(s.readRecovery.sourceObservationId,sourceId);}
+  if(n===5){assert.equal(s.toolResults.length,2);assert.equal(s.readRecovery.next,3000);assert.equal(s.readRecovery.sourceObservationId,sourceId);}
   return {content:JSON.stringify(actions[n++])};
  }});
  assert.equal(result.content,'正常继续分页');assert.equal(reads,3);assert.ok(!result.agentRun.events.some(e=>e.type==='no_progress'));
@@ -36,32 +36,33 @@ test('a command changing file content permits reread, while identical bytes rema
   const task={id:'version',projectId:'p',request:'修改后检查文件'},w=await createWorkspace(base,task),file=path.join(w.files,'a.py');await fs.writeFile(file,'before');
   const read={action:'read_file',path:'a.py',offset:0};
   const plan={action:'plan',goal:'修改并验证',decisions:['保留内容证据'],acceptance:['正确读取'],steps:[{id:'check',title:'修改并验证',status:'running'}]};
-  const actions=[{action:'route',kind:'task'},plan,read,read,{action:'run_command',command:'modify fixture',purpose:'修改源码'},read,read,{action:'pause',text:'修改后继续'}];let n=0;
+  const actions=[{action:'route',kind:'task'},plan,read,read,{action:'run_command',command:'modify fixture',purpose:'修改源码'},read,read,{action:'artifact',path:'a.py',label:'已核对的源码'}];let n=0,reads=0;
   const result=await runAgent({base,task,model:{contextWindow:1048576},signal:new AbortController().signal,executeTool:async(...args)=>{
-   if(args[1].action==='run_command'){await fs.writeFile(file,change?'after!':'before');return {exitCode:0,output:'verified fixture command'};}return execute(...args);
-  },ask:async()=>({content:JSON.stringify(actions[n++])})});
-  if(change){assert.equal(result.content,'修改后继续');assert.ok(!result.agentRun.events.some(e=>e.type==='repeat_warning'||e.type==='no_progress'));}
-  else {assert.match(result.content,/read_file.*a.py.*位置 0/);assert.equal(result.agentRun.events.at(-1).type,'no_progress');}
+   if(args[1].action==='run_command'){await fs.writeFile(file,change?'after!':'before');return {exitCode:0,output:'verified fixture command'};}if(args[1].action==='read_file')reads++;return execute(...args);
+  },ask:async messages=>{const s=JSON.parse(messages.at(-1).content);return {content:JSON.stringify(actions[n++]||(s.acceptanceCriteria[0].check?{action:'finish',text:'版本核对完成',review:{summary:'原文已按当前文件版本核验',issues:[],unverified:[]}}:{action:'verify',checks:[{criterionId:s.acceptanceCriteria[0].id,kind:'text_contains',path:'a.py',contains:[change?'after!':'before'],reason:'核对当前版本原文'}],progress:{steps:[{id:'check',status:'done'}]}}))};}});
+  assert.equal(result.agentRun.status,'completed');assert.equal(reads,change?4:2);
+  if(change)assert.ok(!result.agentRun.events.some(e=>e.type==='repeat_warning'));
+  else assert.ok(result.agentRun.events.some(e=>e.type==='repeat_warning'));
  }
 });
 test('missing file failures never claim successful repeated reads',async t=>{
  const base=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-failed-read-'));t.after(()=>fs.rm(base,{recursive:true,force:true}));
  const task={id:'missing',projectId:'p',request:'读取文件'};let n=0;
  await assert.rejects(runAgent({base,task,model:{contextWindow:1048576},signal:new AbortController().signal,ask:async()=>({content:JSON.stringify(n++?{action:'read_file',path:'missing.txt'}:{action:'route',kind:'chat'})})}),/相同动作多次失败/);
- const w=await createWorkspace(base,task);assert.equal(w.run.events.filter(e=>e.type==='tool_error').length,3);assert.ok(!w.run.events.some(e=>e.type==='repeat_warning'));
+ const w=await createWorkspace(base,task);assert.equal(w.run.events.filter(e=>e.type==='tool_recovery').length,2);assert.ok(w.run.events.filter(e=>e.type==='tool_error').length<=5);assert.ok(!w.run.events.some(e=>e.type==='repeat_warning'));
 });
 test('external record rereads receive correction before pausing and history honors its limit',async t=>{
  const base=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-record-repeat-'));t.after(()=>fs.rm(base,{recursive:true,force:true}));
  const task={id:'records',projectId:'p',request:'回查记录',messages:[{role:'user',content:'回查记录'.repeat(100)}]},w=await createWorkspace(base,task),id=await w.archiveObservation({action:'run_command'},{result:{output:'archived output'.repeat(100)}});
  let n=0;
- const actions=[{action:'route',kind:'chat'},{action:'read_history',offset:0,limit:'100'},{action:'read_execution',id,offset:0,limit:100},{action:'checkpoint',text:'保存已有结论和来源，继续核对记录的后续内容，不能重放已执行工具。'},{action:'read_execution',id,offset:'0',limit:'100'},{action:'read_execution',id,offset:0,limit:100},{action:'read_execution',id,offset:0,limit:100}];
+ const actions=[{action:'route',kind:'chat'},{action:'read_history',offset:0,limit:'100'},{action:'read_execution',id,offset:0,limit:100},{action:'checkpoint',text:'保存已有结论和来源，继续核对记录的后续内容，不能重放已执行工具。'},{action:'read_execution',id,offset:'0',limit:'100'},{action:'read_execution',id,offset:0,limit:100},{action:'read_execution',id,offset:0,limit:100},{action:'read_execution',id,offset:100,limit:100},{action:'reply',text:'已读取归档后续内容，没有重放原命令'}];
  const result=await runAgent({base,task,model:{contextWindow:1048576},signal:new AbortController().signal,ask:async messages=>{
   const s=JSON.parse(messages.at(-1).content);
   if(n===2){assert.equal(s.toolResults.at(-1).result.text.length,100);assert.equal(s.toolResults.at(-1).result.next,100);}
   if(n===6){assert.equal(s.toolResults.at(-1).notExecuted,true);assert.equal(s.readRecovery.next,100);assert.equal(s.readRecovery.action,'read_execution');}
   return {content:JSON.stringify(actions[n++])};
  }});
- assert.match(result.content,/read_execution/);assert.equal(result.agentRun.events.filter(e=>e.type==='read_execution').length,2);assert.equal(result.agentRun.events.filter(e=>e.type==='repeat_warning').length,1);
+ assert.equal(result.content,'已读取归档后续内容，没有重放原命令');assert.equal(result.agentRun.events.filter(e=>e.type==='read_execution').length,3);assert.equal(result.agentRun.events.filter(e=>e.type==='repeat_warning').length,1);
 });
 test('string offsets page files and external records without gaps and persist visible read coverage',async t=>{
  const base=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-string-pages-'));t.after(()=>fs.rm(base,{recursive:true,force:true}));
@@ -84,7 +85,7 @@ test('string offsets page files and external records without gaps and persist vi
   if(stage==='file')return {content:JSON.stringify({action:'read_file',path:'render.py',offset:String(offset)})};
   if(stage==='archive')return {toolCalls:[{function:{name:'read_execution',arguments:JSON.stringify({id,offset:String(offset)})}}]};
   if(stage==='summary'){stage='done';return {content:JSON.stringify({action:'checkpoint',text:'已连续分页读取完整源码和归档记录，保留文件哈希及读取范围，下一步分析并验证。'})};}
-  assert.equal(s.toolResults.length,0);assert.equal(s.readCoverage.at(-1).next,null);return {content:'{"action":"pause","text":"保存进度"}'};
+  assert.equal(s.toolResults.length,2);assert.equal(s.readCoverage.at(-1).next,null);return {content:'{"action":"pause","text":"保存进度"}'};
  },executeTool:execute});
  assert.equal(collected.file,text);assert.equal(collected.archive,raw);
  w=await createWorkspace(base,task);assert.ok(w.run.readCoverage.length>=3);
@@ -99,7 +100,7 @@ test('repeat correction groups numeric and string offsets and returns only the s
  const actions=[{action:'route',kind:'chat'},{action:'read_file',path:'a.py',offset:0},{action:'read_file',path:'b.py',offset:0},{action:'read_file',path:'a.py',offset:'0'},{action:'read_file',path:'a.py',offset:0}];
  await runAgent({base,task,model:{contextWindow:1048576},signal:new AbortController().signal,executeTool:async(...args)=>{reads++;return execute(...args);},ask:async messages=>{
   if(n<actions.length)return {content:JSON.stringify(actions[n++])};
-  const warning=JSON.parse(messages.at(-1).content).toolResults.at(-1);assert.equal(warning.notExecuted,true);assert.ok(warning.coverage.length>0);assert.ok(warning.coverage.every(r=>r.path==='a.py'));assert.equal(warning.coverage[0].next,3000);
+  const warning=JSON.parse(messages.at(-1).content).toolResults.at(-1);assert.equal(warning.notExecuted,true);assert.ok(warning.coverage.length>0);assert.ok(warning.coverage.every(r=>r.path==='a.py'));assert.equal(warning.coverage[0].next,null);assert.equal(warning.coverage[0].end,7200);
   return {content:'{"action":"pause","text":"按 next 继续"}'};
  }});
  assert.equal(reads,3);assert.equal((await createWorkspace(base,task)).run.events.filter(e=>e.type==='repeat_warning').length,1);
@@ -113,17 +114,17 @@ test('legacy history is externalized, paginated and recoverable through checkpoi
  const totals=[];let n=0,oldId,readonlyCalls=0;
  const summary='已保存中文约束、完成的写入和二十条执行凭据，原文已归档，下一步按需回查并继续验收。';
  await runAgent({base,task,model,signal:new AbortController().signal,executeTool:async(...args)=>{readonlyCalls++;assert.equal(args[1].action,'read_execution');return execute(...args);},ask:async(messages,budget)=>{
-  const s=JSON.parse(messages.at(-1).content);totals.push(Buffer.byteLength(JSON.stringify(messages)));
+  const s=JSON.parse(messages.at(-1).content);totals.push(Buffer.byteLength(JSON.stringify(messages.slice(1))));
   assert.equal(messages.length,2);assert.ok(s.toolResults.length<=6);assert.equal(s.currentRequest,task.request);assert.ok(s.readCoverage.length<=24);assert.equal(s.readCoverageTotal,40);
   if(n++===0){assert.equal(budget,4096);assert.ok(!JSON.stringify(messages).includes('payload-0:'));return {content:JSON.stringify({action:'route',kind:'task'})};}
   if(n===2){assert.equal(s.requiredAction,'checkpoint');return {content:JSON.stringify({action:'read_execution',id:'observations',offset:0})};}
   if(n===3){oldId=JSON.parse(s.toolResults.at(-1).result.text.split('\n')[0]).id;return {content:JSON.stringify({action:'read_execution',id:oldId,offset:0})};}
   if(n===4){assert.match(s.toolResults.at(-1).result.text,/payload-0:/);assert.equal(budget,8192);return {content:JSON.stringify({action:'checkpoint',text:summary})};}
-  assert.equal(s.workingMemory,summary);assert.equal(s.toolResults.length,0);return {content:JSON.stringify({action:'pause',text:'等待继续'})};
+  assert.equal(s.workingMemory,summary);assert.equal(s.toolResults.length,2);return {content:JSON.stringify({action:'pause',text:'等待继续'})};
  }});
  assert.equal(readonlyCalls,2);assert.ok(Math.max(...totals)<100000);w=await createWorkspace(base,task);assert.equal(w.run.workingMemory,summary);assert.equal(w.run.readCoverage.length,40);
  let offset=0,raw='';do{const page=await w.observation(oldId,offset);raw+=page.text;offset=page.next;}while(offset!==null);
  assert.equal(JSON.parse(raw).response.result.text,'payload-0:'+'数据'.repeat(12000));
- const other=await createWorkspace(base,{...task,id:'other'});await assert.rejects(other.observation(oldId),{code:'ENOENT'});await assert.rejects(w.observation('../escape'),/ID 无效/);
+ const other=await createWorkspace(base,{...task,id:'other'});await assert.rejects(other.observation(oldId),{code:'EXECUTION_RECORD_NOT_FOUND'});await assert.rejects(w.observation('../escape'),/ID 无效/);
  let stage=0;await runAgent({base,task,model,signal:new AbortController().signal,ask:async messages=>{const s=JSON.parse(messages.at(-1).content);assert.equal(s.workingMemory,summary);return {content:JSON.stringify(stage++?{action:'pause',text:'保留进度'}:{action:'route',kind:'task'})};},executeTool:()=>assert.fail('no writes on resume')});
 });

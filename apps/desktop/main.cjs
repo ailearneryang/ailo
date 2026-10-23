@@ -227,6 +227,18 @@ ipcMain.handle("agent:files", async (e, taskId) => {
   if(!task)throw Error('任务不存在');
   return require('./agent/project-files.cjs').listProjectFiles(await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task));
 });
+ipcMain.handle('agent:openArtifact', async (e, {taskId, artifactPath, projectFile = false}) => {
+  trusted(e);
+  if(typeof artifactPath!=='string'||! /\.(html?|pdf|png|jpe?g|webp|gif|svg|txt|md|csv|tsv|docx?|xlsx?|pptx?|odt|ods|odp)$/i.test(artifactPath))throw Error('此文件类型请在文件夹中打开');
+  const state=await storage.readWorkspace(),task=state.tasks.find(t=>t.id===taskId);
+  if(!task)throw Error('任务不存在');
+  const project=require('./agent/workspace-path.cjs').workspacePath(storage.agentDirectory,task);
+  const run=await json(path.join(project,'runs',key(task.runRecordId||task.id)+'.json'),null);
+  if(!projectFile&&!run?.artifacts.some(a=>a.path===artifactPath))throw Error('成果不属于当前任务');
+  const root=projectFile?await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task):await require('./schedule-context.cjs').scheduleArtifactRoot(storage.agentDirectory,task,artifactPath);
+  const file=projectFile?await require('./agent/project-files.cjs').projectFile(root,artifactPath):await resolveFile(root,artifactPath);
+  const error=await shell.openPath(file);if(error)throw Error('无法打开文件：'+error);
+});
 ipcMain.handle("agent:reveal", async (e, {taskId, artifactPath, projectFile = false}) => {
   trusted(e);
   const state = await storage.readWorkspace();

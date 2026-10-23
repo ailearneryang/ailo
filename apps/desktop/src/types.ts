@@ -108,7 +108,7 @@ export type RequestContextUsage = {
   providerUsage?: {inputTokens?:number;outputTokens?:number;reasoningTokens?:number};
 };
 export type AgentRun = {
-  performance?:{wallMs:number;modelMs:number;modelRequests:number;failedModelRequests:number;processModelMs:number;processModelRequests:number;noActionMs:number;noActionRequests:number;toolMs:number;toolCalls:number;batchItems:number;attachedUpdates:number;reportedUsageRequests:number;inputTokens:number;outputTokens:number;reasoningTokens:number};
+  performance?:{wallMs:number;modelMs:number;modelRequests:number;failedModelRequests:number;processModelMs:number;processModelRequests:number;noActionMs:number;noActionRequests:number;toolMs:number;toolCalls:number;batchItems:number;attachedUpdates:number;reportedUsageRequests:number;inputTokens:number;outputTokens:number;reasoningTokens:number;beforeActionMs?:number;timedActionMs?:number;timedActionRequests?:number;toolErrors?:number;validationFailures?:number;successfulTools?:number;runtimeCountersSince?:string};
   delivery?:{outcome:'complete'|'limited'|'partial'|'blocked';visualReviewPending?:boolean;unverified?:string[];status?:string;at:string};
   issues?:{id:string;status:'open'|'resolved'|'limitation';description:string;reason?:string;requirementIds:string[]}[];
   executionState?:{goal:string;gaps?:string[];nextAction?:string;expectedResult?:string;blocker?:unknown};
@@ -117,6 +117,7 @@ export type AgentRun = {
   memoryUsed?:{inputId?:string;ownerId?:string;entries:{id:string;topic:string;scope:string;source?:import("./memory-types").MemorySource}[]};
   loadedExtensions?: {id:string;name:string;kind:"skill"|"expert"}[];
   acceptanceCriteria?:{id:string;text:string;type?:string;basis?:'model_assessment'|'machine_check';status:'passed'|'recorded'|'pending'}[];
+  designRegionIssues?:{regionId:string;region:string;reason:string}[];
   recoverySummary?:{retried:number;recovered:number;unknown:number};
   conversationTitle?: string;
   executionId?: string;
@@ -129,7 +130,7 @@ export type AgentRun = {
   steps: {id:string;title:string;status:string;detail?:string;summary?:string;requiresConfirmation?:boolean}[];
   decisions: string[]; acceptance: string[];
   artifacts: {path:string;label:string;size:number;sha256:string}[];
-  events: {id:string;type:string;at:string;detail:{purpose?:string;exitCode?:number;path?:string;name?:string;entry?:string;offset?:number;message?:string;output?:string}}[];
+  events: {id:string;type:string;at:string;detail:{operation?:string;purpose?:string;exitCode?:number;path?:string;name?:string;entry?:string;offset?:number;message?:string;output?:string}}[];
   updatedAt?: string;
 };
 export type Workspace = {
@@ -254,6 +255,7 @@ declare global {
       setTaskPinned: (id:string,pinned:boolean) => Promise<Task>;
       steer: (input:{id:string;taskId:string;content:string}) => Promise<Message>;
       projectFiles: (taskId:string) => Promise<{files:{path:string;label:string;size:number;sha256:string}[];truncated:boolean}>;
+      openArtifact: (taskId:string, artifactPath:string, projectFile?:boolean) => Promise<void>;
       reveal: (taskId:string, artifactPath?:string, projectFile?:boolean) => Promise<void>;
       editArtifact:(taskId:string,path:string,input:{version:string;operation?:string;text?:string;sheet?:string;address?:string})=>Promise<ArtifactPreview>;
       preview: (taskId:string, artifactPath:string, projectFile?:boolean) => Promise<ArtifactPreview>;

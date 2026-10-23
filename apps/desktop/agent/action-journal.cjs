@@ -8,7 +8,8 @@ function begin(run,action){
  run.actionJournal ||= [];
  const hash=fingerprint(action);
  if(run.actionJournal.some(e=>e.fingerprint===hash&&e.status==='unknown'))throw Object.assign(Error('此前相同操作的结果尚未核对，禁止自动重放。请先检查文件、日志或远端状态；无法确认时说明阻塞。'),{code:'ACTION_RESULT_UNKNOWN'});
- const entry={id:randomUUID(),fingerprint:hash,action:action.action,path:action.path,stepId:action.stepId||run.steps.find(s=>s.status==='running')?.id,status:'running',readOnly:reads.has(action.action),startedAt:new Date().toISOString(),revision:run.revision,retries:0};
+ const readOnly=reads.has(action.action)||action.action==='android_device'&&['status','logs','screenshot','check'].includes(action.operation);
+ const entry={id:randomUUID(),fingerprint:hash,action:action.action,path:action.path,stepId:action.stepId||run.steps.find(s=>s.status==='running')?.id,status:'running',readOnly,startedAt:new Date().toISOString(),revision:run.revision,retries:0};
  if(action.action==='write_file')entry.expectedHash=createHash('sha256').update(action.content||'').digest('hex');
  run.actionJournal.push(entry);return entry;
 }

@@ -90,3 +90,26 @@ test('three ordinary tool errors trigger internal diagnosis and the conversation
  }});
  assert.equal(result.content,'目录中的文件不存在，请提供需要读取的文件。');assert.equal(calls,5);
 });
+test('local log pages and shell inspections cannot exit repair recovery',()=>{
+ const run={inputKey:'u',steps:plan.steps};recovery.begin(run,'MODEL_NO_ACTION_TIMEOUT');
+ for(const action of [{action:'read_file',path:'source.kt'},{action:'batch_read',items:[{action:'read_execution'}]},{action:'run_command',command:'cat build.log'},{action:'read_execution',offset:4000}]){
+  recovery.progress(run,action,{exitCode:0,results:[{result:{text:'page'}}],text:'page'});
+  assert.ok(run.decisionRecovery);
+ }
+ recovery.progress(run,{action:'edit_file',path:'source.kt'},{changed:false});assert.ok(run.decisionRecovery);
+ recovery.progress(run,{action:'edit_file',path:'source.kt'},{changed:true,sha256:'new'});
+ recovery.progress(run,{action:'build_android'},{exitCode:1});assert.ok(run.decisionRecovery);
+ recovery.progress(run,{action:'build_android'},{exitCode:0});assert.equal(run.decisionRecovery,undefined);
+});
+test('interleaved log reads do not reset no-action failure budget',async t=>{
+ const base=await fixture(t);let calls=0,failures=0;
+ const result=await runAgent({base,task:{id:'log-loop',request:'修复编译'},model:bailian,signal:new AbortController().signal,executeTool:async()=>({text:'same build errors',total:10000,next:100}),ask:async messages=>{
+  const state=JSON.parse(messages.at(-1).content);calls++;
+  if(calls===1)return {content:JSON.stringify({action:'route',kind:'task'})};
+  if(calls===2)return {content:JSON.stringify(plan)};
+  if(calls%2===1){failures++;throw Object.assign(Error('no action'),{code:'MODEL_NO_ACTION_TIMEOUT'});}
+  assert.equal(state.decisionRecovery.attempt,failures);
+  return {content:JSON.stringify({action:'read_file',path:'build.log',offset:failures*100,limit:100})};
+ }});
+ assert.equal(failures,4);assert.equal(result.agentRun.status,'blocked');assert.equal(calls,9);
+});

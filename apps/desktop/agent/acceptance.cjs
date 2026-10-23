@@ -3,7 +3,7 @@ const {createHash}=require('node:crypto');
 const {resolveFile}=require('./workspace.cjs');
 const criterionId=text=>'a_'+createHash('sha256').update(text).digest('hex').slice(0,16);
 const appropriate=(type,kind)=>type==='visual'?kind==='visual':type==='behavior'?['command','observation'].includes(kind):type==='content'?kind!=='file_exists':true;
-function criteria(run){return require('./requirements.cjs').current(run).map(({id,text,type,scope,scopes})=>{const check=run.acceptanceResults?.[id];return {id,text,type,scope,scopes,check:check&&(check.type||'content')===type&&(check.parts||[check]).every(p=>appropriate(type,p.kind))?check:undefined};});}
+function criteria(run){return require('./requirements.cjs').current(run).map(({id,text,type,scope,scopes})=>{const check=run.acceptanceResults?.[id];return {id,text,type,scope,scopes,check:check&&(check.type||'content')===type&&(check.parts||[check]).every(p=>appropriate(type,p.kind)&&!(type==='visual'&&run.visualObservations?.some(o=>o.eventId===p.evidenceId&&o.designBinding)&&p.designReviewVersion!==1))?check:undefined};});}
 async function verify(workspace,action){
  let activeCheck;
  try{return await verifyBatch(workspace,action,check=>{activeCheck=check;});}
@@ -12,7 +12,7 @@ async function verify(workspace,action){
 async function verifyBatch(workspace,action,track){
  const run=workspace.run;
  if(!Array.isArray(action.checks)||!action.checks.length||action.checks.length>12)throw Error('verify.checks 必须包含 1–12 条验收检查');
- const results=[],seen=new Set(),proof=require('./evidence.cjs');
+ const results=[],regionReviews=[],seen=new Set(),proof=require('./evidence.cjs');
  for(const raw of action.checks){
   track(raw);
   const check={...raw,...(raw.evidenceId?{evidenceId:proof.resolveId(run,raw.evidenceId)}:{})};
@@ -25,23 +25,36 @@ async function verifyBatch(workspace,action,track){
   if(type==='visual'&&check.kind!=='visual')throw Error('视觉要求必须绑定已传给模型的当前版本图像观察，文件或关键词检查不能替代');
   if(type==='behavior'&&!['command','observation'].includes(check.kind))throw Error('行为要求必须绑定运行检查证据');
   if(type!=='presence'&&check.kind==='file_exists')throw Error('文件存在只能核验 presence 要求，不能证明内容、行为或视觉质量');
-  let sha256,evidence,observationPath,sources,observedScope,rendererState,fileSet;
+  let sha256,evidence,observationPath,sources,observedScope,rendererState,fileSet,buildInputs,buildInputsChanged,buildRevisionRequired,designReviewVersion;
   const requirement=criteria(run).find(c=>c.id===check.criterionId);
   if(check.kind==='command'){
    const event=await proof.lookup(workspace,check.evidenceId);
    if(!event||!['run_command','build_android'].includes(event.type))throw Error('验收命令证据无效，请使用 run_command/build_android 事件 ID');
    await proof.event(workspace,check.evidenceId);
    sources=event.detail.result.sources;fileSet=event.detail.result.fileSet;observedScope=event.detail.result.scope;evidence=event.id;
+   if(event.type==='build_android'){
+    ({buildInputs,buildInputsChanged,buildRevisionRequired}=event.detail.result);
+    const target=check.scope||requirement.scope;
+    observedScope=event.detail.result.scopes?.find(s=>proof.covers(s,target))||observedScope;
+   }
   }else if(['visual','observation'].includes(check.kind)){
-   const referenced=await proof.lookup(workspace,check.evidenceId),event=referenced?.type==='browser'?referenced:undefined;
+   const referenced=await proof.lookup(workspace,check.evidenceId),event=['browser','android_device'].includes(referenced?.type)?referenced:undefined;
    const image=run.visualObservations?.find(o=>o.eventId===check.evidenceId&&o.delivered);
    if(check.kind==='visual'){
     if(!image)throw Error('视觉证据尚未传给模型或已过期；先 browser 或 view_image，再依据图像检查');
+    if(image.comparison?.grossMismatch)throw Error('原稿与结果存在已知大面积差异，请修复实现后重新成对观察，不能声明视觉验收通过');
+    if(image.designBinding&&!image.reference)throw Error('设计验收缺少成对原稿，请 view_image 同时提供 reference');
     await require('./visual-observation.cjs').assertSources(workspace,image);
     const data=await fs.readFile(await resolveFile(workspace.files,image.path));
     if(createHash('sha256').update(data).digest('hex')!==image.sha256)throw Error('观察图片已变化，请重新读取');
+    if(image.designBinding){
+     const design=await require('./android-design.cjs').inspect(workspace.files),screen=design.screens?.find(s=>s.boardId===image.designBinding.boardId&&s.layout===image.designBinding.layout&&s.reference===image.reference?.path);
+     if(!screen||design.issues.length||image.designManifest?.id!==screen.baseline.designManifest.id)throw require('./design-regions.cjs').error('原稿区域清单缺失或已更新，请重新 view_image(path=当前截图,reference=原稿)');
+     const review=await require('./design-regions.cjs').assess(workspace,image,check.regions);if(review)regionReviews.push({image,review});
+     designReviewVersion=1;
+    }
     sha256=image.sha256;observationPath=image.path;sources=image.sources;observedScope=image.scope;rendererState=image.rendererState;
-   }else if(!event||!event.detail.result?.dom)throw Error('网页观察证据无效或已过期');
+   }else if(!event||event.type==='browser'&&!event.detail.result?.dom)throw Error('运行观察证据无效；使用 browser 或 android_device 的真实操作事件，图片读取不等于行为验证');
    await proof.event(workspace,check.evidenceId);
    observedScope ||= event?.detail.result.scope;rendererState ||= event?.detail.result.rendererState;
    if(event&&(event.detail.result.dom?.missingImages?.length||event.detail.result.errors?.length))throw Error('网页观察仍包含图片加载失败或运行错误，请修复后重新核验');
@@ -50,8 +63,11 @@ async function verifyBatch(workspace,action,track){
    evidence=check.evidenceId;
   }else if(['file_exists','text_contains','json_valid'].includes(check.kind)){
    const file=await resolveFile(workspace.files,check.path),stat=await fs.stat(file);
-   if(!stat.isFile()||stat.size===0||stat.size>2*1024*1024)throw Error('验收检查需要非空且不超过 2 MB 的文件');
-   const data=await fs.readFile(file);sha256=createHash('sha256').update(data).digest('hex');sources=[{path:check.path,sha256}];observedScope={kind:'file',path:check.path};
+   const presence=check.kind==='file_exists',maxMB=presence?150:2;
+   if(!stat.isFile()||stat.size===0||stat.size>maxMB*1024*1024)throw Error(presence?'产物存在检查需要非空且不超过 150 MB 的普通文件':'文本或 JSON 验收检查需要非空且不超过 2 MB 的文件');
+   // Presence checks cover binary deliverables too. Hash them as a stream;
+   // only parsers need the small text buffer limit.
+   const data=presence?undefined:await fs.readFile(file);sha256=presence?await proof.hashFile(file):createHash('sha256').update(data).digest('hex');sources=[{path:check.path,sha256}];observedScope={kind:'file',path:check.path};
    if(check.kind==='text_contains'){
     if(!Array.isArray(check.contains)||!check.contains.length||check.contains.length>24||check.contains.some(s=>typeof s!=='string'||!s||s.length>800))throw Error('contains 必须为 1–24 个非空检查文本');
     const source=data.toString('utf8'),missing=check.contains.filter(s=>!source.includes(s));
@@ -65,7 +81,7 @@ async function verifyBatch(workspace,action,track){
   }else throw Error('验收检查类型无效');
   if(check.scope)proof.scope(check.scope);
   if(check.scope&&!proof.covers(observedScope,check.scope))throw Error('证据对象或观察范围未覆盖验收要求；局部截图和文字存在不能证明完整布局');
-  results.push({...check,type,sha256,sources,scope:observedScope,rendererState,fileSet,...(observationPath?{path:observationPath}:{}),basis:['visual','observation'].includes(check.kind)?'model_assessment':'machine_check',evidenceId:evidence,revision:run.revision,status:'passed'});
+  results.push({...check,type,sha256,sources,scope:observedScope,rendererState,fileSet,buildInputs,buildInputsChanged,buildRevisionRequired,designReviewVersion,...(observationPath?{path:observationPath}:{}),basis:['visual','observation'].includes(check.kind)?'model_assessment':'machine_check',evidenceId:evidence,revision:run.revision,status:'passed'});
  }
  // Validate a requirement's complete scope against all its supplied evidence.
  // Multiple historical snapshots can establish a transition or cover pages.
@@ -78,11 +94,13 @@ async function verifyBatch(workspace,action,track){
  }
  // Publish only after the entire batch passes; never grant partial approval.
  run.acceptanceResults={...run.acceptanceResults,...updates};
+ for(const {image,review} of regionReviews)require('./design-regions.cjs').commit(run,review,image);
  await workspace.event('acceptance_verified',{results});
  require('./validation-recovery.cjs').passed(run,results,run.events.at(-1).id);
  await workspace.save();return {results};
 }
 async function assertAccepted(workspace,{unverifiedVisualIds=[]}={}){
+ require('./design-regions.cjs').assertNoIssues(workspace.run);
  for(const criterion of criteria(workspace.run)){
   if(unverifiedVisualIds.includes(criterion.id)){
    if(criterion.type!=='visual'||!require('./visual-limitation.cjs').unavailable(workspace.run))throw Error('只能在缺少图像能力时保留视觉要求为未核验');
@@ -94,7 +112,7 @@ async function assertAccepted(workspace,{unverifiedVisualIds=[]}={}){
   for(const part of parts){
    await proof.assertFresh(workspace,part);
    if(part.evidenceId)await proof.event(workspace,part.evidenceId);
-   if(part.sha256){const data=await fs.readFile(await resolveFile(workspace.files,part.path));if(createHash('sha256').update(data).digest('hex')!==part.sha256)throw Error('验收文件已变化，请重新 verify：'+part.path);}
+   if(part.sha256&&await proof.hashFile(await resolveFile(workspace.files,part.path))!==part.sha256)throw Error('验收文件已变化，请重新 verify：'+part.path);
   }
   for(const range of [...(criterion.scope?[criterion.scope]:[]),...(criterion.scopes||[])])if(!parts.some(part=>proof.covers(part.scope,range)))throw Error('验收范围未覆盖要求：'+criterion.id);
  }

@@ -1,10 +1,11 @@
 const {normalizeProjectPath}=require('./workspace.cjs');
 const actions=['read_file','read_material','read_source','inspect_source','search_materials','list_files','read_execution'];
-const fields=['action','itemId','path','id','entry','pointer','query','offset','limit'];
+const fields=['action','itemId','path','id','view','entry','pointer','query','offset','limit'];
 function validate(items){
  if(!Array.isArray(items)||!items.length||items.length>6)throw Error('batch_read.items 必须为1–6个独立只读操作');
  const ids=new Set();return items.map((item,index)=>{
   if(!item||typeof item!=='object'||Array.isArray(item)||!actions.includes(item.action)||Object.keys(item).some(k=>!fields.includes(k)))throw Error('batch_read 只允许指定的本地只读操作，不能嵌套批量、写入、命令或应用调用');
+  if(item.view!==undefined&&(item.action!=='read_execution'||!['record','result'].includes(item.view)))throw Error('view 仅支持 read_execution 的 record/result 视图');
   const value={...item},itemId=value.itemId||String(index+1);
   if(typeof itemId!=='string'||!/^[a-zA-Z0-9_-]{1,40}$/.test(itemId)||ids.has(itemId))throw Error('批量 itemId 必须唯一且为1–40位字母、数字、下划线或连字符');
   ids.add(itemId);

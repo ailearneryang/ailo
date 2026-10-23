@@ -14,13 +14,13 @@ test('large-capacity models externalize accumulated tools and preserve summaries
  const base=await setup(t),largeModel={id:'large',contextWindow:1048576,maxOutputTokens:131072};
  await runAgent(options(base,async()=>({content:JSON.stringify({action:'pause',text:'保存进度'})}),{model:largeModel}));
  const w=await createWorkspace(base,task);
- w.run.observations=Array.from({length:12},(_,i)=>({action:{action:'read_file',path:`part-${i}.txt`},response:{text:`retained-observation-${i}`}}));
+ w.run.observations=Array.from({length:24},(_,i)=>({action:{action:'read_file',path:`part-${i}.txt`},response:{text:`retained-observation-${i}`}}));
  const policy=require('../apps/desktop/agent/output-budget.cjs').createOutputBudget(largeModel,131072);policy.limited(8192);policy.limited(16384);policy.limited(32768);w.run.outputBudget=policy.snapshot();await w.save();
- let calls=0;const memory='已完整保留十二次文件读取的结论和来源，下一步根据当前用户要求继续推进并验证。';
+ let calls=0;const memory='已完整保留二十四次文件读取的结论和来源，下一步根据当前用户要求继续推进并验证。';
  await runAgent(options(base,async(messages,budget)=>{
   const s=JSON.parse(messages.at(-1).content);
-  if(calls++===0){assert.equal(s.requiredAction,'checkpoint');assert.ok(!JSON.stringify(messages).includes('retained-observation-0'));assert.match((await w.observation(s.externalMemory.recent[0].id)).text,/retained-observation-0/);assert.ok(JSON.stringify(messages).includes('retained-observation-11'));assert.equal(budget,8192);return {content:JSON.stringify({action:'checkpoint',text:memory})};}
-  assert.equal(s.workingMemory,memory);assert.equal(s.toolResults.length,0);assert.ok(!JSON.stringify(messages).includes('retained-observation-0'));return {content:JSON.stringify({action:'pause',text:'摘要已保存'})};
+  if(calls++===0){assert.equal(s.requiredAction,'checkpoint');assert.ok(!JSON.stringify(messages).includes('retained-observation-0'));const archived=await createWorkspace(base,task);assert.match((await archived.observation(archived.run.observationIndex[0].id)).text,/retained-observation-0/);assert.ok(JSON.stringify(messages).includes('retained-observation-23'));assert.equal(budget,8192);return {content:JSON.stringify({action:'checkpoint',text:memory})};}
+  assert.equal(s.workingMemory,memory);assert.equal(s.toolResults.length,2);assert.ok(!JSON.stringify(messages).includes('retained-observation-0'));return {content:JSON.stringify({action:'pause',text:'摘要已保存'})};
  },{model:largeModel,executeTool:()=>assert.fail('no tool should be replayed')}));
  assert.equal((await createWorkspace(base,task)).run.workingMemory,memory);
 });
@@ -146,8 +146,8 @@ test('material observations and read coverage survive pause, checkpoint and resu
  await runAgent(options(base,async messages=>{const s=JSON.parse(messages.at(-1).content);return {content:JSON.stringify(n++?{action:'pause',text:'暂停'}:{action:'read_material',id:s.materials[0].id})};}));
  let resumed=0;
  const memory='需求：必须包含晴天。来源：requirements.md 全文。缺口：无。下一步：制定计划生成天气说明文件。';
- await runAgent(options(base,async messages=>{const s=JSON.parse(messages.at(-1).content);if(resumed++===0){assert.equal(s.readCoverage.length,1);assert.match(s.toolResults[0].result.text,/晴天/);return {content:JSON.stringify({action:'checkpoint',text:memory})};}assert.equal(s.workingMemory,memory);assert.equal(s.readCoverage[0].next,null);assert.equal(s.toolResults.length,0);return {content:JSON.stringify({action:'pause',text:'暂停'})};}));
- const w=await createWorkspace(base,task);assert.equal(w.run.workingMemory,memory);assert.equal(w.run.observations.length,0);
+ await runAgent(options(base,async messages=>{const s=JSON.parse(messages.at(-1).content);if(resumed++===0){assert.equal(s.readCoverage.length,1);assert.match(s.toolResults[0].result.text,/晴天/);return {content:JSON.stringify({action:'checkpoint',text:memory})};}assert.equal(s.workingMemory,memory);assert.equal(s.readCoverage[0].next,null);assert.equal(s.toolResults.length,1);assert.match(s.toolResults[0].result.text,/晴天/);return {content:JSON.stringify({action:'pause',text:'暂停'})};}));
+ const w=await createWorkspace(base,task);assert.equal(w.run.workingMemory,memory);assert.equal(w.run.observations.length,1);
 });
 test('repeated reads mixed with successes recover internally without replaying tools',async t=>{
  const base=await setup(t);let n=0;
@@ -232,7 +232,7 @@ test('progress review survives restart and checkpoint, gates tools and publishes
  w=await createWorkspace(base,task);assert.equal(w.run.actionsSincePlan,0);
  await assert.rejects(fs.stat(path.join(w.files,'must-not-exist.txt')),/ENOENT/);
  // Checkpoint compression must not reset progress cadence.
- w.run.actionsSincePlan=6;w.run.observations=Array.from({length:6},()=>({action:{action:'read_material'},response:{text:'reference'}}));await w.save();
+ w.run.actionsSincePlan=6;w.run.observations=Array.from({length:12},()=>({action:{action:'read_material'},response:{text:'reference'}}));await w.save();
  let turn=0;
  await runAgent(options(base,async messages=>{const s=JSON.parse(messages.at(-1).content);if(turn++===0){assert.equal(s.requiredAction,'checkpoint');return {content:JSON.stringify({action:'checkpoint',text:'已读取需求材料，已保存工程文件，下一步核对执行计划并继续实现剩余功能。'})};}assert.equal(s.requiredAction,'plan_update');return {content:JSON.stringify({action:'pause',text:'保留核对要求'})};}));
  assert.equal((await createWorkspace(base,task)).run.actionsSincePlan,6);
@@ -342,7 +342,7 @@ test('repeated action guard remains effective across batch boundaries',async t=>
  assert.match(result.content,/决策轮数预算/);assert.ok(result.agentRun.events.some(e=>e.type==='loop_recovery'));
 });
 
-test('thinking truncation does not inflate budget across actions or manual continuation',async t=>{
+test('thinking truncation learns bounded headroom across actions and continuation',async t=>{
  const base=await setup(t);let n=0;const budgets=[];
  await runAgent(options(base,async(messages,budget)=>{
   budgets.push(budget);
@@ -350,10 +350,10 @@ test('thinking truncation does not inflate budget across actions or manual conti
   if(n===2){assert.match(JSON.parse(messages.at(-1).content).recovery,/思考阶段/);return {content:JSON.stringify(plan)};}
   return {content:JSON.stringify({action:'pause',text:'已保存'})};
  },{model:{id:'m',contextWindow:100000,maxOutputTokens:65536}}));
- assert.deepEqual(budgets,[8192,8192,8192]);
- const w=await createWorkspace(base,task);assert.equal(w.run.outputBudget.stages.action.preferred,8192);
- assert.equal(w.run.events.find(e=>e.type==='output_limit').detail.nextBudget,8192);
- await runAgent(options(base,async(messages,budget)=>{assert.equal(budget,8192);return {content:JSON.stringify({action:'pause',text:'保持进度'})};},{model:{id:'m',contextWindow:100000,maxOutputTokens:65536}}));
+ assert.deepEqual(budgets,[8192,16384,16384]);
+ const w=await createWorkspace(base,task);assert.equal(w.run.outputBudget.stages.action.preferred,16384);
+ assert.equal(w.run.events.find(e=>e.type==='output_limit').detail.nextBudget,16384);
+ await runAgent(options(base,async(messages,budget)=>{assert.equal(budget,16384);return {content:JSON.stringify({action:'pause',text:'保持进度'})};},{model:{id:'m',contextWindow:100000,maxOutputTokens:65536}}));
 });
 
 test('repeated material range warns then recovers internally with precise location',async t=>{
@@ -368,14 +368,14 @@ test('repeated material range warns then recovers internally with precise locati
  assert.ok(events.some(e=>e.type==='repeat_warning'));
  const last=events.filter(e=>e.type==='loop_recovery').at(-1);assert.ok(last);assert.equal(last.detail.offset,30000);assert.equal(last.detail.pointer,'/icons');assert.ok(last.detail.message);
 });
-test('material reread after changed file content is permitted and retains read evidence',async t=>{
+test('unrelated resource writes do not reset material reread protection or discard evidence',async t=>{
  const base=await setup(t);let i=0;
  const result=await runAgent(options(base,async messages=>{
   const s=JSON.parse(messages.at(-1).content),read={action:'read_material',id:s.materials[0].id};
   const actions=[plan,read,read,{action:'write_file',path:'icon.xml',content:'new resource'},read,{action:'pause',text:'正常推进'}];
   return {content:JSON.stringify(actions[i++])};
  }));
- assert.equal(result.content,'正常推进');assert.ok(!result.agentRun.events.some(e=>e.type==='repeat_warning'||e.type==='no_progress'));
+ assert.equal(result.content,'正常推进');assert.ok(result.agentRun.events.some(e=>e.type==='repeat_warning'));assert.equal(result.agentRun.events.filter(e=>e.type==='read_material').length,2);assert.ok(!result.agentRun.events.some(e=>e.type==='no_progress'));
 });
 test('large JSON keyword search locates nested string content with bounded paginated matches',async t=>{
  const base=await setup(t);await fs.mkdir(path.join(base,'imports'),{recursive:true});
@@ -460,7 +460,7 @@ test('complete short progress files survive checkpoint and resume without anothe
   if(calls++===0)return {content:JSON.stringify({action:'read_file',path:'progress.json'})};
   assert.equal(s.knownFileContents[0].text,'{"next":"KV Cache"}');
   if(calls===2)return {content:JSON.stringify({action:'checkpoint',text:'已完整读取课程进度，下一课 KV Cache，直接根据此进度推进。'})};
-  assert.equal(s.toolResults.length,0);return {content:JSON.stringify({action:'pause',text:'保存进度'})};
+  assert.equal(s.toolResults.length,1);assert.equal(s.toolResults[0].result.text,'{"next":"KV Cache"}');return {content:JSON.stringify({action:'pause',text:'保存进度'})};
  }));
  await runAgent(options(base,async messages=>{
   assert.equal(JSON.parse(messages.at(-1).content).knownFileContents[0].text,'{"next":"KV Cache"}');

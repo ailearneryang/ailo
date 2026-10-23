@@ -86,6 +86,7 @@ function App() {
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
   const [rightPanel,setRightPanel] = useState<'artifacts'|null>(null);
+  const [temporaryArtifactPanel,setTemporaryArtifactPanel]=useState(false);
   const [artifactSelection,setArtifactSelection]=useState<{path:string}|undefined>();
   const rightPanelToggle=useRef<HTMLButtonElement>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -304,6 +305,8 @@ function App() {
   }
   function select(id: string | null) {
     setArtifactSelection(undefined);
+    if(temporaryArtifactPanel)setRightPanel(null);
+    setTemporaryArtifactPanel(false);
     if(task?.temporary&&id!==task.id){discardedTemporary.current.add(task.id);delete drafts.current[task.id];void window.ailo.temporaryConversation({id:task.id}).catch(()=>{});setData(d=>({...d,tasks:d.tasks.filter(t=>t.id!==task.id)}));}
 
     setMessageEdit(null);
@@ -556,7 +559,7 @@ function App() {
   const progressAt=progressAnchor(task?.agentRun,task?messagesFor(task):[]);
   const latestUserMessageId=task?messagesFor(task).filter(m=>m.role==='user').at(-1)?.id:undefined;
   const currentState=task?taskPresentation(task,sessions[task.id]):undefined;
-  const currentProgress=task && (task.agentRun && <TaskProgress task={task} historical={currentState?.historical} currentStatus={currentState?.progressStatus} onOpenArtifacts={()=>setRightPanel('artifacts')} busy={!ready || busy || messageEdit?.taskId===task.id} onContinue={() => {
+  const currentProgress=task && (task.agentRun && <TaskProgress task={task} historical={currentState?.historical} currentStatus={currentState?.progressStatus} onOpenArtifacts={()=>{setTemporaryArtifactPanel(false);setArtifactSelection(undefined);setRightPanel('artifacts');}} busy={!ready || busy || messageEdit?.taskId===task.id} onContinue={() => {
                   if (messagesFor(task).at(-1)?.role === 'user') { void respond(task,false); return; }
                   const message: Message = {id:crypto.randomUUID(),role:"user",content:"请从已保存的任务状态继续，先检查已有成果，不重复执行已完成步骤。"};
                   void respond({...task,messages:[...messagesFor(task),message]},false);
@@ -654,7 +657,7 @@ function App() {
                   : "尚未回复"}
               </span>
             )}
-            {task && isConversation && <button ref={rightPanelToggle} className="artifact-toggle task-sidebar-toggle" title={rightPanel?'收起任务侧栏':'打开任务侧栏：产物、项目文件和材料'} aria-label={rightPanel?'收起任务侧栏':'打开任务侧栏'} aria-expanded={!!rightPanel} aria-controls="artifact-panel" onClick={()=>setRightPanel(rightPanel?null:'artifacts')}><Icon name="panel"/></button>}
+            {task && isConversation && <button ref={rightPanelToggle} className="artifact-toggle task-sidebar-toggle" title={rightPanel?'收起任务侧栏':'打开任务侧栏：产物、项目文件和材料'} aria-label={rightPanel?'收起任务侧栏':'打开任务侧栏'} aria-expanded={!!rightPanel} aria-controls="artifact-panel" onClick={()=>{setTemporaryArtifactPanel(false);setArtifactSelection(undefined);setRightPanel(rightPanel?null:'artifacts');}}><Icon name="panel"/></button>}
           </div>
         </header>
         <div className="workspace">
@@ -744,7 +747,7 @@ function App() {
                   {data.projects.find((p) => p.id === task.projectId)?.name ||
                     "未归类"}
                 </div>
-                {task.agentRun?.history?.filter(r=>!messagesFor(task).some(m=>m.id===r.afterMessageId)).map((r,i)=><ExecutionHistory key={r.executionId||i} task={task} run={r} onOpenArtifacts={()=>setRightPanel('artifacts')}/>)}
+                {task.agentRun?.history?.filter(r=>!messagesFor(task).some(m=>m.id===r.afterMessageId)).map((r,i)=><ExecutionHistory key={r.executionId||i} task={task} run={r} onOpenArtifacts={()=>{setTemporaryArtifactPanel(false);setArtifactSelection(undefined);setRightPanel('artifacts');}}/>)}
                 {!progressAt && currentProgress && <details className="completed-execution"><summary>此前任务进度</summary>{currentProgress}</details>}
                 {task.archived&&<p className="experience-note">此对话已归档。<button onClick={()=>void operateConversation(task.id,'restore')}>恢复到历史列表</button></p>}
                 {task.branchOf&&<p className="experience-note">分支自：<button onClick={()=>select(task.branchOf!.id)}>{task.branchOf.title}</button>{task.responseOnly?' · 本轮只生成回答，不执行工具':''}</p>}
@@ -777,7 +780,7 @@ function App() {
                         {message.materials.map((material,i)=><span className="message-file" key={i} title={material.name}><Icon name="file"/><span>{material.name}</span></span>)}
                       </div>}
                     </div>
-                    {message.role==='assistant'&&(()=>{const delivery=deliveryForMessage(task,messagesFor(task),message.id);return delivery?<DeliveryResult key={task.id+':'+(delivery.executionId||message.id)} task={task} run={delivery} onOpen={path=>{setArtifactSelection(path?{path}:undefined);setRightPanel('artifacts');}}/>:null;})()}
+                    {message.role==='assistant'&&(()=>{const delivery=deliveryForMessage(task,messagesFor(task),message.id);return delivery?<DeliveryResult key={task.id+':'+(delivery.executionId||message.id)} task={task} run={delivery} onOpen={path=>{setTemporaryArtifactPanel(!!path);setArtifactSelection(path?{path}:undefined);setRightPanel('artifacts');}}/>:null;})()}
                     {messageEdit?.taskId!==task.id&&<MessageActions onBranch={!task.temporary?()=>void forkConversation(message.id):undefined} onRegenerate={!task.temporary&&message.role==='assistant'?()=>void forkConversation(message.id,true):undefined} message={message} createdAt={message.createdAt||(index===0&&message.role==='user'?task.created:undefined)} disabled={busy}
                       onEdit={message.role==='user'&&latestUserMessageId===message.id&&!pending?()=>setMessageEdit({taskId:task.id,messageId:message.id,content:message.content}):undefined}/>}
                     {message.role==='assistant'&&index===messagesFor(task).length-1&&!busy&&<CompanionResultAction task={task}/>}
@@ -790,7 +793,7 @@ function App() {
                       active={messagesFor(task).at(-1)?.id === message.id}
                       completed={messagesFor(task).find(m => m.clarificationReplyTo === message.id)?.clarificationAnswers}
                       onSubmit={(answers, attached) => answerQuestions(message, answers, attached)} />}
-                    {task.agentRun?.history?.filter(r=>r.afterMessageId===message.id).map((r,i)=><ExecutionHistory key={r.executionId||i} task={task} run={r} onOpenArtifacts={()=>setRightPanel('artifacts')}/>)}
+                    {task.agentRun?.history?.filter(r=>r.afterMessageId===message.id).map((r,i)=><ExecutionHistory key={r.executionId||i} task={task} run={r} onOpenArtifacts={()=>{setTemporaryArtifactPanel(false);setArtifactSelection(undefined);setRightPanel('artifacts');}}/>)}
                   </div>
                 ))}
                 {task && pending===task.id && <TaskActivity task={task} status={chatStatus} session={sessions[task.id]}/>}
@@ -830,7 +833,7 @@ function App() {
 
                 </div>
               </div>
-              {isConversation && rightPanel && <ArtifactPanel key={task.id} task={task} selectionRequest={artifactSelection} materials={[...task.materials,...materials]} onAttach={()=>void attach()} attaching={busy || importing} onRequest={text=>setInput(text)} onClose={()=>{setRightPanel(null);rightPanelToggle.current?.focus({preventScroll:true});}}/>}
+              {isConversation && rightPanel && <ArtifactPanel key={task.id} task={task} temporary={temporaryArtifactPanel} onDismiss={()=>{setRightPanel(null);setArtifactSelection(undefined);setTemporaryArtifactPanel(false);}} selectionRequest={artifactSelection} materials={[...task.materials,...materials]} onAttach={()=>void attach()} attaching={busy || importing} onRequest={text=>setInput(text)} onClose={()=>{setRightPanel(null);rightPanelToggle.current?.focus({preventScroll:true});}}/>}
               </div>
             )}
             {isConversation && (

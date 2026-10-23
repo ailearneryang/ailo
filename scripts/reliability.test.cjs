@@ -14,10 +14,11 @@ test('acceptance checks bind each requirement, fail atomically, and reject stale
 });
 test('a successful command does not satisfy requirements until explicitly bound, invalid evidence rejected',async t=>{
  const {w}=await setup(t);w.run.acceptance=['构建成功'];await w.event('run_command',{revision:w.run.revision,result:{exitCode:0},command:'build'});
+ const commandId=w.run.events.at(-1).id;
  await assert.rejects(acceptance.assertAccepted(w),/尚未核验/);
  const check={criterionId:acceptance.criterionId('构建成功'),kind:'command',evidenceId:'fake',reason:'真实构建验证'};
  await assert.rejects(acceptance.verify(w,{checks:[check]}),/证据无效/);
- check.evidenceId=w.run.events.at(-1).id;await acceptance.verify(w,{checks:[check]});await acceptance.assertAccepted(w);
+ check.evidenceId=commandId;await acceptance.verify(w,{checks:[check]});await acceptance.assertAccepted(w);
 });
 test('interrupted writes recover from actual hashes, unknown commands are never blindly replayed',async t=>{
  const {w}=await setup(t),action={action:'write_file',path:'out.md',content:'finished'};

@@ -93,11 +93,12 @@ async function execute(workspace,action,signal,options={}) {
     case 'build_android': return require('./android-build.cjs').buildAndroid(files,action,signal,options);
     case 'android_device': {
       if(!options.android)throw Error('当前执行环境没有启用 Android 设备管理服务');
+      if(action.operation==='check')return require('./android-check.cjs').execute(workspace,action,signal,options);
       return options.android.execute(files,action,signal,options.onStatus);
     }
     case 'read_material':return workspace.material(action.id,action.offset||0,action.limit||6000);
     case 'read_source':return workspace.source(action.id,action.entry,action.offset||0);
-    case 'read_execution':return action.id?workspace.observation(action.id,action.offset??0,action.limit):workspace.execution(action.offset??0,action.limit);
+    case 'read_execution':return action.id?workspace.observation(action.id,action.offset??0,action.limit,action.view):workspace.execution(action.offset??0,action.limit);
     case 'inspect_source':return workspace.inspect(action.id,action.entry,action.pointer,action.offset||0,action.query);
     case 'search_materials':return workspace.search(action.query);
     default:throw Error('未知工具');

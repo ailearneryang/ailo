@@ -66,3 +66,24 @@ test('build authorization is required before starting Gradle',async t=>{
  await assert.rejects(require('../apps/desktop/agent/android-build.cjs').buildAndroid(root,{},new AbortController().signal),e=>e.code==='ANDROID_PERMISSION');
  await assert.rejects(fs.access(path.join(root,'.runtime')));
 });
+test('build diagnostics expose deduplicated compiler errors outside noisy Gradle output',()=>{
+ const {diagnostics}=require('../apps/desktop/agent/android-build.cjs');
+ const error='e: file:///project/MainActivity.kt:62:45 Unresolved reference: rvDailyForecast';
+ const result=diagnostics({output:'> Task :app:preBuild UP-TO-DATE\n'.repeat(200)+error+'\nExecution failed for task compileDebugKotlin',stderr:error});
+ assert.deepEqual(result.errors,[error,'Execution failed for task compileDebugKotlin']);assert.equal(result.errorCount,2);
+ const many=diagnostics({stderr:Array.from({length:100},(_,i)=>'error: missing resource '+i).join('\n')});
+ assert.equal(many.errors.length,30);assert.equal(many.errorsTruncated,true);
+});
+test('failed build errors remain directly available during compact recovery',async t=>{
+ const base=await temp(t);let calls=0;
+ const error='e: file:///project/MainActivity.kt:62:45 Unresolved reference: rvDailyForecast';
+ const result=await runAgent({base,task:{id:'build-summary',request:'修复构建'},model:{contextWindow:32768},signal:new AbortController().signal,executeTool:async()=>({exitCode:1,output:'Gradle task output\n'.repeat(500)+error}),ask:async messages=>{
+  const state=JSON.parse(messages.at(-1).content);calls++;
+  if(calls===1)return {content:JSON.stringify({action:'route',kind:'task'})};
+  if(calls===2)return {content:JSON.stringify({action:'plan',goal:'修复构建',decisions:[],acceptance:['可编译'],steps:[{id:'build',title:'构建',status:'running'}]})};
+  if(calls===3)return {content:JSON.stringify({action:'build_android',tasks:[':app:assembleDebug']})};
+  assert.deepEqual(state.androidBuild.errors,[error]);assert.equal(state.androidBuild.current,true);assert.ok(state.androidBuild.eventId);
+  throw Object.assign(Error('no action'),{code:'MODEL_NO_ACTION_TIMEOUT'});
+ }});
+ assert.equal(result.agentRun.status,'blocked');assert.equal(calls,7);
+});

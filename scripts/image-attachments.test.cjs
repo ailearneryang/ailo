@@ -46,3 +46,23 @@ test('attachment availability, image validation and token estimates', async t =>
   assert.ok(countMessages(messages) > 2048 && countMessages(messages) < 2100);
   assert.equal(requestContextUsage(messages, {}, {}, 1024).rows.find(row => row.label === '图片输入（估算）').tokens, 2048);
 });
+test('attachment-only requests respect disabled image input and retain endpoint rejection across later decisions', async t => {
+ for(const disabled of [true,false]){
+  const base=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-image-fallback-'));t.after(()=>fs.rm(base,{recursive:true,force:true}));
+  await fs.mkdir(path.join(base,'imports'));const sourceId=randomUUID();await fs.writeFile(path.join(base,'imports',sourceId),png);
+  const task={id:'image-task',request:'检查图片',messages:[{role:'user',content:'检查图片',materials:[{name:'design.png',sourceId,size:png.length,text:null}]}]};
+  const storage={agentDirectory:base,readWorkspace:async()=>({tasks:[task]}),modelCredentials:async()=>({baseUrl:'https://example.com/v1',model:'vision',contextWindow:65536,imageInput:disabled?'disabled':'auto'})};
+  let rejected=false,calls=0;
+  const chat=createChat(storage,async(_,options)=>{
+   calls++;assert.ok(calls<6);
+   const request=JSON.parse(options.body),state=JSON.parse(request.messages.at(-1).content);
+   const hasImage=request.messages.some(m=>Array.isArray(m.content)&&m.content.some(p=>p.type==='image_url'));
+   if(hasImage){assert.equal(disabled,false);assert.equal(rejected,false);rejected=true;return new Response(JSON.stringify({error:{message:'image input unsupported'}}),{status:400});}
+   if(state.phase!=='route'&&!disabled)assert.equal(rejected,true);
+   const action=state.phase==='route'?{action:'route',kind:'task'}:!state.steps.length?{action:'plan',goal:'核对图片',decisions:[],acceptance:['图片内容已核对'],steps:[{id:'review',title:'核对图片',status:'running'}]}:{action:'pause',text:'当前图像尚未核验，保留任务'};
+   return new Response(JSON.stringify({choices:[{message:{tool_calls:[{id:'a',type:'function',function:{name:'ailo_action',arguments:JSON.stringify(action)}}]}}]}));
+  });
+  const result=await chat.complete({id:'run',taskId:task.id,modelId:'vision',messages:task.messages});
+  assert.equal(result.agentRun.status,'paused');assert.equal(calls,disabled?3:4);assert.equal(rejected,!disabled);
+ }
+});

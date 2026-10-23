@@ -84,7 +84,10 @@ test('execution facts require source IDs and survive pause/restart with a concre
 test('recovery retains a concrete gap and exits on real progress, not bookkeeping',()=>{
  const recovery=require('../apps/desktop/agent/decision-recovery.cjs'),run={inputKey:'i',steps:[{id:'s',status:'running'}],executionState:{gaps:['定位计算错误'],nextAction:'read_file',expectedResult:'读到公式'}};
  recovery.begin(run,'MODEL_NO_ACTION_TIMEOUT');const state=recovery.compact({executionState:run.executionState},x=>x);assert.equal(state.decisionRecovery.focus,'定位计算错误');
- recovery.progress(run,{action:'plan'},{});assert.ok(recovery.active(run));recovery.progress(run,{action:'read_file',path:'a'}, {text:'a'});assert.ok(recovery.active(run));recovery.progress(run,{action:'read_file',path:'a'},{text:'a'});assert.ok(recovery.active(run));recovery.progress(run,{action:'edit_file',path:'a'}, {sha256:'new'});assert.equal(recovery.active(run),false);
+ recovery.progress(run,{action:'plan'},{});assert.ok(recovery.active(run));recovery.progress(run,{action:'read_file',path:'a'}, {text:'a'});assert.ok(recovery.active(run));recovery.progress(run,{action:'read_file',path:'a'},{text:'a'});assert.ok(recovery.active(run));
+ recovery.progress(run,{action:'edit_file',path:'a'}, {sha256:'new'});assert.ok(recovery.active(run));
+ recovery.progress(run,{action:'edit_file',path:'a'}, {sha256:'new'});assert.ok(recovery.active(run));
+ recovery.progress(run,{action:'verify'},{results:[{criterionId:'formula',kind:'command',sources:[{path:'a',sha256:'new'}]}]});assert.equal(recovery.active(run),false);
 });
 test('commands report stderr, preserve an early pipeline failure, and distinguish actual file changes',async t=>{
  const {base,task,w}=await setup(t);

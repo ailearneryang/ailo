@@ -12,6 +12,7 @@ async function automaticDelivery(workspace){
  const limits=(run.issues||[]).filter(i=>i.status==='limitation');
  if(!pending.length||run.issues?.some(i=>i.status==='open')||limits.some(i=>!i.requirementIds?.length||i.requirementIds.some(id=>!pending.some(c=>c.id===id))))return null;
  try{
+  require('./visual-observation.cjs').assertComparisons(run);
   for(const file of run.artifacts){
    const bytes=await fs.readFile(await resolveFile(workspace.files,file.path));
    if(createHash('sha256').update(bytes).digest('hex')!==file.sha256)return null;

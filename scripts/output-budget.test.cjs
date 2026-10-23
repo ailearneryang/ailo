@@ -5,7 +5,7 @@ test('learns limits and successful usage with headroom, bounded by configured ca
  const p=createOutputBudget({id:'m'},20000);
  assert.equal(p.budget(100000),8192);
  assert.equal(p.limited(8192,{contentChars:0,toolCalls:0,reasoningChars:30000}),'reasoning');
- assert.equal(p.budget(100000),8192);
+ assert.equal(p.budget(100000),16384);
  assert.equal(p.limited(8192,{toolArgumentChars:500}),'action');assert.equal(p.budget(100000),16384);
  p.succeeded({outputTokens:16000});assert.equal(p.budget(100000),20000);assert.equal(p.budget(900),900);
  p.succeeded({outputTokens:1});assert.equal(p.budget(100000),20000);
@@ -33,6 +33,6 @@ test('stages learn independently, shrink after small successes and ignore legacy
  p.reset();assert.equal(p.budget(100000),8192);
 });
 
-test('successful usage separates reasoning from action size when the provider reports both',()=>{
- const p=createOutputBudget({id:'m'},65536);p.succeeded({outputTokens:32768,reasoningTokens:32000});assert.equal(p.budget(100000),8192);
+test('successful usage budgets for reasoning and action tokens together',()=>{
+ const p=createOutputBudget({id:'m'},65536);p.succeeded({outputTokens:32768,reasoningTokens:32000});assert.equal(p.budget(100000),40960);
 });

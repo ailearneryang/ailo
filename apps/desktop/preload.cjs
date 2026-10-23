@@ -87,6 +87,7 @@ contextBridge.exposeInMainWorld("ailo", {
   steer: input => ipcRenderer.invoke("chat:steer", input),
   cancel: (id) => ipcRenderer.invoke("chat:cancel", id),
   projectFiles: taskId => ipcRenderer.invoke("agent:files", taskId),
+  openArtifact: (taskId, artifactPath, projectFile = false) => ipcRenderer.invoke("agent:openArtifact", {taskId, artifactPath, projectFile}),
   reveal: (taskId, artifactPath, projectFile = false) => ipcRenderer.invoke("agent:reveal", {taskId, artifactPath, projectFile}),
   editArtifact:(taskId,artifactPath,input)=>ipcRenderer.invoke('agent:edit',{taskId,artifactPath,input}),
   preview: (taskId, artifactPath, projectFile = false) => ipcRenderer.invoke("agent:preview", {taskId, artifactPath, projectFile}),

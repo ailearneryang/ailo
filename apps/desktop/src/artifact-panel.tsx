@@ -1,3 +1,4 @@
+import {dismissedFileMenus,FileActionsMenu} from './file-actions-menu';
 import React, {useEffect,useState,useRef} from 'react';
 import {ArtifactViewer} from './artifact-viewer';
 import type {Task,ArtifactPreview,Material} from './types';
@@ -25,7 +26,7 @@ function ResourceList<T>({items,render}:{items:T[];render:(item:T,index:number)=
   const [all,setAll]=useState(false);
   return <><div className="resource-file-list">{(all?items:items.slice(0,5)).map(render)}</div>{items.length>5&&<button className="resource-more" aria-expanded={all} onClick={()=>setAll(v=>!v)}>{all?'收起':`展开更多（${items.length-5}）`}</button>}</>;
 }
-export function ArtifactPanel({task,selectionRequest,materials=task.materials,onClose,onRequest,onAttach,attaching=false}:{task:Task;selectionRequest?:{path:string};materials?:Material[];onClose:()=>void;onRequest:(text:string)=>void;onAttach?:()=>void;attaching?:boolean}) {
+export function ArtifactPanel({task,selectionRequest,temporary=false,onDismiss,materials=task.materials,onClose,onRequest,onAttach,attaching=false}:{task:Task;selectionRequest?:{path:string};temporary?:boolean;onDismiss?:()=>void;materials?:Material[];onClose:()=>void;onRequest:(text:string)=>void;onAttach?:()=>void;attaching?:boolean}) {
   const [expanded,setExpanded]=useState(false),[selected,setSelected]=useState<Selection>(),[view,setView]=useState<View>('overview');
   const panel=useRef<HTMLElement>(null),backButton=useRef<HTMLButtonElement>(null),lastResource=useRef<string|undefined>(undefined);
   const [preview,setPreview]=useState<ArtifactPreview>(),[error,setError]=useState(''),[loading,setLoading]=useState(false);
@@ -54,6 +55,16 @@ export function ArtifactPanel({task,selectionRequest,materials=task.materials,on
     if(artifact)window.ailo.preview(task.id,artifact.path,scope==='project').then(value=>{if(!cancelled)setPreview(value);}).catch(e=>{if(!cancelled)setError(String(e).replace(/^Error: /,''));}).finally(()=>{if(!cancelled)setLoading(false);});
     return ()=>{cancelled=true;};
   },[task.id,artifact?.path,artifact?.sha256,scope,refresh]);
+  useEffect(()=>{
+    if(!temporary)return;
+    const outside=(event:PointerEvent)=>{
+      const target=event.target;
+      if(event.button!==0||dismissedFileMenus.has(event)||!(target instanceof Element)||panel.current?.contains(target)||target.closest('dialog,[role="dialog"],[role="menu"],[role="listbox"]'))return;
+      if(target.closest('.conversation-stage,.chat-compose'))onDismiss?.();
+    };
+    document.addEventListener('pointerdown',outside);
+    return()=>document.removeEventListener('pointerdown',outside);
+  },[temporary,onDismiss]);
   async function reveal(path?:string){try{await window.ailo.reveal(task.id,path,scope==='project');}catch(e){setError(String(e).replace(/^Error: /,''));}}
   function back(){setSelected(undefined);setError('');setExpanded(false);setMaterialOffset(0);}
   useEffect(()=>{
@@ -78,7 +89,7 @@ export function ArtifactPanel({task,selectionRequest,materials=task.materials,on
       <button title="收起任务侧栏" aria-label="收起任务侧栏" onClick={onClose}><Icon name="panel"/></button>
     </div></div>
     {artifact?<>
-      <div className="artifact-preview-toolbar"><span title={artifact.path}>{artifact.path}</span><button onClick={()=>void reveal(artifact.path)}><Icon name="folder"/>在文件夹中查看</button></div>
+      <div className="artifact-preview-toolbar"><span title={artifact.path}>{artifact.path}</span><button onClick={()=>void window.ailo.openArtifact(task.id,artifact.path,scope==='project').catch(()=>setError('无法直接打开此文件，请在文件夹中查看。'))}>{/\.html?$/i.test(artifact.path)?'在浏览器中打开':'用默认应用打开'}</button><FileActionsMenu><button onClick={()=>void reveal(artifact.path)}><Icon name="folder"/>在文件夹中查看</button></FileActionsMenu></div>
       <div className="artifact-panel-body artifact-preview-body" key={scope+':'+artifact.path}>
         {loading&&<p role="status">正在加载预览…</p>}
         {preview&&<ArtifactViewer preview={preview} path={artifact.path} taskId={task.id} onChanged={()=>setRefresh(v=>v+1)} onRequest={onRequest}/>}

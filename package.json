@@ -8,6 +8,9 @@
     "package": "npm --prefix apps/desktop run package",
     "make": "npm --prefix apps/desktop run make",
     "make:zip": "npm --prefix apps/desktop run make:zip",
-    "make:dmg": "npm --prefix apps/desktop run make:dmg"
+    "make:dmg": "npm --prefix apps/desktop run make:dmg",
+    "test:reliability": "node scripts/reliability-gate.cjs",
+    "test:reliability:host": "node scripts/reliability-gate.cjs --host",
+    "eval:report": "node scripts/agent-eval-report.cjs"
   }
 }

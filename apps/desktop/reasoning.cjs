@@ -25,5 +25,11 @@ function recoveryReasoningParameters(model,stage='small_action'){
  if(supportsReasoning(model))return stage==='small_action'?reasoningParameters(model,'low'):{enable_thinking:false,reasoning_effort:'none'};
  return {};
 }
-function decisionReasoningParameters(model,stage){return ['route','state'].includes(stage)&&supportsReasoning(model)?reasoningParameters(model,'low'):{};}
-module.exports={decisionReasoningParameters,supportsReasoning,reasoningParameters,isBigmodel53,toolStreamingParameters,recoveryReasoningParameters};
+function decisionStage(state){
+ if(state.phase==='route')return 'route';
+ if(['checkpoint','plan_update'].includes(state.requiredAction))return 'state';
+ if(!state.executionState?.blocker&&['read_file','read_execution','list_files','batch_read','android_device'].includes(state.executionState?.nextAction))return 'operation';
+ return 'action';
+}
+function decisionReasoningParameters(model,stage){return ['route','state','operation'].includes(stage)&&supportsReasoning(model)?reasoningParameters(model,'low'):{};}
+module.exports={decisionStage,decisionReasoningParameters,supportsReasoning,reasoningParameters,isBigmodel53,toolStreamingParameters,recoveryReasoningParameters};
