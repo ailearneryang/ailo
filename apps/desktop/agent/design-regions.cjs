@@ -24,46 +24,61 @@ const schema={type:'array',minItems:1,maxItems:32,items:{type:'object',additiona
 function issues(run){return Object.values(run.designRegionIssues||{}).filter(i=>i.status==='open');}
 function issueKey(binding,id){return hash(JSON.stringify([binding.boardId,binding.layout,binding.reference,id]));}
 function error(message){return Object.assign(Error('设计区域尚未核验：'+message+'。依据 designManifest 修复或补齐逐区证据，低色差不能替代验收。'),{code:'DESIGN_REGION_MISMATCH'});}
+function pending(message){return Object.assign(Error('设计区域待补充核验：'+message+'。保留当前成果与原要求，补齐当前版本的核对证据；待核验不等于已确认的产品差异。'),{code:'VISUAL_REVIEW_PENDING'});}
+function requestError(message){return Object.assign(Error('区域核对请求无效：'+message+'；仅纠正核对参数，保留原要求和成果。'),{code:'VERIFY_REQUEST_INVALID',diagnostics:{field:'checks',expected:'verification_checks',issue:'invalid_regions'}});}
 async function assess(workspace,image,reports){
  const m=image.designManifest;if(!m?.regions.length)return;
- if(image.transform?.crop||image.scope?.kind!=='viewport'||!image.reference)throw error('逐区域验收需要完整运行截图与成对原稿，局部裁剪不能替代');
+ if(image.transform?.crop||image.scope?.kind!=='viewport'||!image.reference)throw pending('逐区域验收需要完整运行截图与成对原稿，局部裁剪不能替代');
  const cached=workspace.run.designRegionReviews?.[issueKey(image.designBinding,'review')];
  if(reports===undefined&&cached?.evidenceId===image.eventId&&cached.manifestId===m.id&&cached.sha256===image.sha256&&!issues(workspace.run).some(i=>i.boardId===image.designBinding.boardId&&i.layout===image.designBinding.layout&&i.reference===image.reference.path))return cached;
- if(!Array.isArray(reports)||reports.length>32||reports.length!==m.regions.length)throw error('必须逐项覆盖 '+m.regions.length+' 个原稿区域');
+ if(!Array.isArray(reports)||reports.length>32||reports.length!==m.regions.length)throw requestError('必须逐项覆盖 '+m.regions.length+' 个原稿区域');
  const ids=new Set(),failures=[],checked=[];
  let nodes;
  if(image.uiHierarchy?.path){
   const {resolveFile}=require('./workspace.cjs'),fs=require('node:fs/promises');
   const bytes=await fs.readFile(await resolveFile(workspace.files,image.uiHierarchy.path));
-  if(hash(bytes)!==image.uiHierarchy.sha256)throw error('控件树已变化');
+  if(hash(bytes)!==image.uiHierarchy.sha256)throw pending('控件树已变化，请补充当前版本的控件树');
   nodes=require('./android-hierarchy.cjs').parse(bytes,image.uiHierarchy.package).nodes;
+ }
+ // Validate identity and shape for the whole report before mutating the defect
+ // ledger. A typo, missing proof, or an unknown node is not a product defect.
+ for(const report of reports){
+  const region=m.regions.find(r=>r.id===report?.id);
+  if(!region||ids.has(report.id)||!['matched','mismatch','unverified'].includes(report.status)||typeof report.reason!=='string'||!report.reason.trim()||report.reason.length>800)throw requestError('区域 ID、状态或说明无效');ids.add(report.id);
+  const repeats=report.repeats||[];
+  if(!Array.isArray(repeats)||repeats.length>64||new Set(repeats.map(r=>r?.id)).size!==repeats.length||repeats.some(r=>!r||!region.repeats.some(t=>t.id===r.id)||!['image','hierarchy'].includes(r.basis)||!['observedCount','rows','columns'].every(k=>Number.isInteger(r[k])&&r[k]>=0&&r[k]<=1000)))throw requestError('重复组件组 ID、计数或核对方式无效');
+  for(const selection of [report.nodeIds,...repeats.map(r=>r.nodeIds)])if(selection!==undefined&&(!Array.isArray(selection)||selection.length>128||new Set(selection).size!==selection.length||selection.some(id=>typeof id!=='string'||!id||nodes&&!nodes.some(n=>n.id===id))))throw requestError('控件树未证明核对对象：nodeIds 含无效或不存在的控件 ID');
  }
  for(const report of reports){
   const region=m.regions.find(r=>r.id===report?.id);
-  if(!region||ids.has(report.id)||!['matched','mismatch','unverified'].includes(report.status)||typeof report.reason!=='string'||!report.reason.trim()||report.reason.length>800)throw error('区域 ID、状态或说明无效');ids.add(report.id);
-  let problem=report.status==='matched'?'':report.reason;
+  let problem=report.status==='matched'?'':report.reason,finding=report.status==='mismatch'?'mismatch':'unverified';
   const repeats=report.repeats||[],expected=region.repeats;
-  if(!Array.isArray(repeats)||repeats.length>64)throw error('重复组核对须为不超过64项的数组');
-  if(repeats.length!==expected.length||new Set(repeats.map(r=>r.id)).size!==repeats.length)problem||='重复组件组核对不完整';
+  if(repeats.length!==expected.length){problem||='重复组件组核对不完整';if(finding!=='mismatch')finding='unverified';}
   for(const target of expected){
    const actual=repeats.find(r=>r.id===target.id);
-   if(!actual||!['image','hierarchy'].includes(actual.basis)||actual.observedCount!==target.count||actual.rows!==target.rows||actual.columns!==target.columns){problem||='重复组件数量或排列不符：'+target.id;continue;}
+   if(!actual)continue;
+   if(actual.observedCount!==target.count||actual.rows!==target.rows||actual.columns!==target.columns){problem||='重复组件数量或排列不符：'+target.id;finding='mismatch';continue;}
    if(actual.basis==='hierarchy'){
     const selected=selectNodes(nodes,actual.nodeIds);
-    if(!selected||selected.length!==target.count||JSON.stringify(grid(selected.map(n=>n.bounds)))!==JSON.stringify({rows:target.rows,columns:target.columns})||!aligned(selected.map(n=>n.bounds),target.frames,image.pixelSize,m))problem||='控件树未证明重复组件的数量、位置与排列：'+target.id;
-   }else if(typeof actual.reason!=='string'||!actual.reason.trim()||actual.reason.length>800)problem||='图像核对重复组须说明可见组件及排列，不能只复述预期数量';
+    if(!selected){problem||='控件树未证明重复组件的数量、位置与排列：'+target.id;if(finding!=='mismatch')finding='unverified';}
+    else if(selected.length!==target.count||JSON.stringify(grid(selected.map(n=>n.bounds)))!==JSON.stringify({rows:target.rows,columns:target.columns})||!aligned(selected.map(n=>n.bounds),target.frames,image.pixelSize,m)){problem||='控件树未证明重复组件的数量、位置与排列：'+target.id;finding='mismatch';}
+   }else if(typeof actual.reason!=='string'||!actual.reason.trim()||actual.reason.length>800){problem||='图像核对重复组须说明可见组件及排列，不能只复述预期数量';if(finding!=='mismatch')finding='unverified';}
   }
-  if(report.nodeIds?.length){const selected=selectNodes(nodes,report.nodeIds);if(!selected||selected.some(n=>!inside(n.bounds,region.frame,image.pixelSize,m)))problem||='关联控件不在原稿区域内或不可见';}
+  if(report.nodeIds?.length){const selected=selectNodes(nodes,report.nodeIds);if(!selected){problem||='关联控件缺少当前控件树证明';if(finding!=='mismatch')finding='unverified';}else if(selected.some(n=>!inside(n.bounds,region.frame,image.pixelSize,m))){problem||='关联控件不在原稿区域内或不可见';finding='mismatch';}}
   const key=issueKey(image.designBinding,region.id),prior=workspace.run.designRegionIssues?.[key];
-  if(!problem&&prior?.status==='open'&&prior.sha256===image.sha256)problem='同一张结果图不能关闭已确认的区域差异';
-  checked.push({id:region.id,status:problem?(report.status==='unverified'?'unverified':'mismatch'):'matched',reason:problem||report.reason,repeats});
-  if(problem)failures.push({key,boardId:image.designBinding.boardId,layout:image.designBinding.layout,reference:image.reference.path,regionId:region.id,region:region.name,status:'open',finding:report.status==='unverified'?'unverified':'mismatch',reason:problem,eventId:image.eventId,sha256:image.sha256,sources:image.sources});
+  const confirmed=prior?.status==='open'&&prior.finding!=='unverified';
+  if(!problem&&confirmed&&prior.sha256===image.sha256){problem='同一张结果图不能关闭已确认的区域差异';finding='mismatch';}
+  const preserveConfirmed=problem&&confirmed&&finding==='unverified';
+  if(preserveConfirmed){problem=prior.reason;finding='mismatch';}
+  checked.push({id:region.id,status:problem?finding:'matched',reason:problem||report.reason,repeats});
+  if(problem)failures.push({key,boardId:image.designBinding.boardId,layout:image.designBinding.layout,reference:image.reference.path,regionId:region.id,region:region.name,status:'open',finding,reason:problem,eventId:preserveConfirmed?prior.eventId:image.eventId,sha256:preserveConfirmed?prior.sha256:image.sha256,sources:preserveConfirmed?prior.sources:image.sources});
  }
  if(failures.length){
   workspace.run.designRegionIssues||={};for(const item of failures)workspace.run.designRegionIssues[item.key]=item;
   const visualIds=require('./requirements.cjs').current(workspace.run).filter(r=>r.type==='visual').map(r=>r.id);for(const id of visualIds)if(workspace.run.acceptanceResults)delete workspace.run.acceptanceResults[id];
-  await workspace.event('design_region_mismatch',{message:'设计区域核对未通过：'+failures.map(f=>f.region+'：'+f.reason).join('；').slice(0,1000),regions:failures.map(({regionId,region,reason})=>({regionId,region,reason})),evidenceId:image.eventId});
-  const e=error(failures.map(f=>f.region+'：'+f.reason).join('；'));require('./android-design.cjs').rememberFailure(workspace,e);await workspace.save();throw e;
+  const confirmed=failures.some(f=>f.finding==='mismatch');
+  await workspace.event(confirmed?'design_region_mismatch':'design_region_pending',{message:'设计区域核对未通过：'+failures.map(f=>f.region+'：'+f.reason).join('；').slice(0,1000),regions:failures.map(({regionId,region,reason,finding})=>({regionId,region,reason,finding})),evidenceId:image.eventId});
+  const e=(confirmed?error:pending)(failures.map(f=>f.region+'：'+f.reason).join('；'));if(confirmed)require('./android-design.cjs').rememberFailure(workspace,e);await workspace.save();throw e;
  }
  return {manifestId:m.id,boardId:image.designBinding.boardId,evidenceId:image.eventId,regions:checked,basis:'model_assessment_with_optional_hierarchy',sources:image.sources};
 }
@@ -85,5 +100,5 @@ function commit(run,review,image){
  for(const region of review.regions){const old=run.designRegionIssues?.[issueKey(image.designBinding,region.id)];if(old)Object.assign(old,{status:'verified',verifiedEventId:image.eventId});}
  run.designRegionReviews||={};run.designRegionReviews[issueKey(image.designBinding,'review')]={...review,sha256:image.sha256};
 }
-function assertNoIssues(run){const open=issues(run);if(open.length)throw error(open.map(i=>i.region+'：'+i.reason).join('；'));}
-module.exports={manifest,grid,schema,assess,commit,issues,assertNoIssues,error};
+function assertNoIssues(run){const open=issues(run);if(open.length)throw (open.some(i=>i.finding!=='unverified')?error:pending)(open.map(i=>i.region+'：'+i.reason).join('；'));}
+module.exports={manifest,grid,schema,assess,commit,issues,assertNoIssues,error,pending};

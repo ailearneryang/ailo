@@ -19,3 +19,17 @@ test('attaching to a scheduled run restores its live plan without renaming the c
  const finished=mergeSessionSnapshot(sessions,[],new Set([session.id]));
  assert.equal(syncLiveTaskRuns([scheduled],finished)[0],scheduled);
 });
+
+
+test('sidebar animation belongs only to a live working session and stops while queued or waiting',()=>{
+ for(const state of ['running','understanding','waiting_permission','waiting_user','paused','failed','blocked','completed']){
+  const run={...task.agentRun,currentIntent:'task',status:state,currentOutcome:undefined};
+  const current=taskPresentation({...task,agentRun:run},{...session,phase:'running',run});
+  assert.equal(current.animating,['running','understanding'].includes(state),state);
+  assert.equal(taskPresentation({...task,agentRun:run}).animating,false,'stored '+state);
+ }
+ for(const status of ['waiting_permission','waiting_user','blocked','paused','failed'])assert.equal(taskPresentation(task,{...session,phase:'running',run:{...task.agentRun,currentIntent:'chat',status}}).animating,false,'chat '+status);
+ assert.equal(taskPresentation(task,{...session,phase:'queued'}).animating,false);
+ assert.equal(taskPresentation(task,session).animating,true);
+ assert.equal(taskPresentation(task,{...session,phase:'settling',run:{...task.agentRun,currentIntent:'chat'}}).animating,true);
+});

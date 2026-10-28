@@ -5,7 +5,7 @@ async function runtimeFiles(root){
  return [...(await fs.readdir(base)).filter(n=>code(n)&&!['forge.config.cjs','vite.config.mjs'].includes(n)).map(n=>'apps/desktop/'+n),...(await fs.readdir(path.join(base,'agent'))).filter(code).map(n=>'apps/desktop/agent/'+n)].sort();
 }
 async function inputs(root,files){
- const names=[...new Set([...(await runtimeFiles(root)),...files,'package.json','apps/desktop/package.json','apps/desktop/package-lock.json','apps/desktop/forge.config.cjs','scripts/reliability-cases.cjs','scripts/reliability-gate.cjs','scripts/release-quality.cjs','scripts/agent-eval-report.cjs','scripts/agent-eval-service.cjs'])].sort();
+ const names=[...new Set([...(await runtimeFiles(root)),...files,'scripts/start-desktop.cjs','scripts/install-desktop.cjs','scripts/desktop-discovery.cjs','scripts/local-desktop-sign.cjs','scripts/desktop-startup-check.cjs','scripts/macho-content.cjs','scripts/build-dictation.cjs','apps/desktop/native/dictation.swift','apps/desktop/native/dictation-info.plist','package.json','apps/desktop/package.json','apps/desktop/package-lock.json','apps/desktop/forge.config.cjs','scripts/reliability-cases.cjs','scripts/reliability-gate.cjs','scripts/release-quality.cjs','scripts/agent-eval-report.cjs','scripts/agent-eval-service.cjs','scripts/agent-eval-config.cjs','scripts/agent-live-eval.cjs','scripts/weather-benchmark.cjs','scripts/agent-eval-preflight.cjs','scripts/agent-eval-output.cjs','scripts/agent-eval-resume.cjs','scripts/agent-eval-pilot-checks.cjs','scripts/agent-eval-review-note.cjs'])].sort();
  const sources=await Promise.all(names.map(async name=>({path:name,sha256:digest(await fs.readFile(path.join(root,name)))})));
  return {fingerprint:digest(JSON.stringify(sources)),sources};
 }
@@ -26,6 +26,12 @@ async function assertPacked(root,output,platform){
  for(const file of await runtimeFiles(root)){
   const expected=await fs.readFile(path.join(root,file)),packed=asar.extractFile(bundle,file.replace('apps/desktop/',''));
   if(!expected.equals(packed))throw Error('打包后的运行时代码与已测试源码不一致：'+file);
+ }
+ if(platform==='darwin'){
+  const native=path.join(output,'Ailo.app/Contents/Resources/ailo-dictation');
+  const source=await fs.readFile(path.join(root,'apps/desktop/.native/ailo-dictation')),packed=await fs.readFile(native);
+  if(!await require('./macho-content.cjs').sameExecutable(source,packed))throw Error('打包后的听写组件与本次构建不一致');
+  require('./build-dictation.cjs').checkDictation(native);
  }
  return {bundle,fingerprint:current.fingerprint};
 }

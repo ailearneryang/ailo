@@ -12,7 +12,7 @@ export type KnowledgeHit={libraryId:string;libraryName:string;documentId:string;
 export type KnowledgePage={libraryId:string;documentId:string;name:string;text:string;offset:number;total:number;next:number|null;citation:string};
 export type AMapState={configured:boolean;connected:boolean;verifiedAt:string|null;tools:string[];endpoint:string};
 export type ScheduleInput={projectId?:string;contextMode?:'continuity'|'independent';id?:string;title:string;prompt:string;modelId:string;frequency:'once'|'daily'|'weekly';at?:string;time?:string;weekday?:number;searchEnabled?:boolean;feishuEnabled?:boolean};
-export type Schedule=ScheduleInput & {id:string;enabled:boolean;nextAt:string|null;runs:{id:string;taskId:string;at:string;startedAt?:string;status:'queued'|'running'|'completed'|'failed';error?:string}[]};
+export type Schedule=ScheduleInput & {id:string;enabled:boolean;nextAt:string|null;runs:{id:string;taskId:string;at:string;startedAt?:string;status:'queued'|'running'|'completed'|'partial'|'failed';error?:string}[]};
 export type SearchState={configured:boolean;connected:boolean;provider:"baidu"|"tavily";limit:number;used:number;verifiedAt:string|null};
 export type FeishuConnectionState = {installed:boolean;enabled:boolean;connected:boolean;configured?:boolean;name?:string;phase:string;url?:string;message:string};
 export type ClarificationOption = { id: string; label: string; description?: string; recommended: boolean };
@@ -41,7 +41,7 @@ export type Model = {
   apiKey?: string;
 };
 export type Project = {instructions?:string;sources?:import('./experience-types').ProjectSource[];defaultTools?:import('./experience-types').DefaultTools;settingsRevision?:number; description?:string; pinned?:boolean; localPath?:string; source?:'local'; id: string; name: string; extensionIds?: string[] };
-export type ReplyDetails = {startedAt:string;completedAt:string;durationMs:number;status?:string;goal?:string;events?:AgentRun['events']};
+export type ReplyDetails = {startedAt:string;completedAt:string;durationMs:number;status?:string;goal?:string;events?:AgentRun['events'];modelRoutes?:{lane:string;from:string;to:string;reason:string;message:string;at:string}[];visualReviews?:{inputHash:string;modelId:string;modelName:string;at:string;summary:string;observations:string[];uncertainties:string[]}[]};
 export type Message = {
   replyDetails?: ReplyDetails;
   createdAt?: string;
@@ -108,8 +108,15 @@ export type RequestContextUsage = {
   providerUsage?: {inputTokens?:number;outputTokens?:number;reasoningTokens?:number};
 };
 export type AgentRun = {
-  performance?:{wallMs:number;modelMs:number;modelRequests:number;failedModelRequests:number;processModelMs:number;processModelRequests:number;noActionMs:number;noActionRequests:number;toolMs:number;toolCalls:number;batchItems:number;attachedUpdates:number;reportedUsageRequests:number;inputTokens:number;outputTokens:number;reasoningTokens:number;beforeActionMs?:number;timedActionMs?:number;timedActionRequests?:number;toolErrors?:number;validationFailures?:number;successfulTools?:number;runtimeCountersSince?:string};
-  delivery?:{outcome:'complete'|'limited'|'partial'|'blocked';visualReviewPending?:boolean;unverified?:string[];status?:string;at:string};
+  resultRecovery?:{version:number;executionId?:string;stage:string;turns:number;maxTurns?:number;failures:{code:string;message:string}[]};
+  visualAnalysisFailures?:{recoveryScope?:string;code:string;sourceHash:string;inputHash:string;modelId:string;at:string;message:string}[];
+  waitingError?:{code:string;message:string;networkCode?:string;providerCategory?:string};
+  runtimeRepairs?:string[];
+  taskContinuation?:{version:number;state:string;taskOpen:boolean;at:string;code:string;networkCode?:string;question:string;gap:string;retained:{requirements:number;pendingIds:string[];steps:number;artifacts:{path:string;label?:string}[];unknownActions:number;revision:number}};
+  runtimeIdentity?:{appVersion:string;runtimeFingerprint:string;promptSchemaVersion:string;toolSchemaVersion:string;capturedAt:string;modelConfigFingerprint:string};
+  segmentState?:{index:number;reason:string;startedAt:string;safe?:boolean};
+  performance?:{wallMs:number;modelMs:number;modelRequests:number;failedModelRequests:number;processModelMs:number;processModelRequests:number;noActionMs:number;noActionRequests:number;toolMs:number;toolCalls:number;batchItems:number;attachedUpdates:number;reportedUsageRequests:number;inputTokens:number;outputTokens:number;reasoningTokens:number;beforeActionMs?:number;timedActionMs?:number;timedActionRequests?:number;toolErrors?:number;validationFailures?:number;successfulTools?:number;runtimeCountersSince?:string;noOpWrites?:number;reusedTools?:number;automaticContinuations?:number};
+  delivery?:{outcome:'complete'|'limited'|'partial'|'blocked';visualReviewPending?:boolean;unverified?:string[];status?:string;at:string;availableArtifacts?:AgentRun['artifacts'];unavailableArtifacts?:string[];coverage?:{passed:number;total:number};reasonCode?:string;findings?:{text:string;sourceIds:string[];excerpt?:boolean}[];summary?:string};
   issues?:{id:string;status:'open'|'resolved'|'limitation';description:string;reason?:string;requirementIds:string[]}[];
   executionState?:{goal:string;gaps?:string[];nextAction?:string;expectedResult?:string;blocker?:unknown};
   completionReview?:{summary:string;issues:string[];unverified:string[];revision:number;at:string};
@@ -124,16 +131,17 @@ export type AgentRun = {
   afterMessageId?: string;
   progressInputId?: string;
   history?: AgentRun[];
-  inFlight?: {action:string;path?:string;purpose?:string;name?:string;entry?:string;at:string};
+  inFlight?: {operation?:string;actionId?:string;command?:string;output?:string;outputTruncated?:boolean;outputAt?:string;action:string;path?:string;purpose?:string;name?:string;entry?:string;at:string};
   contextUsage?: RequestContextUsage;
   status: string; mode: 'chat' | 'task'; goal: string;
   steps: {id:string;title:string;status:string;detail?:string;summary?:string;requiresConfirmation?:boolean}[];
   decisions: string[]; acceptance: string[];
   artifacts: {path:string;label:string;size:number;sha256:string}[];
-  events: {id:string;type:string;at:string;detail:{operation?:string;purpose?:string;exitCode?:number;path?:string;name?:string;entry?:string;offset?:number;message?:string;output?:string}}[];
+  events: {id:string;type:string;at:string;detail:{actionId?:string;action?:string;command?:string;startedAt?:string;durationMs?:number;timedOut?:boolean;outputTruncated?:boolean;operation?:string;purpose?:string;exitCode?:number;path?:string;name?:string;entry?:string;offset?:number;message?:string;output?:string}}[];
   updatedAt?: string;
 };
 export type Workspace = {
+  autoModel?:{primaryModelId:string;visionModelId?:string;primaryFallbackId?:string;visionFallbackId?:string;failover:boolean};
   extensions: Extension[];
   tasks: Task[];
   projects: Project[];
@@ -149,6 +157,10 @@ export const demoModel: Model = {
   model: "demo",
   baseUrl: "",
 };
+export function selectableModels(data:Workspace):Model[]{
+  const primary=data.models.find(m=>m.id===data.autoModel?.primaryModelId);
+  return primary?[{...primary,id:'auto',name:'Auto',model:'按任务需要选择模型'},...data.models]:data.models;
+}
 export const emptyWorkspace: Workspace = {
   extensions: [],
   tasks: [],

@@ -9,12 +9,13 @@ function abortable(promise,signal,onLate){
   Promise.resolve(promise).then(value=>{if(settled){void Promise.resolve(onLate?.(value)).catch(()=>{});return;}settled=true;signal.removeEventListener('abort',abort);resolve(value);},error=>{if(settled)return;settled=true;signal.removeEventListener('abort',abort);reject(error);});
  });
 }
-const retryable=error=>['MODEL_CONNECT_TIMEOUT','MODEL_FIRST_CONTENT_TIMEOUT','MODEL_DECISION_IDLE_TIMEOUT','MODEL_STREAM_INTERRUPTED'].includes(error.code)||error.code==='MODEL_HTTP_TRANSIENT'||error.code==='MODEL_NETWORK'&&['EAI_AGAIN','ECONNRESET','ECONNREFUSED','ETIMEDOUT','UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT','UND_ERR_SOCKET','ERR_CONNECTION_RESET','ERR_CONNECTION_CLOSED','ERR_CONNECTION_TIMED_OUT','ERR_TIMED_OUT','ERR_NETWORK_CHANGED','ERR_INCOMPLETE_CHUNKED_ENCODING','ERR_CONTENT_LENGTH_MISMATCH'].includes(error.networkCode);
+const retryable=error=>['MODEL_CONNECT_TIMEOUT','MODEL_FIRST_CONTENT_TIMEOUT','MODEL_DECISION_IDLE_TIMEOUT','MODEL_STREAM_INTERRUPTED','MODEL_PROVIDER_ERROR','MODEL_RATE_LIMIT'].includes(error.code)||error.code==='MODEL_HTTP_TRANSIENT'||error.code==='MODEL_NETWORK'&&require('./network-error.cjs').transientNetworkCode(error.networkCode);
 async function recoverRequest(run,{signal,retries=2,retryDelay=500,onRetry}={}){
  for(let attempt=0;;attempt++){
   signal.throwIfAborted();
   try{return await run(attempt);}catch(error){
    if(signal.aborted)throw error;
+   error=require('./network-error.cjs').networkError(error);
    if(!retryable(error)||error.hasVisibleOutput)throw error;
    if(attempt>=retries){error.retryCount=attempt;error.message+=` 已自动重试 ${attempt} 次仍未恢复，任务进度和材料已保留。`;throw error;}
    onRetry?.(attempt+1,retries,error);

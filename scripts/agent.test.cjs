@@ -169,13 +169,15 @@ test('large JSON can be inspected and selected without serially paging the entir
 });
 test('checkpoint is required before old observations are removed and planning follows initial reads',async t=>{
  const base=await setup(t);let reads=0,checkpoint=false,planned=false;
- const longTask={...task,messages:[{role:'user',content:'开发',materials:[{name:'requirements.md',text:'x'.repeat(12000)}]}]};
+ // Short stage prompts no longer create artificial capacity pressure after a
+ // few tiny reads. Exercise a genuinely large working set instead.
+ const longTask={...task,messages:[{role:'user',content:'开发',materials:[{name:'requirements.md',text:'x'.repeat(120000)}]}]};
  await runAgent(options(base,async messages=>{
   const s=JSON.parse(messages.at(-1).content);let action;
   if(s.requiredAction==='checkpoint'){assert.ok(reads>0&&reads<=8);assert.ok(!messages.some(m=>m.role==='assistant'));assert.ok(s.externalMemory.recent.every(r=>r.id));checkpoint=true;action={action:'checkpoint',text:'需求来源 requirements.md，目前已读前八个片段，尚未读完；下一步建立开发与验证计划。'};}
   else if(s.requiredAction==='plan_or_clarify'){assert.ok(checkpoint);planned=true;action=plan;}
   else if(planned)action={action:'pause',text:'计划已保存'};
-  else action={action:'read_material',id:s.materials[0].id,offset:reads++*1000,limit:1000};
+  else action={action:'read_material',id:s.materials[0].id,offset:reads++*6000,limit:6000};
   return {content:JSON.stringify(action)};
  },{task:longTask}));assert.ok(planned);
 });
@@ -334,12 +336,12 @@ test('elapsed budget is checked again before executing a generated action',async
 test('bookkeeping-only batches refocus internally while retaining the overall execution budget',async t=>{
  const base=await setup(t);let n=0;
  const result=await runAgent(options(base,async()=>({content:JSON.stringify(n++===0?plan:{action:'checkpoint',text:'保存已有结论，当前没有新的材料或者执行结果，下一步需要继续判断。'})}),{batchSize:2,maxSteps:10}));
- assert.match(result.content,/决策轮数预算/);assert.ok(result.agentRun.events.some(e=>e.type==='loop_recovery'));
+ assert.equal(result.agentRun.status,'blocked');assert.ok(n<10);assert.match(result.content,/已停止无效请求/);assert.ok(result.agentRun.events.some(e=>e.type==='loop_recovery'));
 });
 test('repeated action guard remains effective across batch boundaries',async t=>{
  const base=await setup(t);let n=0;
  const result=await runAgent(options(base,async()=>({content:JSON.stringify(n++===0?plan:{action:'read_file',path:'a.txt'})}),{batchSize:2,maxSteps:12,executeTool:async()=>({text:'same'})}));
- assert.match(result.content,/决策轮数预算/);assert.ok(result.agentRun.events.some(e=>e.type==='loop_recovery'));
+ assert.equal(result.agentRun.status,'blocked');assert.ok(n<12);assert.match(result.content,/已停止无效请求/);assert.ok(result.agentRun.events.some(e=>e.type==='loop_recovery'));
 });
 
 test('thinking truncation learns bounded headroom across actions and continuation',async t=>{

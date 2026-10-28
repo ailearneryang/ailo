@@ -1,18 +1,27 @@
 import { Pet } from "./pet";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import {AutoModelSettings} from "./auto-model-settings";
 import type { Model, User, Workspace } from "./types";
+import {visionCapable} from '../model-routing-config.cjs';
 
 type SettingsProps = {
   data: Workspace;
   saving: boolean;
   commit: (data: Workspace) => Promise<boolean>;
+  openAuto?: boolean;
 };
-export function ModelSettings({ data, saving, commit }: SettingsProps) {
+export function ModelSettings({ data, saving, commit, openAuto=false }: SettingsProps) {
+  const [autoEditing,setAutoEditing]=useState(openAuto);
   const [editing, setEditing] = useState<Model | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [removing, setRemoving] = useState<string | null>(null);
-  function edit(model?: Model) {
+  const [configureImage,setConfigureImage]=useState(false);
+  const imageInput=useRef<HTMLSelectElement>(null);
+  useEffect(()=>{if(editing&&configureImage){imageInput.current?.focus();imageInput.current?.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});}},[editing?.id,configureImage]);
+  function edit(model?: Model, image=false) {
+    if(!image)setAutoEditing(false);
+    setConfigureImage(image);
     setEditing(
       model
         ? { ...model, apiKey: "" }
@@ -27,6 +36,11 @@ export function ModelSettings({ data, saving, commit }: SettingsProps) {
     setError("");
     setNotice("");
     setRemoving(null);
+  }
+  function closeEditor(){
+    setEditing(null);
+    if(configureImage)requestAnimationFrame(()=>document.getElementById('auto-model-settings')?.scrollIntoView({block:'start'}));
+    setConfigureImage(false);
   }
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -82,22 +96,28 @@ export function ModelSettings({ data, saving, commit }: SettingsProps) {
         models: exists
           ? data.models.map((m) => (m.id === model.id ? model : m))
           : [...data.models, model],
+        autoModel:data.autoModel&&!visionCapable(model)?{...data.autoModel,
+          visionModelId:data.autoModel.visionModelId===model.id?undefined:data.autoModel.visionModelId,
+          visionFallbackId:data.autoModel.visionModelId===model.id||data.autoModel.visionFallbackId===model.id?undefined:data.autoModel.visionFallbackId}:data.autoModel,
         defaultModelId:
           data.models.length === 0 ? model.id : data.defaultModelId,
       })
     ) {
-      setEditing(null);
+      closeEditor();
       setError("");
       setNotice("模型配置已保存，返回对话即可使用。");
     }
   }
   async function remove(id: string) {
+    const autoModel=data.autoModel;
+    const remainingAuto=autoModel?.primaryModelId===id?undefined:autoModel?{...autoModel,visionModelId:autoModel.visionModelId===id?undefined:autoModel.visionModelId,primaryFallbackId:autoModel.primaryFallbackId===id?undefined:autoModel.primaryFallbackId,visionFallbackId:autoModel.visionModelId===id||autoModel.visionFallbackId===id?undefined:autoModel.visionFallbackId}:undefined;
     if (
       await commit({
         ...data,
+        autoModel:remainingAuto,
         models: data.models.filter((m) => m.id !== id),
         defaultModelId:
-          data.defaultModelId === id
+          data.defaultModelId === id||data.defaultModelId==='auto'&&!remainingAuto
             ? data.models.find((m) => m.id !== id)?.id || "demo"
             : data.defaultModelId,
       })
@@ -124,6 +144,15 @@ export function ModelSettings({ data, saving, commit }: SettingsProps) {
         接口。发送消息时，对话上下文和文本附件会发送到你配置的服务商。
       </div>
       <div className="model-list">
+        <article className="model-card">
+          <span className="model-icon" aria-hidden="true">✳</span>
+          <div className="model-description"><strong>Auto</strong><small>{data.autoModel ? `日常任务：${data.models.find(m=>m.id===data.autoModel?.primaryModelId)?.name||'待配置'} · 看图：${data.models.find(m=>m.id===data.autoModel?.visionModelId)?.name||'未配置'}` : '按任务需要选择模型，添加模型后即可配置'}</small></div>
+          <div className="model-actions">
+            {data.defaultModelId==='auto'?<span className="badge">默认</span>:data.autoModel&&<button disabled={saving} onClick={()=>void commit({...data,defaultModelId:'auto'})}>设为默认</button>}
+            <button disabled={saving||!data.models.length} aria-expanded={autoEditing} onClick={()=>{setEditing(null);setAutoEditing(!autoEditing);}}> {autoEditing?'收起':data.autoModel?'编辑':'配置'}<span className="sr-only"> Auto</span></button>
+          </div>
+        </article>
+      {autoEditing&&!!data.models.length&&<div hidden={!!editing}><AutoModelSettings data={data} saving={saving} commit={async next=>{const ok=await commit(next);if(ok){setAutoEditing(false);setNotice('Auto 配置已保存。');}return ok;}} onCancel={()=>setAutoEditing(false)} onConfigureModel={id=>{const model=data.models.find(m=>m.id===id);if(model)edit(model,true);}}/></div>}
         {data.models.map((m) => (
           <article className="model-card" key={m.id}>
             <span className="model-icon">◇</span>
@@ -179,6 +208,7 @@ export function ModelSettings({ data, saving, commit }: SettingsProps) {
           <button onClick={() => edit()}>添加第一个模型 ↗</button>
         </div>
       )}
+
       {editing && (
         <form className="settings-form" onSubmit={save}>
           <h2>
@@ -231,12 +261,12 @@ export function ModelSettings({ data, saving, commit }: SettingsProps) {
           </label>
           <label>
             图像输入
-            <select value={editing.imageInput||'auto'} onChange={e=>setEditing({...editing,imageInput:e.target.value as Model['imageInput']})}>
-              <option value="auto">尝试图像输入（端点能力未验证）</option>
+            <select ref={imageInput} value={editing.imageInput||'auto'} onChange={e=>setEditing({...editing,imageInput:e.target.value as Model['imageInput']})}>
+              <option value="auto">按已知能力判断，未知端点尝试输入</option>
               <option value="enabled">已确认支持图像</option>
               <option value="disabled">仅文本模型（不发送图像）</option>
             </select>
-            <span className="muted">仅有 LLM 时请选择“仅文本模型”；Ailo 会执行可用的内容与结构检查，并把视觉核验列为人工待确认，不会声称已看图。尝试或启用图像输入会将图片附件和成果截图发给当前服务商；接口接受图像不代表视觉判断准确。</span>
+            <span className="muted">已知纯文本模型不会发送图片，也不会自动通过视觉验收；“已确认支持”不能改变服务商公布的纯文本能力。Ailo 会继续使用设计参数与真实控件结构修复实现，已知差异仍须解决。未知端点尝试或启用图像输入会把图片发给当前服务商；接口接受图片不证明看懂图片。</span>
           </label>
           <label>
             API 地址
@@ -278,7 +308,7 @@ export function ModelSettings({ data, saving, commit }: SettingsProps) {
             <button
               type="button"
               disabled={saving}
-              onClick={() => setEditing(null)}
+              onClick={closeEditor}
             >
               取消
             </button>

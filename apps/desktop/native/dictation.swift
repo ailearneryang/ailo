@@ -3,7 +3,10 @@ import Speech
 import AVFoundation
 func send(_ type:String,_ text:String="") { let value:[String:String] = ["type":type,"text":text]; if let data=try? JSONSerialization.data(withJSONObject:value),let line=String(data:data,encoding:.utf8){print(line);fflush(stdout)} }
 let locale=CommandLine.arguments.count>1 ? CommandLine.arguments[1] : "zh-CN"
-if CommandLine.arguments.contains("--check") { send("capabilities", "offline-only; zh-CN,en-US; max60s");exit(0) }
+if CommandLine.arguments.contains("--check") { send("capabilities", "offline-only; zh-CN,en-US; max60s")
+ let privacy:[String:Any] = ["type":"privacy", "microphone":!(Bundle.main.object(forInfoDictionaryKey:"NSMicrophoneUsageDescription") as? String ?? "").isEmpty, "speechRecognition":!(Bundle.main.object(forInfoDictionaryKey:"NSSpeechRecognitionUsageDescription") as? String ?? "").isEmpty]
+ if let data=try? JSONSerialization.data(withJSONObject:privacy),let line=String(data:data,encoding:.utf8){print(line);fflush(stdout)}
+ exit(0) }
 let engine=AVAudioEngine()
 let request=SFSpeechAudioBufferRecognitionRequest()
 var task:SFSpeechRecognitionTask?
@@ -27,7 +30,12 @@ SFSpeechRecognizer.requestAuthorization { status in
    task=recognizer.recognitionTask(with:request){result,error in
     if ended{return}
     if let result=result{send("text",result.bestTranscription.formattedString);if result.isFinal{finish()}}
-    if let error=error{finish(error.localizedDescription)}
+    if let error=error{
+     let nativeError=error as NSError
+     // Silence is a normal end of dictation, including when Stop precedes speech.
+     if nativeError.domain == "kAFAssistantErrorDomain" && nativeError.code == 1110 {finish()}
+     else {finish(error.localizedDescription)}
+    }
    }
    do{engine.prepare();try engine.start();send("ready")}catch{finish("无法启动麦克风："+error.localizedDescription)}
   }}

@@ -1,0 +1,55 @@
+const {test}=require('node:test'),assert=require('node:assert/strict');
+const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
+const protocol=require('../apps/desktop/agent/protocol.cjs'),attached=require('../apps/desktop/agent/attached-progress.cjs');
+const {createWorkspace}=require('../apps/desktop/agent/workspace.cjs'),{runAgent}=require('../apps/desktop/agent/runner.cjs'),tools=require('../apps/desktop/agent/tools.cjs');
+const steps=[{id:'s1',title:'已有阶段',status:'done'},{id:'s10',title:'核对成果',status:'running'}],state={phase:'task',steps};
+const summary='原任务和验收保持不变，依据当前证据执行下一项实际工作。';
+const response=a=>({content:JSON.stringify(a)}),named=(name,a)=>({toolCalls:[{function:{name,arguments:JSON.stringify(a)}}]});
+function jsonSchema(name,s=state){const data=protocol.jsonActionContract(s,[name]).parametersSchema,branch=data.oneOf.find(b=>b.properties.action.const===name),ref=branch.properties.progress.$ref.split('/').at(-1);return data.$defs[ref];}
+async function fixture(t){const base=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-progress-contract-'));t.after(()=>fs.rm(base,{recursive:true,force:true}));const task={id:'progress',request:'核对原任务步骤并生成说明'};return {base,task,w:await createWorkspace(base,task)};}
+const plan={action:'plan',goal:'核对原任务步骤并生成说明',decisions:[],requirements:[{id:'r',text:'保留原任务并生成说明',type:'content'}],steps,progress:{memory:summary}};
+test('ordinary named and alias tools enumerate only current step IDs and keep progress optional',()=>{
+ const named=protocol.actionTools(state,['read_file'])[0].function.parameters,alias=protocol.menuTool(state,['read_file']).function.parameters;
+ for(const schema of [named,alias]){assert.deepEqual(schema.properties.progress.properties.steps.items.properties.id.enum,['s1','s10']);assert.equal(schema.properties.progress.properties.steps.maxItems,2);assert.deepEqual(schema.properties.stepId.enum,['s1','s10']);assert.ok(!schema.required.includes('progress'));assert.match(schema.properties.progress.description,/省略/);assert.match(schema.properties.progress.properties.steps.description,/每个ID一次/);}
+});
+test('merged alias preserves prospective plan IDs while its ordinary-action branch stays scoped',()=>{
+ const schema=protocol.menuTool(state,['read_file','plan']).function.parameters,condition=schema.allOf.find(c=>c.if?.properties?.action?.const==='plan');assert.ok(condition);assert.deepEqual(condition.else.properties.progress.properties.steps.items.properties.id.enum,['s1','s10']);assert.equal(condition.then.properties.progress.properties.steps.items.properties.id.enum,undefined);assert.equal(schema.properties.steps.items.properties.id.enum,undefined);
+ const planned=protocol.actionTools(state,['plan'])[0].function.parameters;assert.equal(planned.properties.steps.items.properties.id.enum,undefined);assert.equal(planned.properties.progress.properties.steps.items.properties.id.enum,undefined);assert.match(planned.properties.progress.properties.steps.description,/本次plan顶层steps/);
+});
+test('JSON contracts expose the same live ID enum rather than an unconstrained shared definition',()=>{
+ const schema=jsonSchema('read_file');assert.deepEqual(schema.properties.steps.items.properties.id.enum,['s1','s10']);assert.equal(schema.properties.steps.maxItems,2);assert.equal(jsonSchema('plan').properties.steps.items.properties.id.enum,undefined);
+});
+test('schema construction is isolated across tasks and never mutates static/shared definitions',()=>{
+ const original=JSON.stringify({base:attached.schema,tool:protocol.tool,compact:protocol.compactProgress}),first=protocol.actionTools(state,['edit_file'])[0].function.parameters;
+ protocol.menuTool({phase:'task',steps:[{id:'other',title:'另一任务',status:'running'}]},['read_file','plan']);protocol.jsonActionContract({phase:'task',steps:[]},['read_file']);first.properties.progress.properties.steps.items.properties.id.enum.push('modified-fixture');
+ assert.deepEqual(protocol.actionTools(state,['read_file'])[0].function.parameters.properties.progress.properties.steps.items.properties.id.enum,['s1','s10']);assert.equal(JSON.stringify({base:attached.schema,tool:protocol.tool,compact:protocol.compactProgress}),original);
+ assert.deepEqual(protocol.actionTools({phase:'task'},['read_file'])[0].function.parameters.properties.progress,protocol.compactProgress);assert.deepEqual(protocol.menuTool({phase:'task'},['read_file']).function.parameters.properties.progress,protocol.compactProgress);
+});
+test('unknown IDs and top-level attribution are rejected consistently in all response modes',()=>{
+ for(const action of [{action:'read_file',path:'file.txt',progress:{steps:[{id:'s11',status:'running'}],memory:summary}},{action:'read_file',path:'file.txt',stepId:'s12'}])for(const result of [response(action),named('read_file',Object.fromEntries(Object.entries(action).filter(([k])=>k!=='action'))),named('ailo_action',action)])assert.throws(()=>protocol.decodeAction(result,{steps}),e=>e.code==='AGENT_PROTOCOL'&&e.reason==='invalid_parameter'&&e.diagnostics.expected==='progress_step_contract'&&e.diagnostics.allowedIds.join(',')==='s1,s10');
+});
+test('runtime metadata validation gives precise duplicate/unknown fields and does not mutate state',()=>{
+ const run={goal:'保留原任务',decisions:[],acceptance:['保留要求'],steps:structuredClone(steps)},before=JSON.stringify(run);
+ for(const [updates,issue,field]of [[[{id:'s11',status:'running'}],'unknown_step_id','progress.steps[0].id'],[[{id:'s10',status:'running'},{id:'s10',status:'done'}],'duplicate_step_id','progress.steps[1].id']])assert.throws(()=>attached.validate({steps:updates,memory:summary},run),e=>e.code==='PROGRESS_REQUEST_INVALID'&&e.diagnostics.issue===issue&&e.diagnostics.field===field&&e.diagnostics.allowedIds.includes('s10'));
+ assert.throws(()=>attached.validate({steps:[{id:'s10',status:'running',title:'silently replace plan structure'}]},run),e=>e.code==='PROGRESS_REQUEST_INVALID'&&e.diagnostics.issue==='unknown_step_field');
+ assert.equal(JSON.stringify(run),before);assert.match(protocol.parameterHint({expected:'progress_step_contract',field:'progress.steps[0].id',issue:'unknown_step_id',allowedIds:['s1','s10']}),/s1、s10/);
+});
+test('a plan may declare new IDs and progress must bind to that same prospective plan',()=>{
+ const action={action:'plan',goal:'新计划结构',decisions:[],acceptance:['要求保持'],steps:[{id:'new_phase',title:'新阶段',status:'running'}],progress:{steps:[{id:'new_phase',status:'running'}],memory:summary}};
+ for(const known of [steps,[]]){assert.equal(protocol.decodeAction(response(action),{steps:known}).progress.steps[0].id,'new_phase');const run={goal:action.goal,decisions:[],acceptance:action.acceptance,steps:action.steps};assert.equal(attached.validate(action.progress,run).steps[0].id,'new_phase');assert.throws(()=>protocol.decodeAction(response({...action,progress:{steps:[{id:'s10',status:'running'}]}}),{steps:known}),e=>e.code==='AGENT_PROTOCOL'&&e.diagnostics.allowedIds.join(',')==='new_phase');}
+});
+test('before a plan ordinary metadata permits memory only and cannot invent an ID',()=>{
+ const schema=protocol.actionTools({phase:'task',steps:[]},['read_file'])[0].function.parameters;assert.deepEqual(Object.keys(schema.properties.progress.properties),['memory']);assert.equal(schema.properties.stepId,undefined);assert.equal(protocol.decodeAction(response({action:'read_file',path:'x',progress:{memory:summary}}),{steps:[]}).progress.memory,summary);assert.throws(()=>protocol.decodeAction(response({action:'read_file',path:'x',progress:{steps:[{id:'s1',status:'running'}]}}),{steps:[]}),e=>e.code==='AGENT_PROTOCOL'&&e.diagnostics.allowedIds.length===0);
+});
+test('corrected metadata executes one real tool without committing the rejected progress or charging repair',async t=>{
+ const {base,task,w}=await fixture(t);let calls=0,executed=0;
+ const result=await runAgent({base,task,model:{contextWindow:128000},signal:new AbortController().signal,ask:async messages=>{const s=JSON.parse(messages.at(-1).content);calls++;if(calls===1)return response({action:'route',kind:'task'});if(calls===2)return response(plan);if(calls===3)return response({action:'write_file',path:'guarded.txt',content:'invalid side effect',progress:{steps:[{id:'s11',status:'done'}],memory:'被拒绝的错误状态不得进入累计任务记忆。'}});if(calls===4){assert.equal(executed,0);await assert.rejects(fs.stat(path.join(w.files,'guarded.txt')),e=>e.code==='ENOENT');assert.equal(s.workingMemory,summary);assert.deepEqual(s.steps.map(x=>x.id),['s1','s10']);assert.equal(s.protocolRecovery.field,'progress.steps[0].id');return response({action:'write_file',path:'guarded.txt',content:'corrected',progress:{steps:[{id:'s10',status:'running'}],memory:summary}});}return response({action:'pause',text:'当前回归已完成；未声称完整任务验收通过'});},executeTool:async(...args)=>{executed++;return tools.execute(...args);}});
+ assert.equal(result.agentRun.status,'paused');assert.equal(executed,1);assert.equal(calls,5);const saved=await createWorkspace(base,task);assert.equal(await fs.readFile(path.join(w.files,'guarded.txt'),'utf8'),'corrected');assert.equal(saved.run.events.filter(e=>e.type==='protocol_error').length,1);assert.equal(saved.run.events.filter(e=>e.type==='tool_error').length,0);assert.equal(saved.run.performance.validationFailures||0,0);assert.equal(saved.run.failureEpisodes.records.length,0);
+});
+test('persistent invalid IDs retain the existing two-correction bound with zero tool side effects',async t=>{
+ const {base,task,w}=await fixture(t);let calls=0,executed=0;
+ await assert.rejects(runAgent({base,task,model:{contextWindow:128000},signal:new AbortController().signal,ask:async()=>{calls++;return response(calls===1?{action:'route',kind:'task'}:calls===2?plan:{action:'write_file',path:'never.txt',content:'must not execute',progress:{steps:[{id:calls%2?'s11':'s12',status:'running'}]}});},executeTool:async()=>{executed++;assert.fail('invalid metadata must not execute');}}),e=>e.code==='AGENT_PROTOCOL');assert.equal(calls,5);assert.equal(executed,0);await assert.rejects(fs.stat(path.join(w.files,'never.txt')),e=>e.code==='ENOENT');const saved=await createWorkspace(base,task);assert.equal(saved.run.events.filter(e=>e.type==='protocol_error').length,3);assert.equal(saved.run.events.filter(e=>e.type==='tool_error').length,0);assert.deepEqual(saved.run.steps.map(x=>x.id),['s1','s10']);
+});
+test('verification evidence navigation is forwarded by named, alias and JSON schema paths',t=>{
+ const verification=require('../apps/desktop/agent/verification-request.cjs'),original=verification.constrain,nav={byKind:{visual:[],observation:[],command:[]}},seen=[];verification.constrain=(schema,criteria,evidence)=>{seen.push(evidence);return original(schema,criteria,evidence);};t.after(()=>{verification.constrain=original;});const enriched={...state,verificationEvidence:nav};protocol.actionTools(enriched,['read_file']);protocol.menuTool(enriched,['read_file']);protocol.jsonActionContract(enriched,['read_file']);assert.ok(seen.length>=4);assert.ok(seen.every(x=>x===nav));
+});

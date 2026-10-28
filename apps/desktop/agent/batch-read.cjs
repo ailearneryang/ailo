@@ -24,7 +24,7 @@ async function execute(items,signal,read){
  await Promise.all(Array.from({length:Math.min(3,checked.length)},async()=>{
   for(;;){signal.throwIfAborted();const index=cursor++;if(index>=checked.length)return;const item=checked[index],started=Date.now();
    try{results[index]={itemId:item.itemId,action:item.action,result:await read(item),durationMs:Date.now()-started};}
-   catch(error){signal.throwIfAborted();results[index]={itemId:item.itemId,action:item.action,error:error.message,durationMs:Date.now()-started};}
+   catch(error){signal.throwIfAborted();results[index]={itemId:item.itemId,action:item.action,error:error.message,...(typeof error.code==='string'?{errorCode:error.code}:{}),durationMs:Date.now()-started};}
   }
  }));return results;
 }

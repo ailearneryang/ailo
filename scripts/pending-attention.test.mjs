@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
-const source=stripTypeScriptTypes(fs.readFileSync(new URL('../apps/desktop/src/pending-attention.ts',import.meta.url),'utf8'));
+const source=stripTypeScriptTypes(fs.readFileSync(new URL('../apps/desktop/src/pending-attention.ts',import.meta.url),'utf8')).replace("'../network-recovery.cjs'",JSON.stringify(new URL('../apps/desktop/network-recovery.cjs',import.meta.url).href));
 const {pendingAttention}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 const task=(id,status,extra={})=>({id,title:id,created:'2026-10-17T00:00:00Z',agentRun:{status},...extra});
 test('only unresolved actionable work appears; viewing does not resolve it',()=>{
@@ -22,4 +22,9 @@ test('latest scheduled run supersedes old failures, including when latest is run
  assert.equal(pendingAttention([old,latest],[]).length,0);
  assert.equal(pendingAttention([old,{...latest,lastError:'temporary'}],['new']).length,0);
  assert.deepEqual(pendingAttention([old,{...latest,lastError:'failed'}],[]).map(i=>i.task.id),['new']);
+});
+test('suspended-network tasks offer a bounded retry instead of demanding business diagnostics',()=>{
+ const waiting=task('network','blocked',{agentRun:{status:'blocked',waitingError:{code:'MODEL_NETWORK',networkCode:'ERR_NETWORK_IO_SUSPENDED'},taskContinuation:{taskOpen:true,state:'waiting_service',question:'旧提示',retained:{unknownActions:0}}}});
+ const item=pendingAttention([waiting],[])[0];assert.equal(item.label,'等待网络恢复');assert.equal(item.action,'重试当前步骤');assert.match(item.description,/网络.*恢复/);assert.doesNotMatch(item.description,/旧提示|补充.*诊断/);
+ const unknown={...waiting,agentRun:{...waiting.agentRun,taskContinuation:{...waiting.agentRun.taskContinuation,state:'waiting_result_check',question:'先核对结果'}}};assert.equal(pendingAttention([unknown],[])[0].action,'补充后继续');
 });

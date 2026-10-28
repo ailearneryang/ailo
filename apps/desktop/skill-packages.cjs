@@ -154,12 +154,20 @@ function createSkillPackages(root) {
       }
       return { id: saved.id, files };
     }));
+    // Validate every selected destination before cleanup. An unchanged package
+    // keeps locally installed dependencies across automatic execution segments;
+    // original bundled files are still restored from the hash-checked source.
+    const selectedIds = new Set(bundles.map(bundle => bundle.id));
+    for (const bundle of bundles) for (const f of bundle.files) await resolveFile(workspace.files, relative + '/' + bundle.id + '/' + f.path);
     // Removal cannot follow links, and the marker prevents deleting user files.
-    for (const name of existing) if (name !== '.ailo-owned') await fs.rm(path.join(mount, name), { recursive: true, force: true });
+    // Deselection removes the entire owned package, including generated extras.
+    for (const name of existing) if (name !== '.ailo-owned' && !selectedIds.has(name)) await fs.rm(path.join(mount, name), { recursive: true, force: true });
     await fs.writeFile(marker, OWNED, { mode: 0o600 });
     for (const bundle of bundles) for (const f of bundle.files) {
       const target = await resolveFile(workspace.files, relative + '/' + bundle.id + '/' + f.path, true);
-      await fs.writeFile(target, f.data, { mode: f.executable ? 0o700 : 0o600 });
+      const mode = f.executable ? 0o700 : 0o600;
+      await fs.writeFile(target, f.data, { mode, flag: require('node:fs').constants.O_WRONLY | require('node:fs').constants.O_CREAT | require('node:fs').constants.O_TRUNC | require('node:fs').constants.O_NOFOLLOW });
+      await fs.chmod(target, mode);
     }
     return items.filter(e => e.enabled).map(item => {
       if (!item.package) return item;

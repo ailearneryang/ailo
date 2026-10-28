@@ -100,7 +100,7 @@ test('the real runner presents region repair targets and public progress across 
   assert.equal(state.designRegionIssues[0].reason,'缺少重复卡片');assert.equal(state.androidDesign.screens[0].baseline.designManifest.regions[0].repeats[0].count,6);
   return {content:JSON.stringify({action:'blocked',text:'区域差异仍待修复，保留当前产物'})};
  }});
- assert.equal(result.agentRun.status,'blocked');assert.equal(result.agentRun.designRegionIssues[0].reason,'缺少重复卡片');assert.equal(result.agentRun.acceptanceCriteria[0].status,'pending');
+ assert.equal(result.agentRun.status,'partial');assert.equal(result.agentRun.delivery.outcome,'partial');assert.equal(result.agentRun.delivery.status,'settled');assert.equal(result.agentRun.designRegionIssues[0].reason,'缺少重复卡片');assert.equal(result.agentRun.acceptanceCriteria[0].status,'pending');
 });
 test('a new terminal execution archives old region issues without contaminating an unrelated new task',()=>{
  const run={status:'completed',mode:'task',inputKey:'old',steps:[],history:[],designRegionIssues:{one:{status:'open',region:'Old region'}},designRegionReviews:{one:{status:'passed'}}};

@@ -2,9 +2,9 @@ import type {AgentRun,Message,Task} from './types';
 export function deliveryForMessage(task:Task,messages:Message[],messageId:string):AgentRun|undefined {
  const run=task.agentRun,index=messages.findIndex(m=>m.id===messageId);
  if(!run||index<0||messages[index].role!=='assistant')return;
- const historical=run.history?.find(r=>r.afterMessageId===messageId&&r.status==='completed'&&r.artifacts.length);
+ const historical=run.history?.find(r=>r.afterMessageId===messageId&&(r.status==='completed'&&r.artifacts.length||r.delivery?.status==='settled'));
  if(historical)return historical;
- if(run.status!=='completed'||!run.artifacts.length)return;
+ if(run.delivery?.status!=='settled'&&(run.status!=='completed'||!run.artifacts.length))return;
  const trigger=run.currentInputId||run.progressInputId;
  if(trigger){
   const userIndex=messages.findIndex(m=>m.id===trigger&&m.role==='user');

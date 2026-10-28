@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.ailearneryang.ailo.dictation</string>
+<key>CFBundleName</key><string>Ailo 语音输入</string>
+<key>NSMicrophoneUsageDescription</key><string>将你的语音转为可编辑文字，确认后再发送。</string>
+<key>NSSpeechRecognitionUsageDescription</key><string>使用本机离线语音识别转写，不保存录音。</string>
+</dict></plist>

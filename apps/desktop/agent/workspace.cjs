@@ -113,7 +113,7 @@ async function createWorkspace(base, task) {
   }
   const lookup=id=>catalog.find(m=>m.id===id||m.aliases?.includes(id));
   async function save() {run.updatedAt=new Date().toISOString();await writeJson(runFile,run);}
-  async function observationRecord(reference){
+  async function observationRecord(reference,options={}){
     if(typeof reference!=='string'||! /^[a-f0-9-]{8,36}$/i.test(reference))throw Error('工具记录 ID 无效');
     const receipts=[...(run.observationIndex||[]),...(run.observations||[]).map(o=>({id:o.observationId,eventId:o.response?.eventId}))];
     const known=[...new Set([...receipts.flatMap(r=>[r.id,r.eventId]),...run.events.map(e=>e.id)].filter(Boolean))];
@@ -127,6 +127,7 @@ async function createWorkspace(base, task) {
     }
     const direct=await read(id);if(direct)return direct;
     const receipt=receipts.find(r=>r.eventId===id),mapped=receipt&&await read(receipt.id);if(mapped)return mapped;
+    if(options.archiveOnly)throw Object.assign(Error('当前任务的独立观察归档不存在；有界迁移不会扫描事件日志或重放操作。'),{code:'EXECUTION_RECORD_NOT_FOUND'});
     // Events and observations have different IDs. Both are presented to the
     // model and both must recall the same result, without replaying the tool.
     const eventId=receipts.find(r=>r.id===id)?.eventId||id;
@@ -156,8 +157,8 @@ async function createWorkspace(base, task) {
       await fs.appendFile(runFile+'.memory.jsonl',JSON.stringify({...require('./working-context.cjs').receipt({action,response,observationId:id}),executionId:run.executionId})+'\n',{mode:0o600});
       return id;
     },
-    async observationRecord(id){
-      return (await observationRecord(id)).record;
+    async observationRecord(id,options){
+      return (await observationRecord(id,options)).record;
     },
     async observation(id,offset=0,limit=10000,view='record'){
       if(!Number.isInteger(offset)||offset<0)throw Error('记录读取位置无效');
@@ -213,6 +214,7 @@ async function createWorkspace(base, task) {
       const {readSource}=require('../materials.cjs');
       const raw=await readSource(path.join(project,'originals',material.sourceId),material.name,entry);
       entry=raw.entry ?? entry;
+      if(raw.kind==='archive_manifest')throw Object.assign(Error('inspect_source 需要先指定压缩包内的 JSON entry；当前是条目目录，不是 JSON。先用 read_source 省略 entry 查看目录，再按真实 entry 使用 pointer/query。'),{code:'SOURCE_ENTRY_REQUIRED'});
       let value;try{value=JSON.parse(raw.text);}catch{throw Error('此条目不是 JSON，请使用 read_source 按范围读取');}
       if(pointer!==undefined) {
         if(typeof pointer!=='string'||(pointer!==''&&!pointer.startsWith('/')))throw Error('pointer 必须是 JSON Pointer，例如 /pages/0');

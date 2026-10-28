@@ -1,6 +1,6 @@
 import type {Task,AgentRun} from './types';
 export type LiveSession={id:string;taskId?:string;status:string;content:string;attached?:boolean;inputId?:string;startedAt?:string;phase?:'preparing'|'queued'|'running'|'settling';run?:AgentRun};
-const labels:Record<string,string>={preparing:'正在准备回复',queued:'排队中',running:'执行中',replying:'正在回复',settling:'正在保存回复',understanding:'正在理解需求',waiting_permission:'等待授权',waiting_user:'等待回答',paused:'已暂停',blocked:'任务受阻',failed:'执行中断',completed:'已完成',idle:'回复已完成',archived:'已完成'};
+const labels:Record<string,string>={preparing:'正在准备回复',queued:'排队中',running:'执行中',replying:'正在回复',settling:'正在保存回复',understanding:'正在理解需求',waiting_permission:'等待授权',waiting_user:'等待回答',paused:'已暂停',blocked:'任务受阻',failed:'执行中断',partial:'已交付部分成果',completed:'已完成',idle:'回复已完成',archived:'已完成'};
 export function taskPresentation(task:Task,session?:LiveSession){
  const saved=task.agentRun,live=session?.run,lastInput=[...(task.messages||[])].reverse().find(m=>m.role==='user')?.id;
  let state:string,activityRun:AgentRun|undefined,activityStatus:string;
@@ -8,6 +8,7 @@ export function taskPresentation(task:Task,session?:LiveSession){
   if(session.phase==='queued'||session.status.startsWith('等待执行'))state='queued';
   else if(live?.currentOutcome==='clarify')state='waiting_user';
   else if(live?.currentOutcome==='blocked'||live?.currentOutcome==='pause')state=live.currentOutcome==='pause'?'paused':'blocked';
+  else if(session.phase==='running'&&live?.currentIntent&&['waiting_permission','waiting_user','paused','blocked','failed'].includes(live.status))state=live.status;
   else if(session.phase==='settling')state=live?.currentIntent==='task'?live.status:'settling';
   else if(!live||!live.currentIntent)state=session.content?'replying':'preparing';
   else if(live.currentIntent==='chat')state='replying';
@@ -20,7 +21,8 @@ export function taskPresentation(task:Task,session?:LiveSession){
   activityRun=saved;activityStatus=labels[state]||state;
  }
  const run=saved;const historical=!!run&&(!!session&&(!live||!live.currentIntent)||run.currentIntent==='chat'||(!!lastInput&&!!run.progressInputId&&run.progressInputId!==lastInput))&&!(live?.currentIntent==='task'&&live.progressInputId===lastInput);
- return {state,label:labels[state]||state,active:!!session,activityRun,activityStatus,historical,progressStatus:historical?run?.status:state};
+ const taskWaiting=!session&&!!run?.taskContinuation?.taskOpen&&['blocked','failed','waiting_permission'].includes(run.status);
+ return {state,label:taskWaiting?'等待处理':saved?.delivery?.status==='settled'&&!session?(saved.status==='partial'?'已交付部分成果':'尚未完成'):labels[state]||state,active:!!session,animating:!!session&&['preparing','replying','running','understanding','settling'].includes(state),activityRun,activityStatus:taskWaiting?'等待处理 · 任务保留':activityStatus,historical,progressStatus:historical?run?.status:state};
 }
 // Finished IDs are tombstones: a delayed polling snapshot must not revive them.
 export function mergeSessionSnapshot(current:Record<string,LiveSession>,snapshot:LiveSession[],finished:Set<string>){

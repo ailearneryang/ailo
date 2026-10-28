@@ -32,4 +32,13 @@ function decisionStage(state){
  return 'action';
 }
 function decisionReasoningParameters(model,stage){return ['route','state','operation'].includes(stage)&&supportsReasoning(model)?reasoningParameters(model,'low'):{};}
-module.exports={decisionStage,decisionReasoningParameters,supportsReasoning,reasoningParameters,isBigmodel53,toolStreamingParameters,recoveryReasoningParameters};
+// These describe parameters actually sent, not a claim that a gateway applied
+// them. Unrecognized company endpoints remain untouched until explicitly mapped.
+function parameterDiagnostics(model,reasoning={},streaming={}){
+ return {capabilitySource:supportsReasoning(model)?'documented_endpoint':'unconfirmed_endpoint',reasoningControlSent:typeof reasoning.reasoning_effort==='string',...(typeof reasoning.enable_thinking==='boolean'?{enableThinking:reasoning.enable_thinking}:reasoning.thinking?.type?{enableThinking:reasoning.thinking.type==='enabled'}:{}),toolStreamingControlSent:typeof streaming.tool_stream==='boolean'};
+}
+function budgetControls(model,{reasoning={},stage,recovery=false,recoveryStage}={}){
+ const sent={...reasoning,...decisionReasoningParameters(model,stage),...(recovery?recoveryReasoningParameters(model,recoveryStage):{})},diagnostic=parameterDiagnostics(model,sent);
+ return {reasoningControlSent:diagnostic.reasoningControlSent,...(diagnostic.enableThinking===undefined?{}:{enableThinking:diagnostic.enableThinking}),...(typeof sent.reasoning_effort==='string'?{reasoningEffort:sent.reasoning_effort}:{})};
+}
+module.exports={decisionStage,decisionReasoningParameters,supportsReasoning,reasoningParameters,isBigmodel53,toolStreamingParameters,recoveryReasoningParameters,parameterDiagnostics,budgetControls};

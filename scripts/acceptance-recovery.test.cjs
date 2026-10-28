@@ -12,7 +12,7 @@ test('punctuation variants give repair feedback without silently passing exact c
  });
  assert.equal(w.run.acceptanceResults?.[criterionId('包含天气首页')],undefined);
 });
-test('three different invalid verification attempts preserve results as blocked, not an execution crash',async t=>{
+test('three different invalid verification attempts settle existing results without accepting failed requirements',async t=>{
  const {base,task}=await setup(t);let n=0,failures=0;
  const plan={action:'plan',goal:'生成天气说明',decisions:[],acceptance:['包含天气首页'],steps:[{id:'s',title:'制作天气说明',status:'pending'}]};
  const actions=[plan,{action:'write_file',path:'page.txt',content:'天气-首页'},{action:'artifact',path:'page.txt',label:'天气说明'},{...plan,steps:[{...plan.steps[0],status:'done'}]}];
@@ -23,7 +23,7 @@ test('three different invalid verification attempts preserve results as blocked,
   const action=actions[n++]||{action:'verify',checks:[{criterionId:state.acceptanceCriteria[0].id,kind:'text_contains',path:'page.txt',contains:['天气首页'],reason:'核验首页 '+(++failures)}]};
   return {content:JSON.stringify(action)};
  }});
- assert.equal(result.agentRun.status,'blocked');assert.match(result.content,/最终验收未通过/);
+ assert.equal(result.agentRun.status,'partial');assert.equal(result.agentRun.delivery.status,'settled');assert.equal(result.agentRun.delivery.outcome,'partial');assert.match(result.content,/尚未全部完成/);assert.equal(result.agentRun.acceptanceCriteria[0].status,'pending');assert.equal(result.agentRun.completionReview.unverified.length,1);assert.equal(result.agentRun.taskContinuation.taskOpen,false);
  assert.equal(result.agentRun.steps[0].status,'done');assert.equal(result.agentRun.artifacts.length,1);
  assert.equal(result.agentRun.executionState.blocker.code,'ACCEPTANCE_FAILED');
 });

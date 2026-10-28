@@ -24,7 +24,9 @@ async function reconcile(workspace){
  await workspace.save();
 }
 function classify(error,entry){
- if(error.code==='ACTION_RESULT_UNKNOWN'||String(error.code||'').startsWith('MCP_'))return 'needs_reconciliation';
+ if(error.code==='ACTION_RESULT_UNKNOWN'||error.code==='MCP_RESULT_UNKNOWN')return 'needs_reconciliation';
+ if(error.notExecuted===true||error.code==='MCP_UNAVAILABLE')return /DECLINED|PERMISSION|DIRECTORY|AUTH/.test(error.code||'')?'needs_user':'repair_required';
+ if(String(error.code||'').startsWith('MCP_'))return 'needs_reconciliation';
  if(!entry?.readOnly&&['ETIMEDOUT','ECONNRESET','EPIPE'].includes(error.code))return 'needs_reconciliation';
  if(entry?.readOnly&&['EINTR','EAGAIN','EBUSY','ETIMEDOUT','ECONNRESET'].includes(error.code))return 'retryable_read';
  if(/DECLINED|PERMISSION|DIRECTORY|AUTH/.test(error.code||''))return 'needs_user';

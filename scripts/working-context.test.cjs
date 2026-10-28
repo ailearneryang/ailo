@@ -48,7 +48,8 @@ test('a command changing file content permits reread, while identical bytes rema
 test('missing file failures never claim successful repeated reads',async t=>{
  const base=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-failed-read-'));t.after(()=>fs.rm(base,{recursive:true,force:true}));
  const task={id:'missing',projectId:'p',request:'读取文件'};let n=0;
- await assert.rejects(runAgent({base,task,model:{contextWindow:1048576},signal:new AbortController().signal,ask:async()=>({content:JSON.stringify(n++?{action:'read_file',path:'missing.txt'}:{action:'route',kind:'chat'})})}),/相同动作多次失败/);
+ const result=await runAgent({base,task,model:{contextWindow:1048576},signal:new AbortController().signal,ask:async()=>({content:JSON.stringify(n++?{action:'read_file',path:'missing.txt'}:{action:'route',kind:'chat'})})});
+ assert.equal(result.agentRun.status,'blocked');assert.match(result.content,/同一问题的有限恢复/);assert.ok(n<=6);assert.equal(result.agentRun.artifacts.length,0);
  const w=await createWorkspace(base,task);assert.equal(w.run.events.filter(e=>e.type==='tool_recovery').length,2);assert.ok(w.run.events.filter(e=>e.type==='tool_error').length<=5);assert.ok(!w.run.events.some(e=>e.type==='repeat_warning'));
 });
 test('external record rereads receive correction before pausing and history honors its limit',async t=>{

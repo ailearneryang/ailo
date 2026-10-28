@@ -14,4 +14,12 @@ function request(run,record){
  const usage=record.providerUsage||{};if(Number.isSafeInteger(usage.inputTokens)&&Number.isSafeInteger(usage.outputTokens)){p.reportedUsageRequests++;p.inputTokens+=usage.inputTokens;p.outputTokens+=usage.outputTokens;}
  if(Number.isSafeInteger(usage.reasoningTokens))p.reasoningTokens+=usage.reasoningTokens;
 }
-module.exports={init,request};
+function batch(run,items){
+ const p=init(run);
+ // Separate item outcomes from top-level tool errors. Legacy runs lack this
+ // history; the start marker makes resumed counters explicitly partial.
+ if(!p.batchItemCountersSince){p.batchItemCountersSince=new Date().toISOString();p.batchItemErrors=0;p.batchItemsSucceeded=0;p.batchItemsNotExecuted=0;}
+ p.batchItems=(p.batchItems||0)+items.length;
+ for(const item of items){if(item.error)p.batchItemErrors++;else if(item.result?.notExecuted)p.batchItemsNotExecuted++;else p.batchItemsSucceeded++;}
+}
+module.exports={init,request,batch};

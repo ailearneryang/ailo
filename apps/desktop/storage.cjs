@@ -73,6 +73,9 @@ function createStorage(directory, safeStorage) {
       const usage=await read('usage',require('./profile.cjs').emptyUsage());if(require('./profile.cjs').recordRequest(usage,record))await write('usage',usage);
       const fields=['id','modelId','taskId','attempt','phase','startedAt','transport','headersMs','responseHeadersTimeoutMs','timeoutStage','requestBytes','messageCount','requestedOutputTokens','providerRequestId','httpStatus','chunks','bytes','maxChunkGapMs','firstByteMs','firstContentMs','streamCancelled','outcome','errorCode','abortRequested','durationMs','systemProxyMode'];
       fields.push('noActionTimeoutMs','reasoningEffort','toolStreaming','recoveryMode','recoveryStage','networkCode','action','firstActionMs','contentChars','toolCalls','toolArgumentChars','reasoningChars','reasoningTokens');
+      fields.push('capabilitySource','reasoningControlSent','enableThinking','toolStreamingControlSent','inputEstimate','contextWindow','guardTokens','budgetAdjusted','toolMenuStage','toolDiscoveryCount','actionCompletionTimeoutMs','runtimeFingerprint','promptSchemaVersion','toolSchemaVersion','appVersion');
+      fields.push('protocolErrorReason','jsonErrorOffset','jsonCleanedChars','jsonErrorCharacterClass','toolArgumentDeltas');
+      fields.push('imageInputs','providerCategory','routingLane','selectedModelId');
       const safe=Object.fromEntries(fields.filter(k=>['string','number','boolean'].includes(typeof record[k])).map(k=>[k,typeof record[k]==='string'?record[k].slice(0,128):record[k]]));
       for(const [field,key] of [['inputTokens','inputTokens'],['outputTokens','outputTokens'],['reasoningTokens','reasoningTokens']])if(Number.isSafeInteger(record.providerUsage?.[key]))safe[field]=record.providerUsage[key];
       const records=await read('model-requests',[]);await write('model-requests',[...records.slice(-199),safe]);
@@ -90,6 +93,7 @@ function createStorage(directory, safeStorage) {
     async modelCredentials(id) {
       await writes.catch(() => {});
       const state = await read("workspace", { models: [] });
+      if(id==='auto')id=require('./model-routing.cjs').validateRouting(state.autoModel,state.models||[])?.primaryModelId;
       const model = (state.models || []).find((m) => m.id === id);
       if (!model) throw Error("请先选择或配置一个可用模型。");
       let apiKey;
@@ -224,7 +228,7 @@ function createStorage(directory, safeStorage) {
           if (
             !model ||
             typeof model.id !== "string" ||
-            model.id === "demo" ||
+            ["demo","auto"].includes(model.id) ||
             ids.has(model.id) ||
             typeof model.name !== "string" ||
             !model.name.trim() ||
@@ -275,6 +279,7 @@ function createStorage(directory, safeStorage) {
             ...(encryptedKey ? { encryptedKey } : {}),
           };
         });
+        const autoModel=require('./model-routing.cjs').validateRouting(state.autoModel,models);
         const extensions = await skillPackages.validate(validateExtensions(state.extensions ?? previous.extensions ?? builtins), previous.extensions || []);
         const projectIds = new Set();
         const projects = state.projects.map((project) => {
@@ -307,7 +312,8 @@ function createStorage(directory, safeStorage) {
           tasks: (preserveTasks ? (previous.tasks || []) : state.tasks).map(task => task.extensionIds ? {...task, extensionIds: task.extensionIds.filter(id => extensions.some(e => e.id === id))} : task),
           projects,
           models,
-          defaultModelId: ids.has(state.defaultModelId)
+          ...(autoModel?{autoModel}:{}),
+          defaultModelId: ids.has(state.defaultModelId)||state.defaultModelId==='auto'&&autoModel
             ? state.defaultModelId
             : "demo",
         });

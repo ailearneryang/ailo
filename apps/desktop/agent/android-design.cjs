@@ -1,6 +1,8 @@
 const fs=require('node:fs/promises');
 const {resolveFile}=require('./workspace.cjs'),{hash}=require('./evidence.cjs');
 const configPath='android-design.json';
+function bindingError(field,message){return Object.assign(Error(configPath+' '+field+'：'+message),{code:'ANDROID_DESIGN_BINDING_INVALID',bindingField:field});}
+async function bindingFile(root,value,field){try{return await resolveFile(root,value);}catch(error){throw bindingError(field,error.message);}}
 const instruction='先将目标画板与 Android 实现绑定：写 android-design.json，格式 {"screens":[{"boardId":"原稿画板ID","layout":"app/src/main/res/layout/activity_main.xml","reference":"原稿渲染PNG相对路径","screenshot":"运行截图相对路径，截图后填写"}]}。每项对应一个需还原的界面；实现必须使用原稿的背景、组件、文字样式和底栏。运行截图尺寸一致或无法自动看图都不能代替这些实现。';
 function color(c){
  if(!c||!['red','green','blue'].every(k=>Number.isFinite(c[k])))return;
@@ -60,22 +62,30 @@ async function inspect(root){
  if(!config)return {status:'binding_required',candidates:candidates.slice(0,60),sources,sourceBaseline:graph.sources,issues:['尚未绑定原稿画板与 Android 界面，不能确认实现了哪一版设计',...issues],instruction};
  if(!Array.isArray(config.screens)||!config.screens.length||config.screens.length>12)throw Error('android-design.json screens 需要1–12个界面');
  const screens=[],seen=new Set();
- for(const entry of config.screens){
+ for(const [index,entry]of config.screens.entries()){
+  const field=key=>`screens[${index}].${key}`;
+  if(!entry||typeof entry!=='object'||Array.isArray(entry))throw bindingError(`screens[${index}]`,'需要界面绑定对象');
   const board=boards.get(entry.boardId);
-  if(!board||seen.has(entry.boardId))throw Error('android-design.json boardId 必须是原稿中真实且不重复的画板ID');seen.add(entry.boardId);
+  if(!board||seen.has(entry.boardId))throw bindingError(field('boardId'),'android-design.json boardId 必须是原稿中真实且不重复的画板ID');seen.add(entry.boardId);
   const baseline=describe(board,masters),screen={...entry,baseline};
   for(const key of ['layout','reference']){
-   if(typeof entry[key]!=='string'||!entry[key])throw Error('设计绑定须提供 layout 与 reference 相对路径');
-   const file=await resolveFile(root,entry[key]);let stat;
+   if(typeof entry[key]!=='string'||!entry[key].trim())throw bindingError(field(key),'设计绑定须提供 layout 与 reference 相对路径');
+   const file=await bindingFile(root,entry[key],field(key));let stat;
    try{stat=await fs.stat(file);}catch(e){if(e.code!=='ENOENT')throw e;issues.push(`${board.name} 的 ${key} 文件尚不存在：${entry[key]}`);sources.push({path:entry[key],sha256:null});continue;}
-   if(!stat.isFile()||stat.size>(key==='reference'?20*1024*1024:1024*1024))throw Error('设计绑定文件过大或不是普通文件');
+   if(!stat.isFile()||stat.size>(key==='reference'?20*1024*1024:1024*1024))throw bindingError(field(key),'设计绑定文件过大或不是普通文件');
    const data=await fs.readFile(file);sources.push({path:entry[key],sha256:hash(data)});
    if(key==='reference'){
-    const size=require('./android-display.cjs').pngSize(data);
-    if(Math.abs((size.width/size.height)/(baseline.width/baseline.height)-1)>.03)throw Error('原稿参考 PNG 与绑定画板宽高比不符');
+    let size;try{size=require('./android-display.cjs').pngSize(data);}catch(error){throw bindingError(field(key),error.message);}
+    if(Math.abs((size.width/size.height)/(baseline.width/baseline.height)-1)>.03)throw bindingError(field(key),'原稿参考 PNG 与绑定画板宽高比不符');
    }
   }
-  if(entry.screenshot!==undefined){await resolveFile(root,entry.screenshot);if(entry.screenshot===entry.reference)throw Error('原稿参考与运行截图不能使用同一文件');}
+  // A draft binding can name its reference before a runtime screenshot exists.
+  // Empty optional placeholders never count as proof or bypass assertDelivery.
+  if(entry.screenshot!==undefined&&typeof entry.screenshot!=='string')throw bindingError(field('screenshot'),'须为项目相对路径字符串；尚未绑定时可省略或留空');
+  if(typeof entry.screenshot==='string'&&entry.screenshot.trim()){
+   await bindingFile(root,entry.screenshot,field('screenshot'));
+   if(entry.screenshot===entry.reference)throw bindingError(field('screenshot'),'原稿参考与运行截图不能使用同一文件');
+  }else delete screen.screenshot;
   if(baseline.unresolvedSymbols.length)issues.push(`${board.name} 有 ${baseline.unresolvedSymbols.length} 个组件定义未解析，不能静默略过`);
   if(baseline.truncated)issues.push(`${board.name} 图层展开超出限制，请缩小原稿后检查`);
   screens.push(screen);
@@ -136,9 +146,7 @@ function recordComparison(workspace,observation){
  const message=`${observation.path} 与 ${observation.reference.path} 存在大面积差异，不能以截图成功代替还原`;
  rememberFailure(workspace,observation.designBinding?failure(message):Object.assign(Error(message),{code:'VISUAL_DESIGN_MISMATCH'}));
 }
-function context(design,target){
- return {...design,screens:design.screens?.map((screen,i)=>i<2?{...screen,coordinateMapping:Number.isFinite(target?.widthDp)&&Number.isFinite(target?.heightDp)?{sourcePixels:{width:screen.baseline.width,height:screen.baseline.height},targetPixels:{width:target.width,height:target.height},targetDp:{width:target.widthDp,height:target.heightDp},dpPerSourcePixel:{x:target.widthDp/screen.baseline.width,y:target.heightDp/screen.baseline.height},notice:'区域/间距由画板像素换算dp，字号按相同纵向比例换算后核对sp字体缩放；先扣除实际系统栏占用，不把默认文字留白当设计间距。'}:undefined}:{boardId:screen.boardId,layout:screen.layout,reference:screen.reference,screenshot:screen.screenshot,baseline:{id:screen.baseline.id,name:screen.baseline.name,width:screen.baseline.width,height:screen.baseline.height},notice:'完整图层请按原稿ID定点读取；当前上下文仅展开前两个界面'})};
-}
+function context(design,target,options){return require('./context-projections.cjs').designContext(design,target,options);}
 function rememberSource(run,design){
  if(design.sourceBaseline?.length&&(!run.androidDesignSourceBaseline||run.androidDesignSourceBaseline.inputKey!==run.inputKey))run.androidDesignSourceBaseline={inputKey:run.inputKey,sources:design.sourceBaseline};
 }

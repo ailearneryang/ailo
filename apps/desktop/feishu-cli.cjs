@@ -3,71 +3,12 @@ const path=require('node:path');
 const os=require('node:os');
 const {spawn}=require('node:child_process');
 const {createHash}=require('node:crypto');
-const domains=['calendar','im','docs','docx','drive','sheets','base','bitable','task','tasks','wiki','contact','mail','minutes','vc','approval','attendance','okr','slides','whiteboard'];
+const {apiArgs,shortcuts}=require('./feishu-request.cjs');
 function authURL(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&!u.port&&['accounts.feishu.cn','open.feishu.cn','accounts.larksuite.com','open.larksuite.com','open.larkoffice.com'].includes(u.hostname);}catch{return false;}}
 function clean(value){
  if(Array.isArray(value))return value.map(clean);
  if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).filter(([k])=>!/(access.?token|refresh.?token|app.?secret|device.?code|authorization|_notice)/i.test(k)).map(([k,v])=>[k,clean(v)]));
  return value;
-}
-const shortcuts={
- 'im +messages-search':{flags:['query','chat-id','chat-type','sender','sender-type','exclude-sender-type','at-chatter-ids','include-attachment-type','is-at-me','start','end','page-size','page-token'],write:false},
- 'im +chat-search':{flags:['query','member-ids','search-types','sort-by','page-size','page-token','exclude-muted','is-manager','disable-search-by-user'],write:false},
- 'im +chat-messages-list':{flags:['chat-id','user-id','start','end','sort','page-size','page-token'],write:false},
- 'im +messages-mget':{flags:['message-ids'],write:false},
- 'calendar +agenda':{flags:['calendar-id','start','end'],write:false},
- 'docs +search':{flags:['query','page-size','page-token','filter'],write:false},
- 'docs +fetch':{flags:['doc','limit','offset'],write:false},
- 'docs +create':{flags:['title','markdown','folder-token','wiki-node','wiki-space'],write:true},
- 'im +messages-send':{flags:['chat-id','user-id','text','idempotency-key'],write:true},
-};
-function apiArgs(action){
- if(action.operation==='help'||action.operation==='shortcut'){
-  const spec=shortcuts[action.query];
-  if(!spec)throw Error('可用飞书快捷功能：'+Object.keys(shortcuts).join('、'));
-  const args=action.query.split(' ');
-  if(action.operation==='help')return [...args,'--help'];
-  const inputParams=action.params||{};
-  if(typeof inputParams!=='object'||Array.isArray(inputParams)||JSON.stringify(inputParams).length>20000)throw Error('飞书快捷参数无效或过长');
-  // API responses use snake_case; the CLI requires kebab-case flags.
-  const params=Object.create(null);
-  for(const [inputKey,value] of Object.entries(inputParams)){
-   const key=inputKey.replace(/_/g,'-');
-   if(Object.hasOwn(params,key))throw Error('飞书快捷参数重复：'+key);
-   params[key]=value;
-  }
-  for(const [key,inputValue] of Object.entries(params)){
-   let value=inputValue;
-   if(key==='page-size'&&typeof value==='number'&&Number.isInteger(value))value=String(value);
-   if(['is-at-me','exclude-muted','is-manager','disable-search-by-user'].includes(key)&&typeof value==='boolean')value=String(value);
-   // JSON output and user identity are bridge invariants, not model overrides.
-   if(key==='format'){if(value!=='json')throw Error('Ailo 飞书工具仅支持 format=json，请移除其他输出格式');continue;}
-   if(key==='as'){if(value!=='user')throw Error('Ailo 飞书工具仅支持 as=user');continue;}
-   if(!spec.flags.includes(key)||typeof value!=='string'||value.trim().startsWith('@')||value.trim()==='-'||value.includes('\0'))throw Error('飞书快捷参数不受支持：'+key);
-   if(key==='page-size'&&(!/^\d+$/.test(value)||Number(value)<1||Number(value)>(action.query==='im +chat-search'?100:action.query==='docs +search'?20:50)))throw Error('page-size 超出范围，请使用 1–'+(action.query==='im +chat-search'?100:action.query==='docs +search'?20:50));
-   if(['is-at-me','exclude-muted','is-manager','disable-search-by-user'].includes(key)&&!['true','false'].includes(value))throw Error(key+' 必须为 true 或 false');
-   args.push('--'+key+'='+value);
-  }
-  if(action.query==='im +messages-send'&&(!params.text||Boolean(params['chat-id'])===Boolean(params['user-id'])))throw Error('发送消息需要正文和唯一的群或用户 ID');
-  if(action.query==='im +chat-messages-list'&&Boolean(params['chat-id'])===Boolean(params['user-id']))throw Error('读取聊天记录需要唯一的 chat-id 或 user-id');
-  if(action.query==='im +messages-mget'&&(typeof params['message-ids']!=='string'||!/^om_[a-zA-Z0-9]+(,om_[a-zA-Z0-9]+){0,49}$/.test(params['message-ids'])))throw Error('message-ids 需要 1–50 个真实消息 ID，以逗号分隔');
-  return [...args,'--as','user'];
- }
- if(action.operation==='schema'){
-  if(typeof action.query!=='string'||!new RegExp('^('+domains.join('|')+')(\\.[a-zA-Z0-9_]+){0,3}$').test(action.query))throw Error('请提供业务域或 schema 名称，例如 calendar 或 calendar.events.get');
-  // API versions belong in REST paths, not the CLI schema namespace.
-  const query=action.query.replace(/^([a-z]+)\.v[0-9]+(?=\.)/,'$1');
-  return ['schema',query];
- }
- if(action.operation!=='api'||!['GET','POST','PUT','PATCH','DELETE'].includes(action.method))throw Error('飞书操作无效');
- if(typeof action.path!=='string'||!new RegExp('^/open-apis/('+domains.join('|')+')/v[0-9]+(/[A-Za-z0-9_-]+)+$').test(action.path))throw Error('仅允许飞书业务 API 路径，不支持认证接口、外部地址或文件路径');
- const object=v=>v===undefined||v!==null&&typeof v==='object'&&!Array.isArray(v);
- if(!object(action.params)||!object(action.data)||JSON.stringify([action.params,action.data]).length>20000)throw Error('飞书参数必须为 JSON 对象且总长不超过20000字符');
- if(action.method==='GET'&&action.data!==undefined)throw Error('GET 请求不能包含请求体');
- const args=['api',action.method,action.path,'--as','user','--format','json'];
- if(action.params)args.push('--params',JSON.stringify(action.params));
- if(action.data)args.push('--data',JSON.stringify(action.data));
- return args;
 }
 async function findBinary(){
  const candidates=[path.join(os.homedir(),'.npm-global/lib/node_modules/@larksuite/cli/bin/lark-cli'),'/opt/homebrew/lib/node_modules/@larksuite/cli/bin/lark-cli','/usr/local/lib/node_modules/@larksuite/cli/bin/lark-cli'];

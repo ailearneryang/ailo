@@ -7,3 +7,4 @@ export function contextUsage(messages: WireMessage[], extensions: Extension[], m
 export function agentContextUsage(messages: Pick<Message,'role'|'content'|'materials'|'clarification'>[], extensions:Extension[], model:Model, run?:AgentRun): ContextUsage & {materialTokens:number};
 
 export function requestContextUsage(messages: {role:string;content:string}[], format:Record<string,unknown>, model:Model, outputBudget:number): Omit<import("./src/types").RequestContextUsage,"requestId">;
+export function prepareRequestBudget(messages:{role:string;content:unknown}[],format:Record<string,unknown>,model:Model,requestedOutput:number):{budget:number;stats:Omit<import('./src/types').RequestContextUsage,'requestId'> & {requestedReserve:number;budgetAdjusted:boolean;guardTokens:number}};

@@ -10,3 +10,17 @@
 .experience-dialog h3{font-size:14px;font-weight:500;margin:20px 0 10px}.project-settings-dialog .experience-heading h3{margin:0}.project-settings-dialog .experience-toggle{margin:0;padding:9px 0;min-height:36px}.experience-dialog form>.experience-actions{position:sticky;bottom:-24px;background:var(--surface);padding:14px 0 8px;border-top:1px solid var(--border);z-index:2}.project-settings-dialog form>.experience-heading:first-child{position:sticky;top:-24px;background:var(--surface);padding:10px 0 14px;z-index:2}
 
 .notification-actions{display:flex;gap:8px}.notification-row{padding:0}.notification-open{display:flex;align-items:center;gap:12px;flex:1;min-width:0;text-align:left;padding:18px 12px;border-radius:0}.notification-open>span:not(.notification-dot){flex:1;min-width:0}.notification-open>.ui-icon{width:18px;height:18px;color:var(--muted)}
+/* Dictation expands in place beside Send; the bars indicate recording activity. */
+.composer-actions .dictation-control.is-recording{display:inline-flex;align-items:center;gap:8px;min-height:34px;padding:2px 5px 2px 13px;border:1px solid var(--border);border-radius:22px;background:var(--surface);color:var(--text)}
+.composer-actions .dictation-trigger[aria-pressed=true]{background:transparent;color:var(--text)}
+.dictation-trigger[aria-pressed=true]>.ui-icon rect{fill:currentColor;stroke:none}
+.dictation-wave{display:flex;align-items:center;justify-content:center;gap:4px;width:52px;height:24px}
+.dictation-wave i{display:block;width:3px;height:5px;border-radius:3px;background:currentColor;opacity:.5;animation:dictation-wave .9s ease-in-out infinite}
+.dictation-wave.starting i,.dictation-wave.finishing i{animation-name:dictation-pulse}
+@keyframes dictation-wave{0%,100%{transform:scaleY(.65);opacity:.35}50%{transform:scaleY(2.7);opacity:.85}}
+@keyframes dictation-pulse{0%,100%{opacity:.25}50%{opacity:.7}}
+.dictation-transcript{position:absolute;bottom:calc(100% + 10px);right:0;width:min(260px,70vw);padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:0 5px 20px var(--shadow-color);z-index:80}
+.dictation-transcript p{margin:0;font-size:12px;line-height:1.6;overflow-wrap:anywhere;max-height:120px;overflow:auto}
+.dictation-transcript button{margin-top:6px;font-size:11px;color:var(--muted)}
+@media(prefers-reduced-motion:reduce){.dictation-wave i{animation:none}}
+.composerbar .composer-actions:has(.dictation-control.is-recording){max-width:min(100%,420px)}

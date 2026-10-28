@@ -256,7 +256,12 @@ async function readSource(filename, name, entry) {
     entry = resolveArchiveEntry(listing, entry);
     const isDocx=/\.docx$/i.test(entry);
     if(!readable(entry)&&!isDocx)throw Error('此条目不支持文本解析');
-    const buffer=await tar(['-xOf',filename,'--',entry],isDocx?MAX_ARCHIVE_ENTRY:2*1024*1024,8000);
+    let buffer;
+    try{buffer=await tar(['-xOf',filename,'--',entry],isDocx?MAX_ARCHIVE_ENTRY:2*1024*1024,8000);}
+    catch(error){
+      if(error.message==='文件内容超过读取上限')throw Object.assign(Error(`压缩包条目 ${JSON.stringify(entry)} 超过 ${isDocx?20:2} MB 提取上限。offset 分页发生在完整提取之后，改变 offset 不能解决此错误。`+(/\.sketch$/i.test(name)?'请使用已选 Sketch 解析技能在项目中提取目标画板或生成摘要，再读取小文件；不要反复尝试原条目的不同偏移。':'请在已授权项目内用对应文件工具提取或拆分目标内容，再按范围读取。')),{code:'SOURCE_ENTRY_TOO_LARGE'});
+      throw error;
+    }
     const text=isDocx?await readEmbeddedDocx(buffer,8000):decode(buffer);
     if(text===null)throw Error('条目不是 UTF-8 文本');
     return {text,kind:'archive_entry',entry};

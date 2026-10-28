@@ -14,7 +14,7 @@ async function failed(workspace,check,error){
   path:check.path||evidence?.detail.result?.scope?.path,
   scope:requirement.scope,scopes:requirement.scopes,
   attemptedCheck:{kind:check.kind,path:check.path,contains:check.contains,scope:check.scope,evidenceId},
-  observation:{code:error.code||'VALIDATION_FAILED',message:error.message.slice(0,2400)},
+  observation:{code:error.code||'VALIDATION_FAILED',message:error.message.slice(0,2400),...(error.code==='EVIDENCE_SOURCE_CHANGED'&&error.evidenceChange?{changedDependency:{path:error.evidenceChange.path,status:error.evidenceChange.status},instruction:'原要求与验证类型不变；仅针对变化的依赖及受影响检查获取当前证据后重新 verify。读取旧命令输出或回查文件不刷新原证据；不得自动重放结果未知的写入、安装或发送。'}:{})},
   revision:run.revision};
  await workspace.event('validation_failed',target);
  const failureEventId=run.events.at(-1).id;

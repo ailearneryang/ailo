@@ -29,6 +29,24 @@ function toolPreview(value,limit=PREVIEW_CHARS){
  if(typeof clean.result?.text==='string'&&clean.result.text.length<=8000&&JSON.stringify(clean).length<=12000)return clean;
  return preview(clean,limit);
 }
-function recent(observations){return observations.slice(-RECENT_COUNT).map(o=>({...toolPreview(o.response),observationId:o.observationId}));}
+function recent(observations){
+ const recentObservations=observations.slice(-RECENT_COUNT);
+ const rows=recentObservations.map(o=>({...toolPreview(o.response),observationId:o.observationId}));
+ const visible=new Map(rows.map(row=>[row.observationId,row]));
+ return rows.map((row,index)=>{
+  if(recentObservations[index].action?.action!=='batch_read'||!Array.isArray(row.result?.results))return row;
+  const results=row.result.results.map(item=>{
+   const child=visible.get(item.observationId)?.result,value=item.result;
+   // Retain the actual child text and its pagination exactly once. Never drop
+   // a parent-only page, or claim a different range was shown to the model.
+   if(!child||typeof child.text!=='string'||typeof value?.text!=='string'||!Number.isInteger(child.offset)||!Number.isInteger(child.total)||!(child.next===null||Number.isInteger(child.next))||child.offset!==value.offset||!child.text.startsWith(value.text))return item;
+   const {text,...metadata}=value;
+   return {...item,result:{...metadata,next:child.next,total:child.total,truncated:child.truncated===true,
+    resultRef:item.observationId,notice:'此项原文已在当前工具结果的对应 observationId 中提供；若后续上下文省略，可用该ID回查，不重复执行读取。'}};
+  });
+  return {...row,result:{...row.result,results}};
+ });
+}
+function checkpointThreshold(window){return Math.min(120000,Math.max(2000,(window-10000)/4));}
 function conversation(history){return history.slice(-4).map(m=>({...m,content:m.content?.slice(0,3000),...(m.content?.length>3000?{truncated:true,notice:'完整对话使用 read_history 回查，不能将此预览视为完整要求。'}:{})}));}
-module.exports={RECENT_COUNT,preview,toolPreview,receipt,recent,conversation};
+module.exports={RECENT_COUNT,preview,toolPreview,receipt,recent,conversation,checkpointThreshold};

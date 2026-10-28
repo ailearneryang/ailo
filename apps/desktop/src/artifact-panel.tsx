@@ -32,7 +32,7 @@ export function ArtifactPanel({task,selectionRequest,temporary=false,onDismiss,m
   const [preview,setPreview]=useState<ArtifactPreview>(),[error,setError]=useState(''),[loading,setLoading]=useState(false);
   const [files,setFiles]=useState<FileEntry[]>([]),[filesLoading,setFilesLoading]=useState(true),[filesError,setFilesError]=useState('');
   const [truncated,setTruncated]=useState(false),[refresh,setRefresh]=useState(0),[materialOffset,setMaterialOffset]=useState(0);
-  const deliveries=task.agentRun?.artifacts||[];
+  const deliveries=task.agentRun?.delivery?.availableArtifacts||task.agentRun?.artifacts||[];
   useEffect(()=>{if(selectionRequest){setView('delivery');setSelected({scope:'delivery',path:selectionRequest.path});}},[selectionRequest]);
   const projectFiles=view==='overview'?files.filter(f=>!deliveries.some(a=>a.path===f.path)):files;
   const scope=selected?.scope==='project'?'project':'delivery';

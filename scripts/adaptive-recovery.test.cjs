@@ -1,6 +1,8 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
 const protocol=require('../apps/desktop/agent/protocol.cjs');
+const {apiArgs}=require('../apps/desktop/feishu-request.cjs');
+const pageAction=page=>({action:'feishu',operation:'shortcut',query:'im +messages-search',params:{'page-token':page},purpose:'读取消息分页'});
 const recovery=require('../apps/desktop/agent/decision-recovery.cjs');
 const {runAgent}=require('../apps/desktop/agent/runner.cjs');
 const {createChat}=require('../apps/desktop/chat.cjs');
@@ -26,21 +28,21 @@ test('oversized local batch pages normalize safely and invalid app batches get a
 });
 test('recovery leaves small-action mode after distinct successful connector pages',()=>{
  const run={inputKey:'u',steps:plan.steps};recovery.begin(run,'MODEL_NO_ACTION_TIMEOUT');
- recovery.progress(run,{action:'feishu',operation:'search',query:'page1'},{exitCode:0});assert.ok(run.decisionRecovery);
- recovery.progress(run,{action:'feishu',operation:'search',query:'page2'},{exitCode:0});assert.equal(run.decisionRecovery,undefined);
+ recovery.progress(run,pageAction('page1'),{exitCode:0});assert.ok(run.decisionRecovery);
+ recovery.progress(run,pageAction('page2'),{exitCode:0});assert.equal(run.decisionRecovery,undefined);
 });
 test('two failed decisions automatically refocus, continue Feishu and never replay the completed page',async t=>{
  const base=await fixture(t),executed=[];let calls=0,failures=0;
- const result=await runAgent({base,task:{id:'task',request:plan.goal},model:bailian,signal:new AbortController().signal,executeTool:async(w,action,signal,options)=>{if(action.action!=='feishu')return require('../apps/desktop/agent/tools.cjs').execute(w,action,signal,options);executed.push(action.query);return {exitCode:0,output:action.query+' messages'};},ask:async messages=>{
+ const result=await runAgent({base,task:{id:'task',request:plan.goal},model:bailian,signal:new AbortController().signal,executeTool:async(w,action,signal,options)=>{if(action.action!=='feishu')return require('../apps/desktop/agent/tools.cjs').execute(w,action,signal,options);apiArgs(action);executed.push(action.params['page-token']);return {exitCode:0,output:action.params['page-token']+' messages'};},ask:async messages=>{
   const state=JSON.parse(messages.at(-1).content);
   if(state.requiredAction==='checkpoint')return {content:JSON.stringify({action:'checkpoint',text:'已保存两页飞书消息的读取凭据与总结文件，下一步核验已有总结并完成交付，不重复执行读取。'})};
   calls++;
   if(calls===1)return {content:JSON.stringify({action:'route',kind:'task'})};
   if(calls===2)return {content:JSON.stringify(plan)};
-  if(calls===3)return {content:JSON.stringify({action:'feishu',operation:'search',query:'page1',purpose:'读取第一页'})};
+  if(calls===3)return {content:JSON.stringify(pageAction('page1'))};
   if(failures++<2)throw Object.assign(Error('no action'),{code:'MODEL_NO_ACTION_TIMEOUT'});
   if(calls===6){assert.ok(protocol.allowedActions(state).includes('feishu'));assert.equal(state.decisionRecovery.stage,'refocus');}
-  if(calls===6)return {content:JSON.stringify({action:'feishu',operation:'search',query:'page2',purpose:'读取第二页'})};
+  if(calls===6)return {content:JSON.stringify(pageAction('page2'))};
   if(calls===7)return {content:JSON.stringify({action:'write_file',path:'summary.txt',content:'整理完成：page1 和 page2'})};
   if(calls===8)return {content:JSON.stringify({action:'artifact',path:'summary.txt',label:'消息总结'})};
   if(calls===9)return {content:JSON.stringify({action:'verify',checks:[{criterionId:state.acceptanceCriteria[0].id,kind:'text_contains',path:'summary.txt',contains:['page1','page2'],reason:'核对两页结果'}],progress:{steps:[{id:'read',status:'done'}]}})};
@@ -111,5 +113,5 @@ test('interleaved log reads do not reset no-action failure budget',async t=>{
   assert.equal(state.decisionRecovery.attempt,failures);
   return {content:JSON.stringify({action:'read_file',path:'build.log',offset:failures*100,limit:100})};
  }});
- assert.equal(failures,4);assert.equal(result.agentRun.status,'blocked');assert.equal(calls,9);
+ assert.equal(failures,4);assert.equal(result.agentRun.status,'partial');assert.equal(result.agentRun.delivery.outcome,'partial');assert.equal(result.agentRun.delivery.status,'settled');assert.equal(calls,9);
 });

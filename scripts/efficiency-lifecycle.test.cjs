@@ -192,6 +192,16 @@ test('performance UI separates completed steps, passed acceptance, visual checks
   const run={executionId:'run',status:'running',mode:'task',goal:'实现页面',steps:[{id:'s',title:'写入页面',status:'done'}],decisions:[],acceptance:['文件存在','视觉一致'],artifacts:[],events:[],acceptanceCriteria:[{id:'file',text:'文件存在',type:'presence',status:'passed'},{id:'ui',text:'视觉一致',type:'visual',status:'pending'}]};
   require('../apps/desktop/agent/performance.cjs').init(run);
   const html=renderToStaticMarkup(React.createElement(TaskProgress,{task:{id:'t',messages:[],agentRun:run},busy:false,onContinue(){},onOpenArtifacts(){}}));
+  const renderProgress=patch=>renderToStaticMarkup(React.createElement(TaskProgress,{task:{id:'t',title:'制作课程内容',messages:[],agentRun:{...run,...patch}},busy:true,onContinue(){},onOpenArtifacts(){}}));
+  const understanding=renderProgress({status:'understanding',goal:'整理课程要求',steps:[]});
+  assert.match(understanding,/activity-spinner/);assert.match(understanding,/progress-status-spinning/);
+  assert.doesNotMatch(renderProgress({status:'paused',steps:[]}),/progress-status-spinning|activity-spinner/);
+  assert.doesNotMatch(html,/progress-status-spinning/);
+  assert.match(understanding,/progress-visible-goal[^>]*>整理课程要求/);
+  assert.match(understanding,/正在梳理需求与已有材料，执行计划尚未生成/);
+  const executing=renderProgress({steps:[{id:'s',title:'选题核验',status:'done'},{id:'n',title:'撰写课程文件',status:'pending'}],events:[{id:'e',type:'read_file',at:'2026-10-28T00:00:00Z',detail:{path:'topics.md'}}]});
+  assert.doesNotMatch(executing,/progress-visible-goal|progress-focus|progress-context|progress-verification/);
+  assert.doesNotMatch(executing,/正在处理：撰写课程文件/);
   assert.match(html,/验收 1\/2 项/);assert.match(html,/视觉 0\/1 项/);assert.match(html,/步骤完成不代表验收通过/);assert.match(html,/工具成功不代表验收通过/);
   const withRegion=renderToStaticMarkup(React.createElement(TaskProgress,{task:{id:'t',messages:[],agentRun:{...run,designRegionIssues:[{regionId:'grid',region:'数据卡片',reason:'卡片缺失'}]}},busy:false,onContinue(){},onOpenArtifacts(){}}));
   assert.match(withRegion,/视觉验收未通过/);assert.match(withRegion,/数据卡片：卡片缺失/);

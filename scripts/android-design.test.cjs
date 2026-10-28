@@ -82,7 +82,7 @@ test('agent finish reopens design work rather than marking an unimplemented Sket
  const result=await require('../apps/desktop/agent/runner.cjs').runAgent({base:root,task,model:{contextWindow:65536,imageInput:'disabled'},signal:new AbortController().signal,ask:async messages=>{
   const snapshot=JSON.parse(messages.at(-1).content);
   if(calls===3){assert.equal(snapshot.steps[0].status,'running');assert.equal(snapshot.androidDesign.status,'binding_required');assert.ok(snapshot.executionState.gaps.some(g=>g.includes('Android 设计')));sawRepair=true;}
-  return {content:JSON.stringify(actions[calls++])};
+  return {content:JSON.stringify(actions[Math.min(calls++,actions.length-1)])};
  }});
  assert.equal(sawRepair,true);assert.notEqual(result.agentRun.status,'completed');assert.equal(result.agentRun.acceptanceCriteria[0].status,'pending');
 });

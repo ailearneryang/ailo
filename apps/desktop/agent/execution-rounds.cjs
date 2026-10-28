@@ -11,6 +11,10 @@ function beginRound(run,task,snapshot) {
   const terminal=['completed','idle'].includes(run.status);
   const newInput=run.inputKey ? run.inputKey!==trigger : messages.at(-1)?.role==='user';
   run.history ||= [];
+  if(newInput&&!terminal&&run.delivery?.status==='settled'){
+    const anchor=messages.slice(0,index).findLast(m=>m.role==='assistant');
+    if(anchor&&!run.history.some(r=>r.afterMessageId===anchor.id))run.history.push({...structuredClone(snapshot(run)),history:undefined,afterMessageId:anchor.id});
+  }
   if(newInput && (terminal || task.editedInputId===trigger)) {
     if(run.mode==='task' || run.loadedExtensions?.length) {
       const anchor=messages.slice(0,index).findLast(m=>m.role==='assistant');
@@ -20,8 +24,12 @@ function beginRound(run,task,snapshot) {
     run.visualComparisons=[];
     run.designRegionIssues={};run.designRegionReviews={};
     run.progressEvidence=[];
-    run.readAttempts=[];
-    delete run.androidCheck;
+    run.executionInputStart=index;
+    run.unresolvedFailureStreak=0;
+    run.validationRepairs={};delete run.toolRecovery;
+    run.loopEpisodes=[];delete run.failureEpisodes;delete run.taskState;delete run.segmentState;delete run.interventionTracking;delete run.runtimeContinuation;
+    run.readAttempts=[];delete run.readReceipts;delete run.contextArchives;delete run.visualReplayBoundary;delete run.taskContinuation;delete run.waitingError;
+    delete run.androidCheck;delete run.resultRecovery;delete run.visualAnalysisFailures;delete run.optionalContextFailures;delete run.extensionPreparationFailure;
     if(task.editedInputId===trigger)run.workingMemory='';
   }
   run.executionId ||= randomUUID();

@@ -42,7 +42,7 @@ async function assertFresh(workspace,record){
  for(const source of record.sources){
   const file=await resolveFile(workspace.files,source.path);let actual=null;
   try{const stat=await fs.stat(file);const maxMB=/\.apk$/i.test(source.path)||record.kind==='file_exists'&&record.path===source.path?150:20;if(!stat.isFile()||stat.size>maxMB*1024*1024)throw Error('证据依赖超出文件限制');actual=await hashFile(file);}catch(e){if(e.code!=='ENOENT')throw e;}
-  if(actual!==source.sha256)throw Error('证据依赖文件已变化，请重新观察或检查：'+source.path);
+  if(actual!==source.sha256)throw Object.assign(Error('证据依赖文件已变化，请重新观察或检查：'+source.path),{code:'EVIDENCE_SOURCE_CHANGED',evidenceChange:{path:source.path,status:actual===null?'missing':'modified'}});
  }
 }
 function resolveId(run,id){
@@ -67,6 +67,7 @@ async function event(workspace,id){
   if(!r?.apkSha256||!r.sources?.some(s=>s.path===r.apkPath&&s.sha256===r.apkSha256))throw Error('Android 运行证据缺少实际安装 APK 的版本绑定，请重新观察');
   const valid=e.detail.operation==='install'?r.installed===true:e.detail.operation==='launch'?/\bStatus:\s*ok\b/.test(r.output||''):e.detail.operation==='logs'?r.running===true&&!/FATAL EXCEPTION/.test(r.output||''):e.detail.operation==='screenshot'?!!r.pixelSize&&r.displayCheck?.matches===true:false;
   if(!valid)throw Error('Android 设备操作没有有效成功结果，不能作为验收证据');
+  await require('./android-delivery.cjs').assertAssistedDeviceEvidence(workspace,e);
   await assertFresh(workspace,r);
  }else if(['run_command','build_android'].includes(e.type)){
   if(!r||r.exitCode!==0||r.timedOut)throw Error('命令没有成功退出，不能作为完成证据');
@@ -77,6 +78,7 @@ async function event(workspace,id){
   if(page)require('./html-delivery.cjs').assertPageHealth(page.detail.result);
   const receipt=run.visualObservations?.find(o=>o.eventId===id&&o.delivered);
   if(!receipt&&e.type==='view_image')throw Error('图像尚未传给模型');
+  if(e.type==='view_image')await require('./android-delivery.cjs').assertAssistedImageEvidence(workspace,e);
   await assertFresh(workspace,{revision:e.detail.revision,sources:r.sources,fileSet:r.fileSet,rendererState:r.rendererState});
   if(receipt)await assertFresh(workspace,{revision:receipt.revision,sources:[...(receipt.sources||[]),{path:receipt.path,sha256:receipt.sha256}]});
  }

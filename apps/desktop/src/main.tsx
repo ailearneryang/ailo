@@ -1,3 +1,7 @@
+import {validateLoadedWorkspace} from "../workspace-load.mjs";
+import {reminderResume} from '../scheduled-message.cjs';
+import {legacyFeishuRecovery} from '../legacy-protocol-recovery.cjs';
+import {networkRecovery} from '../network-recovery.cjs';
 import {taskPresentation,mergeSessionSnapshot,syncLiveTaskRuns,type LiveSession} from './task-presentation';
 import {attachChatScroll} from './chat-scroll';
 import {ConversationActions,ConversationActionDialog,ArchivedConversations} from './conversation-management';
@@ -57,6 +61,7 @@ import { Pet } from "./pet";
 import { workspacePetState, taskPetState, unreadAttentionTasks, petNotificationToken } from "./pet-state";
 import {
   demoModel,
+  selectableModels,
   emptyWorkspace,
   type Material,
   type Task,
@@ -76,6 +81,7 @@ function App() {
   const [active, setActive] = useState<string | null>(ASSISTANT_ID);
   const [knowledgeMenuAnchor,setKnowledgeMenuAnchor]=useState<HTMLButtonElement|null>(null);
   const [newKnowledgeIds,setNewKnowledgeIds]=useState<string[]>([]);
+  const [openAutoSettings,setOpenAutoSettings]=useState(false);
   const [view, setView] = useState("assistant");
   const [expandedProjects,setExpandedProjects]=useState<Record<string,boolean>>({});
   const [projectsOpen,setProjectsOpen]=useState(true);
@@ -116,7 +122,7 @@ function App() {
     setSearchChoices(v=>({...v,new:project?.defaultTools?.searchEnabled===true}));setConnectionChoices(v=>({...v,new:project?.defaultTools?.feishuEnabled===true}));setAMapChoices(v=>({...v,new:project?.defaultTools?.amapEnabled===true}));setMCPChoices(v=>({...v,new:project?.defaultTools?.mcpConnectionIds||[]}));
     setNotice("");
   }
-  const models = data.models;
+  const models = selectableModels(data);
   const currentModel =
     models.find((m) => m.id === modelId) ||
     models.find((m) => m.id === data.defaultModelId) ||
@@ -195,7 +201,7 @@ function App() {
   }, []);
   useEffect(() => {
     if (!models.some((m) => m.id === modelId)) setModelId(data.defaultModelId);
-  }, [data.models, data.defaultModelId, modelId]);
+  }, [data.models, data.autoModel, data.defaultModelId, modelId]);
   async function addProject(name: string): Promise<string | null> {
     if (busy || !name.trim()) return "请输入项目名称。";
     if (
@@ -216,14 +222,7 @@ function App() {
     window.ailo
       .read()
       .then((s) => {
-        if (
-          !s ||
-          !Array.isArray(s.tasks) ||
-          s.tasks.some(
-            (t) => !t.id || !t.request || !Array.isArray(t.materials),
-          )
-        )
-          throw Error("保存的数据格式不正确");
+        validateLoadedWorkspace(s);
         const next = { ...emptyWorkspace, ...s };
         setData(next);
         setModelId(next.defaultModelId);
@@ -329,6 +328,7 @@ function App() {
       setModelId(data.defaultModelId);
     }
   }
+  useEffect(()=>{if(view!=="models")setOpenAutoSettings(false);},[view]);
   function modelReady() {
     if (currentModel.id !== "demo") return true;
     setError("");
@@ -560,6 +560,7 @@ function App() {
   const latestUserMessageId=task?messagesFor(task).filter(m=>m.role==='user').at(-1)?.id:undefined;
   const currentState=task?taskPresentation(task,sessions[task.id]):undefined;
   const currentProgress=task && (task.agentRun && <TaskProgress task={task} historical={currentState?.historical} currentStatus={currentState?.progressStatus} onOpenArtifacts={()=>{setTemporaryArtifactPanel(false);setArtifactSelection(undefined);setRightPanel('artifacts');}} busy={!ready || busy || messageEdit?.taskId===task.id} onContinue={() => {
+                  if(task.agentRun?.taskContinuation?.taskOpen&&!networkRecovery(task.agentRun)&&!legacyFeishuRecovery(task.agentRun)&&!reminderResume(task,task.agentRun)){setInput('继续原任务。已处理的条件或补充信息：');setNotice(task.agentRun.taskContinuation.question);return;}
                   if (messagesFor(task).at(-1)?.role === 'user') { void respond(task,false); return; }
                   const message: Message = {id:crypto.randomUUID(),role:"user",content:"请从已保存的任务状态继续，先检查已有成果，不重复执行已完成步骤。"};
                   void respond({...task,messages:[...messagesFor(task),message]},false);
@@ -695,6 +696,7 @@ function App() {
                   ← 返回对话
                 </button>
                 <ModelSettings
+                  openAuto={openAutoSettings}
                   data={data}
                   saving={busy}
                   commit={async (next) => {
@@ -885,7 +887,7 @@ function App() {
                     <button type="button" className="conversation-memory-button" aria-label="在此对话中使用和保存记忆" aria-pressed={memoryChoices[connectionKey]??task?.memoryEnabled??true} disabled={!ready||busy||task?.temporary===true} title={(memoryChoices[connectionKey]??task?.memoryEnabled??true)?'记忆已开启 · 点击关闭本对话记忆':'记忆已关闭 · 点击开启本对话记忆'} onClick={async()=>{const enabled=!(memoryChoices[connectionKey]??task?.memoryEnabled??true);try{if(task){const saved=await window.ailo.patchTask(task.id,{memoryEnabled:enabled});setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,...saved}:t)}));}setMemoryChoices(v=>({...v,[connectionKey]:enabled}));setNotice('');}catch(e){setError((e as Error).message);}}}><Icon name="memory"/><span>{(memoryChoices[connectionKey]??task?.memoryEnabled??true)?'记忆':'记忆已关闭'}</span></button>
                     <KnowledgePicker openFrom={knowledgeMenuAnchor} onClose={()=>setKnowledgeMenuAnchor(null)} key={'knowledge-'+(task?.id||view)} value={task?(task.knowledgeIds||[]):newKnowledgeIds} disabled={!ready||busy||!!pending} onManage={()=>setView('knowledge')} onChange={ids=>{if(task)void window.ailo.patchTask(task.id,{knowledgeIds:ids}).then(saved=>setData(d=>({...d,tasks:d.tasks.map(t=>t.id===saved.id?{...t,knowledgeIds:ids}:t)}))).catch(e=>setError(String(e)));else setNewKnowledgeIds(ids);}}/>
                   </ComposerAdd>
-                  <div className="composer-actions"><DictationButton conversationId={connectionKey} disabled={!ready||busy} onText={text=>setInput(value=>[value,text].filter(Boolean).join(' ').slice(0,20000))} onError={setError}/>
+                  <div className="composer-actions">
 
                     {currentModel.id !== "demo" && <ContextMeter
                       messages={[...(task ? messagesFor(task) : []), ...(input || materials.length ? [{ role: "user" as const, content: input, materials }] : [])]}
@@ -901,8 +903,10 @@ function App() {
                       onReasoningChange={effort=>{setReasoningChoices(previous=>({...previous,[connectionKey]:effort}));if(task)void window.ailo.patchTask(task.id,{reasoningEffort:effort}).then(saved=>setData(previous=>({...previous,tasks:previous.tasks.map(t=>t.id===saved.id?{...t,reasoningEffort:effort}:t)}))).catch(e=>setError(String(e)));}}
                       disabled={!ready || busy}
                       onSelect={setModelId}
+                      onConfigureAuto={()=>{setOpenAutoSettings(true);setView("models");}}
                       onConfigure={() => setView("models")}
                     />}
+                    <DictationButton key={connectionKey} conversationId={connectionKey} disabled={!ready||composerBusy} onText={text=>setInput(value=>[value,text].filter(Boolean).join(' ').slice(0,20000))} onError={setError}/>
                     {pending && !hasMessageContent(input,materials) ? (
                       <button
                         type="button"

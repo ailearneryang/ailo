@@ -56,7 +56,7 @@ test('a model that never changes its decision cannot replay the repeated tool in
   const s=JSON.parse(messages.at(-1).content);
   return {content:JSON.stringify(calls++?{action:'read_material',id:s.materials[0].id}:{action:'route',kind:'chat'})};
  }});
- assert.equal(executed,2);assert.match(result.content,/决策轮数预算/);assert.ok(result.agentRun.events.some(e=>e.type==='loop_recovery'));
+ assert.equal(executed,2);assert.equal(result.agentRun.status,'partial');assert.equal(result.agentRun.delivery.outcome,'partial');assert.equal(result.agentRun.delivery.status,'settled');assert.ok(calls<10);assert.match(result.content,/已停止无效请求/);assert.ok(result.agentRun.events.some(e=>e.type==='loop_recovery'));
  assert.ok(!result.agentRun.events.some(e=>e.type==='no_progress'));
 });
 test('internal loop recovery still stops for a real permission request',async t=>{

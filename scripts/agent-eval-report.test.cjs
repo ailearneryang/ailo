@@ -26,10 +26,11 @@ test('limited deliveries and unchecked quality cannot inflate verified task comp
  await put('web-normal-1',{result:{agentRun:{status:'completed',delivery:{outcome:'limited',visualReviewPending:true,unverified:['visual']}}}});
  await put('web-repair-1',{result:{agentRun:{status:'completed',delivery:{outcome:'complete'},acceptanceCriteria:[{status:'pending'}]}}});
  await put('code-normal-1',{humanAcceptance:'pending',result:{agentRun:{status:'completed',delivery:{outcome:'complete'}}}});
+ await put('data-normal-1',{result:{agentRun:{status:'partial',delivery:{outcome:'partial',status:'settled'},acceptanceCriteria:[{status:'pending'}]}}});
  await put('format-normal-1',{checks:[],externalChecks:[],result:{agentRun:{status:'completed',delivery:{outcome:'complete'}}}});
  await promisify(execFile)(process.execPath,[path.join(__dirname,'agent-eval-report.cjs'),root]);
  const report=JSON.parse(await fs.readFile(path.join(root,'report.json'),'utf8')),v=report.versions.candidate;
- assert.equal(v.limitedDeliveries,1);assert.equal(v.declaredComplete,3);assert.equal(v.verifiedSuccess,0);assert.equal(v.knownFalseCompletion,1);assert.equal(v.qualityPending,2);assert.equal(v.verifiedCompletionRate,null);
+ assert.equal(v.limitedDeliveries,1);assert.equal(v.partialDeliveries,1);assert.equal(v.declaredComplete,3);assert.equal(v.verifiedSuccess,0);assert.equal(v.knownFalseCompletion,1);assert.equal(v.qualityPending,2);assert.equal(v.verifiedCompletionRate,null);
  assert.equal(report.trials.find(t=>t.case==='web-normal').falseCompletion,false);
  assert.equal(report.trials.find(t=>t.case==='format-normal').automatic,null);
 });

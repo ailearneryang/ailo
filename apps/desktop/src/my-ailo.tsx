@@ -25,6 +25,7 @@ export function MyAilo({ data, runningIds, onOpen, compact, onSchedules, onPets,
   const unread=(task:Task)=>!runningIds.includes(task.id)&&hasUnreadPetNotification(task);
   function description(task: Task) {
     if (group === 'running') return task.agentRun?.steps.find(s => s.status === 'running')?.title || '正在处理';
+    if (group === 'attention' && task.agentRun?.taskContinuation?.taskOpen) return '等待处理 · 原任务与成果已保留';
     if (group === 'attention') return task.assistantPaused || task.agentRun?.status === 'paused' ? '已暂停 · 点击继续' : task.lastError || task.agentRun?.status === 'failed' ? '执行失败 · 点击查看并重试' : task.agentRun?.status === 'waiting_permission' ? '等待授权 · 点击确认' : task.messages?.at(-1)?.clarification || task.agentRun?.status === 'waiting_user' ? '需要补充信息 · 点击回复' : task.agentRun?.status === 'blocked' ? '任务受阻 · 点击查看原因' : '等待继续 · 点击查看';
     return task.agentRun?.artifacts.length ? `${task.agentRun.artifacts.length} 项成果` : '已有回复';
   }

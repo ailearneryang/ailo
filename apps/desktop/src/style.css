@@ -2267,5 +2267,127 @@ select:focus-visible {
 .reply-details-content p { margin:6px 0; }
 
 /* Expanded execution details belong to the scrollable conversation. */
-.thread-content > .task-activity { margin:18px 0 12px; }
+.thread-content > .task-activity { margin:18px 0 8px; }
+/* Tighten only the trailing activity-to-composer gap; preserve reply spacing. */
+.thread-content > .task-activity:last-child { margin-bottom:0; }
+.conversation-stage > .thread:has(> .thread-content > .task-activity:last-child) { padding-bottom:4px; }
+.conversation:has(> .conversation-stage > .thread > .thread-content > .task-activity:last-child) > .chat-compose { padding-top:6px; }
 .thread-content > .task-activity .execution-event-list { max-height:min(320px, 40vh); overscroll-behavior-y:contain; }
+
+/* Activity summaries stay compact; raw tool output is an explicit drill-down. */
+.task-activity-inline .task-activity-current > span[role="status"] { flex:1; font-weight:500; }
+.task-activity-duration { flex:none; font-size:calc(12px * var(--font-scale, 1)); color:var(--ui-73816f, #73816f); font-variant-numeric:tabular-nums; }
+.execution-event-list .execution-timeline { list-style:none; padding:0 0 0 25px; margin:12px 0; }
+/* Keep the marker gutter when nested in .task-progress's generic ol/li rules. */
+.execution-timeline > .execution-event { position:relative; padding:0 0 12px 22px; border-left:1px solid var(--ui-dbe4d6, #dbe4d6); min-width:0; }
+.execution-event:last-child { padding-bottom:4px; border-color:transparent; }
+.execution-event-mark { position:absolute; left:-9px; top:0; width:17px; text-align:center; background:var(--bg); color:var(--ui-39634c, #39634c); }
+.execution-event-failed .execution-event-mark,.execution-event-unknown .execution-event-mark { color:var(--warning); }
+.execution-event-title { font-weight:500; overflow-wrap:anywhere; }
+.execution-event-list .execution-event-meta { margin:3px 0 0; font-size:calc(12px * var(--font-scale, 1)); color:var(--ui-73816f, #73816f); }
+.execution-log { margin-top:8px; }
+.execution-log > summary,.execution-internal > summary { cursor:pointer; font-size:calc(12px * var(--font-scale, 1)); color:var(--ui-697765, #697765); }
+.execution-event-list .execution-log-label { margin:10px 0 4px; font-size:calc(12px * var(--font-scale, 1)); color:var(--ui-73816f, #73816f); }
+.execution-event-list .execution-log pre { margin:0; padding:10px 12px; background:var(--ui-f1f5ee, #f1f5ee); border-radius:8px; max-height:240px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-size:calc(12px * var(--font-scale, 1)); }
+.execution-internal { margin:12px 0 4px; }
+.execution-event-list .execution-evidence-note { margin-top:12px; }
+@media (max-width:420px) { .task-activity-duration { font-size:calc(11px * var(--font-scale, 1)); } .execution-event-list .execution-timeline { padding-left:10px; } }
+.execution-event-title { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
+.execution-event-title:hover { display:block; }
+.execution-event-list .execution-event-error { margin:4px 0; color:var(--danger); overflow-wrap:anywhere; }
+.task-activity-details { padding:0; border:0; }
+.task-activity-details > .execution-event-list,.thread-content > .task-activity .execution-event-list { max-height:none; overflow:visible; }
+.execution-event-list .execution-log { padding:0; border:0; }
+
+/* Compact activity row and a denser, chronological execution timeline. */
+.task-activity-inline .task-activity-current { display:flex; align-items:center; gap:7px; min-width:0; }
+.task-activity-inline .task-activity-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; font-size:calc(12px * var(--font-scale, 1)); color:var(--text); }
+.task-activity-attention .task-activity-title { color:var(--warning); }
+.task-activity-inline .task-activity-duration { white-space:nowrap; }
+.execution-event-list .execution-event-meta { margin-top:2px; }
+.execution-log { margin-top:4px; }
+.execution-event-list .execution-internal { border:0; padding:4px 0; }
+.execution-diagnostic-record { padding:6px 0; overflow-wrap:anywhere; }
+.execution-diagnostic-record p { margin:0; }
+.execution-recovery { margin:0; padding:0; border:0; }
+.execution-recovery > summary { cursor:pointer; font-weight:400; color:var(--muted); }
+.execution-recovery-count { font-size:calc(12px * var(--font-scale, 1)); }
+.execution-recovery-row .execution-event-mark { color:var(--muted); }
+@media(max-width:520px) {
+ .task-activity-inline .task-activity-current { display:grid; grid-template-columns:32px minmax(0,1fr) 16px; gap:2px 7px; }
+ .task-activity-inline .task-activity-title { grid-column:2; grid-row:1; }
+ .task-activity-inline .task-activity-duration { grid-column:2; grid-row:2; }
+ .task-activity-inline .task-activity-chevron { grid-column:3; grid-row:1; }
+}
+
+/* Only a live tool action spins; stored results and paused work stay still. */
+.activity-spinner { display:inline-block; box-sizing:border-box; width:13px; height:13px; border:2px solid var(--border); border-top-color:currentColor; border-right-color:currentColor; border-radius:50%; vertical-align:-2px; animation:activity-spin .85s linear infinite; }
+.task-activity-title > .activity-spinner { margin-right:7px; }
+.execution-event-running .execution-event-mark { color:var(--accent); }
+.execution-event-running .execution-event-title { color:var(--accent); }
+@keyframes activity-spin { to { transform:rotate(360deg); } }
+@media(prefers-reduced-motion:reduce) { .activity-spinner { animation:none; } }
+
+/* Auto settings: roles first, optional fallback choices below their control. */
+.auto-model-settings { padding:20px; }
+.auto-model-settings .auto-model-heading h2 { margin:0 0 6px; font-size:calc(17px * var(--font-scale, 1)); }
+.auto-model-heading > p { margin:0; color:var(--muted, #737f75); font-size:calc(13px * var(--font-scale, 1)); line-height:1.6; }
+.auto-model-settings .form-grid { gap:16px; }
+.auto-model-primary { margin-top:18px; }
+.auto-model-field { min-width:0; }
+.auto-model-field-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:4px 10px; min-height:20px; }
+.auto-model-settings .auto-model-field label { margin:0; }
+.auto-model-settings select { display:block; width:100%; min-width:0; margin-top:6px; padding:9px 10px; border:1px solid var(--ui-dce2d4, #dce2d4); border-radius:8px; color:var(--ui-293b31, #293b31); background:var(--ui-fafbf8, #fafbf8); font-size:calc(13px * var(--font-scale, 1)); }
+.auto-model-settings .auto-model-meta { display:flex; flex-wrap:wrap; gap:3px 10px; margin:6px 0 0; font-size:calc(11px * var(--font-scale, 1)); line-height:1.5; color:var(--muted, #737f75); overflow-wrap:anywhere; }
+.auto-model-meta > span:first-child { font-family:ui-monospace, SFMono-Regular, monospace; }
+.auto-model-settings .auto-model-hint { margin:6px 0 0; color:var(--muted, #737f75); font-size:calc(12px * var(--font-scale, 1)); line-height:1.6; }
+.auto-model-settings .auto-model-declaration { margin-top:10px; }
+.settings-form .auto-model-check { display:flex; align-items:center; gap:8px; margin:0; font-size:calc(13px * var(--font-scale, 1)); line-height:1.6; }
+.auto-model-check input[type="checkbox"] { width:15px; height:15px; margin:0; padding:0; flex:none; accent-color:var(--accent, #416454); }
+.auto-model-failover,.auto-model-default { padding-top:16px; margin-top:16px; border-top:1px solid var(--border, #dde3d6); }
+.auto-model-backups { margin-top:12px; }
+.auto-model-default .auto-model-hint { padding-left:23px; margin-top:3px; }
+.auto-model-settings .auto-model-link,.auto-model-capability summary { color:var(--accent, #416454); font-size:calc(12px * var(--font-scale, 1)); text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
+.auto-model-settings .auto-model-link { padding:0; }
+.auto-model-capability details { margin-top:6px; padding:0; border:0; }
+.auto-model-capability-options { margin-top:8px; padding:10px; border:1px solid var(--border, #dde3d6); border-radius:8px; }
+.auto-model-capability-options > p { margin:0 0 6px; font-size:12px; color:var(--muted, #737f75); }
+.auto-model-capability-options button { display:flex; width:100%; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:4px 12px; padding:7px; font-size:12px; text-align:left; }
+.auto-model-capability-options small { overflow-wrap:anywhere; }
+.auto-model-rules { padding:0; border:0; margin-top:14px; color:var(--muted, #737f75); font-size:calc(12px * var(--font-scale, 1)); line-height:1.6; }
+.auto-model-rules summary { cursor:pointer; width:fit-content; }
+.auto-model-rules p { margin:8px 0 0; }
+.auto-model-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; padding-top:16px; margin-top:14px; border-top:1px solid var(--border, #dde3d6); }
+.auto-model-save-state { font-size:calc(12px * var(--font-scale, 1)); line-height:1.5; color:var(--muted, #737f75); }
+.auto-model-save-state.is-dirty { color:var(--accent, #416454); }
+.auto-model-footer > button { flex:none; font-size:calc(13px * var(--font-scale, 1)); padding:9px 14px; }
+@media(max-width:820px) { .auto-model-settings .form-grid { gap:14px; } }
+
+.auto-model-advanced { margin-top:16px; padding:0; border:0; font-size:calc(13px * var(--font-scale, 1)); }
+.auto-model-advanced > summary { cursor:pointer; color:var(--muted, #737f75); }
+.auto-model-advanced .auto-model-failover { border:0; margin-top:0; padding-top:12px; }
+.auto-model-buttons { display:flex; align-items:center; gap:8px; }
+.auto-model-buttons button { padding:9px 14px; font-size:calc(13px * var(--font-scale, 1)); }
+.model-description > small { display:block; }
+
+/* Sidebar reflects a live session, never a stored running snapshot. */
+.task-nav-name > .session-status { display:inline-flex; align-items:center; gap:5px; width:fit-content; }
+.task-nav-name > .session-status .activity-spinner { width:11px; height:11px; border-width:1.5px; flex:none; }
+
+.task-nav-name > .session-status-icon { padding:3px; background:transparent; border-radius:0; }
+
+/* Keep the task and actual activity visible before opening execution details. */
+.progress-visible-goal { margin: 9px 0 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.progress-focus { display: flex; align-items: baseline; gap: 12px; padding: 12px 14px; border-radius: 10px; background: var(--ui-f6f7f2, #f6f7f2); }
+.progress-focus-label, .progress-context > p > span:first-child { flex: 0 0 auto; color: var(--ui-63765f, #63765f); font-size: calc(12px * var(--font-scale, 1)); }
+.progress-focus > div { min-width: 0; }
+.progress-focus strong { font-size: calc(14px * var(--font-scale, 1)); font-weight: 600; }
+.progress-focus p { margin: 4px 0 0; font-size: calc(12px * var(--font-scale, 1)); color: var(--ui-63765f, #63765f); }
+.progress-context { margin: 10px 0; }
+.progress-context > p { display: flex; align-items: baseline; gap: 12px; margin: 5px 0; font-size: calc(12px * var(--font-scale, 1)); }
+
+/* Activity follows the live request; saved and paused progress stays still. */
+.progress-status-spinning { animation: activity-spin .85s linear infinite; transform-origin: center; }
+.progress-focus-label { display: inline-flex; align-items: center; gap: 7px; }
+.progress-focus-label > .activity-spinner { width: 16px; height: 16px; flex: none; }
+@media (prefers-reduced-motion: reduce) { .progress-status-spinning { animation: none; } }

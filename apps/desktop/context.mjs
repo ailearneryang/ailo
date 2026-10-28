@@ -152,3 +152,15 @@ export function requestContextUsage(messages, format, model, outputBudget) {
   const used=rows.reduce((n,r)=>n+r.tokens,0),window=capacity(model);
   return {rows,used,window,reserve:outputBudget,ratio:used/window,threshold:Math.floor(window*.8),at:new Date().toISOString(),modelId:model.id,modelName:model.name||model.model,capacityConfigured:!!model.contextWindow,status:'sending'};
 }
+
+// The final serialized messages AND the selected wire schema are the budget's
+// single source of truth, including after any provider-compatibility fallback.
+export function prepareRequestBudget(messages, format, model, requestedOutput) {
+  if(!Number.isSafeInteger(requestedOutput)||requestedOutput<1)throw Error('模型输出额度无效。');
+  const stats=requestContextUsage(messages,format,model,requestedOutput);
+  const guard=Math.max(128,Math.min(1024,Math.floor(stats.window*.005)));
+  const configured=Number.isSafeInteger(model.maxOutputTokens)&&model.maxOutputTokens>0?model.maxOutputTokens:requestedOutput;
+  const budget=Math.min(requestedOutput,configured,stats.window-stats.used-guard);
+  if(budget<256)throw Object.assign(Error('当前模型请求的需求、状态与工具说明超过可用上下文，未发送请求；原任务、材料与成果已保留。请减少当前阶段的工具或扩展内容，或核对模型容量配置。'),{code:'MODEL_CONTEXT_LIMIT',diagnostics:{inputTokens:stats.used,contextWindow:stats.window,requestedOutputTokens:requestedOutput,availableOutputTokens:Math.max(0,budget),guardTokens:guard}});
+  return {budget,stats:{...stats,reserve:budget,requestedReserve:requestedOutput,budgetAdjusted:budget!==requestedOutput,guardTokens:guard}};
+}

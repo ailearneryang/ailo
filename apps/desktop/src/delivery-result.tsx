@@ -5,11 +5,14 @@ import {ArtifactViewer} from './artifact-viewer';
 import {Icon} from './icon';
 import {ArtifactPreviewDialog} from './artifact-preview-dialog';
 import './delivery-result.css';
+import {deliveryStatus} from './delivery-status';
 export function DeliveryResult({task,run,onOpen}:{task:Task;run:AgentRun;onOpen:(path?:string)=>void}){
  const [all,setAll]=useState(false),[preview,setPreview]=useState<ArtifactPreview>(),[error,setError]=useState(''),[loading,setLoading]=useState(false),[visible,setVisible]=useState(false);
  const [opened,setOpened]=useState<{path:string;label:string}>();
  const root=useRef<HTMLElement>(null);
- const files=run.artifacts.filter((file,index,list)=>list.findIndex(f=>f.path===file.path)===index);
+ const status=deliveryStatus(run);
+ const badge=<span className={`delivery-outcome delivery-outcome-${status.tone}`} title={status.description}><span aria-hidden="true">{status.icon}</span>{status.label}</span>;
+ const files=(run.delivery?.availableArtifacts||run.artifacts).filter((file,index,list)=>list.findIndex(f=>f.path===file.path)===index);
  const featured=files.find(f=>/\.(png|jpe?g|webp|svg)$/i.test(f.path))||files.find(f=>/\.html?$/i.test(f.path))||files.find(f=>/\.pdf$/i.test(f.path))||files[0];
  useEffect(()=>{
   if(!root.current)return;
@@ -25,11 +28,12 @@ export function DeliveryResult({task,run,onOpen}:{task:Task;run:AgentRun;onOpen:
   return()=>{cancelled=true;};
  },[task.id,featured?.path,featured?.sha256,visible]);
  async function reveal(){try{await window.ailo.reveal(task.id);}catch{setError('无法打开文件夹，请稍后重试。');}}
- if(!files.length)return null;
+ if(!files.length)return <div className="delivery-result" aria-label="任务结果">{badge}</div>;
  return <section ref={root} className="delivery-result" aria-label="交付产物">
-  <div className="delivery-result-heading"><strong>交付产物 <small>{files.length}</small></strong><FileActionsMenu className="delivery-more"><button onClick={()=>onOpen()}>查看全部文件</button><button onClick={()=>void reveal()}><Icon name="folder"/>在文件夹中查看</button></FileActionsMenu></div>
+  <div className="delivery-result-heading"><strong>交付产物 <small>{files.length}</small>{badge}</strong><FileActionsMenu className="delivery-more"><button onClick={()=>onOpen()}>查看全部文件</button><button onClick={()=>void reveal()}><Icon name="folder"/>在文件夹中查看</button></FileActionsMenu></div>
   <ul className="delivery-result-files">{(all?files:files.slice(0,5)).map(file=><li key={file.path}><button className="delivery-file-link" title={file.path} onClick={()=>setOpened({path:file.path,label:file.label||file.path.split('/').at(-1)||file.path})}><Icon name="file"/><span>{file.label||file.path.split('/').at(-1)}</span><small>{file.path.split('/').at(-1)}</small><span aria-hidden="true">↗</span></button></li>)}</ul>
   {files.length>5&&<button className="delivery-show-more" aria-expanded={all} onClick={()=>setAll(v=>!v)}>{all?'收起文件列表':`查看全部 ${files.length} 个产物`}</button>}
+  {run.delivery?.outcome==='partial'&&<p className="delivery-result-note">已有文件可查看，未完成及未核验项见本轮说明。</p>}
   {run.delivery?.outcome==='limited'&&!!run.completionReview?.unverified.length&&<p className="delivery-result-note">{run.delivery?.visualReviewPending?'任务已完成，视觉效果待人工确认。':'已交付，部分要求待人工确认。'}详见本轮交付说明。</p>}
   {loading&&<p role="status" className="delivery-result-note">正在加载产物预览…</p>}
   {preview&&featured&&<div className={'delivery-result-preview delivery-preview-'+preview.kind}>

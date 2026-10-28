@@ -1,0 +1,44 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),{randomUUID}=require('node:crypto');
+const design=require('../apps/desktop/agent/android-design.cjs'),episodes=require('../apps/desktop/agent/failure-episodes.cjs');
+const {createWorkspace}=require('../apps/desktop/agent/workspace.cjs'),{execute}=require('../apps/desktop/agent/tools.cjs'),working=require('../apps/desktop/agent/working-context.cjs');
+function board(index,regionCount=8){return {do_objectID:'board-'+index,name:'Large design '+index,frame:{width:2560,height:1440},layers:Array.from({length:regionCount},(_,r)=>({_class:'group',do_objectID:'region-'+index+'-'+r,name:'Region '+r,frame:{x:32,y:r*150,width:2400,height:140},layers:Array.from({length:6},(_,n)=>({_class:'group',do_objectID:'cell-'+index+'-'+r+'-'+n,name:'Repeated cell '+n,frame:{x:n*300,y:0,width:280,height:120},layers:[{_class:'text',do_objectID:'text-'+r+'-'+n,frame:{x:10,y:10,width:200,height:40},attributedString:{string:'Full original source text '+r+'-'+n,attributes:[{attributes:{MSAttributedStringFontAttribute:{attributes:{name:'Exact original font',size:24}},MSAttributedStringColorAttribute:{red:1,green:1,blue:1,alpha:1}}}]}},{_class:'bitmap',do_objectID:'image-'+r+'-'+n,frame:{x:10,y:60,width:40,height:40},image:{_ref:'images/actual-resource-'+index+'-'+r+'-'+n+'.png'}}]}))}))};}
+function spec(){return {status:'bound',screens:Array.from({length:3},(_,i)=>({boardId:'board-'+i,layout:'app/src/main/res/layout/screen_'+i+'.xml',reference:'design/board_'+i+'.png',screenshot:'verification/shot_'+i+'.png',baseline:design.describe(board(i),new Map())})),sources:Array.from({length:100},(_,i)=>({path:'source/pages/'+i+'.json',sha256:'a'.repeat(64)})),sourceBaseline:Array.from({length:20},(_,i)=>({path:'source/pages/'+i+'.json',sha256:'a'.repeat(64)})),issues:[],instruction:'Preserve all original design requirements'};}
+async function fixture(t){const base=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-context-projections-'));t.after(()=>fs.rm(base,{recursive:true,force:true}));const w=await createWorkspace(base,{id:'projection',request:'Preserve original requirements'});w.run.executionId=randomUUID();return w;}
+
+test('large real-shaped design projection retains navigation while removing repeated full fonts, images and layer geometry',()=>{
+ const source=spec(),before=JSON.stringify(source),reference=randomUUID(),projection=design.context(source,{width:1280,height:720,widthDp:1280,heightDp:720},{detailsObservationId:reference}),raw=JSON.stringify(projection);
+ assert.ok(before.length>50000);assert.ok(raw.length<14000);assert.ok(raw.length<before.length*.15);assert.equal(JSON.stringify(source),before);
+ assert.equal(projection.screens.length,3);assert.equal(projection.screens[0].baseline.designManifest.regionCount,8);assert.equal(projection.screens[0].baseline.designManifest.regions[0].id,'region-0-0');assert.deepEqual(projection.screens[0].baseline.designManifest.regions[0].frame,{x:32,y:0,width:2400,height:140});
+ assert.deepEqual(projection.screens[0].coordinateMapping.dpPerSourcePixel,{x:.5,y:.5});assert.equal(projection.details.observationId,reference);assert.equal(projection.details.tool,'read_execution');assert.equal(projection.details.view,'result');assert.equal(projection.details.complete,false);
+ assert.equal(Object.hasOwn(projection.screens[0].baseline,'texts'),false);assert.equal(raw.includes('Exact original font'),false);assert.equal(raw.includes('actual-resource-'),false);assert.equal(projection.sourcesSummary.examples.length,3);assert.equal(projection.sourcesSummary.truncated,true);assert.equal(projection.sourceCount,100);
+});
+
+test('full source spec survives actual archive/result pagination and projection omission cannot alter acceptance inputs',async t=>{
+ const w=await fixture(t),source=spec(),text=JSON.stringify(source),action={action:'android_design_details'},response={result:{kind:'android_design_details',text}},id=await w.archiveObservation(action,response);w.run.observationIndex=[{...working.receipt({action,response,observationId:id}),contextOnly:true}];await w.save();
+ const projection=design.context(source,undefined,{detailsObservationId:id});assert.equal(projection.details.available,true);
+ let content='',offset=0;do{const result=await execute(w,{action:'read_execution',id,view:'result',offset,limit:12000},new AbortController().signal);content+=result.text;offset=result.next;}while(offset!==null);
+ assert.equal(content,text);const restored=JSON.parse(content);assert.deepEqual(restored,source);assert.equal(restored.screens[0].baseline.texts[0].font.name,'Exact original font');assert.ok(restored.screens[0].baseline.designManifest.regions[0].repeats[0].frames.length>=6);
+ assert.equal(JSON.stringify(source),text);assert.ok(!projection.screens[0].baseline.designManifest.regions[0].repeats[0].frames);
+});
+
+test('missing detail archives and truncated navigation are explicit rather than claims of full source coverage',()=>{
+ const source=spec(),projection=design.context(source);assert.equal(projection.details.available,false);assert.equal(projection.details.complete,false);assert.equal(design.context(source,undefined,{detailsObservationId:'made-up-id'}).details.available,false);
+ source.screens=Array.from({length:12},(_,i)=>({...source.screens[0],boardId:'board-'+i,baseline:design.describe(board(i,32),new Map())}));
+ const navigation=design.context(source,undefined,{detailsObservationId:randomUUID()}),count=navigation.screens.reduce((n,s)=>n+s.baseline.designManifest.regions.length,0);assert.equal(count,48);assert.equal(navigation.navigationTruncated,true);assert.equal(navigation.screens[2].baseline.designManifest.regionCount,32);assert.equal(navigation.screens[2].baseline.designManifest.regions.length,0);assert.equal(navigation.screens[2].baseline.designManifest.navigationTruncated,true);
+ assert.ok(JSON.stringify(navigation).length<40000);assert.equal(source.screens[2].baseline.designManifest.regions.length,32);
+});
+
+test('failure projection uses command identity and a real error event while preserving complete ledger and recovery budgets',async t=>{
+ const w=await fixture(t),command='fixture original command '+'x'.repeat(11222),error=Object.assign(Error('Exact original failure '+ 'diagnostic '.repeat(100)),{code:'FIXTURE_FAILED'});await w.event('tool_error',{action:'run_command',command,message:error.message});const eventId=w.run.events.at(-1).id,episode=episodes.failure(w.run,{action:'run_command',command},error);
+ assert.equal(episode.lastEventId,eventId);assert.equal(episode.target.command,command);assert.equal(episode.message,error.message.slice(0,1600));episode.failures=3;episode.recoveries=1;episode.resumeCredits=1;
+ const before=JSON.stringify(w.run.failureEpisodes),projection=episodes.context(w.run),raw=JSON.stringify(projection);assert.ok(raw.length<1400);assert.equal(raw.includes(command),false);assert.equal(projection[0].target.commandIdentity.chars,command.length);assert.equal(projection[0].target.commandIdentity.sha256,require('../apps/desktop/agent/evidence.cjs').hash(Buffer.from(command)));assert.equal(projection[0].details.observationId,eventId);assert.equal(projection[0].message.length,320);assert.equal(projection[0].messageTruncated,true);assert.equal(JSON.stringify(w.run.failureEpisodes),before);
+ w.run.events=[];assert.equal(episodes.context(w.run)[0].details.observationId,eventId);const record=await execute(w,{action:'read_execution',id:eventId,view:'record',offset:0,limit:12000},new AbortController().signal);assert.ok(record.text.includes('fixture original command'));
+ assert.equal(episodes.next(episode),'recover');assert.equal(episode.recoveries,2);assert.equal(episode.failures,3);assert.equal(episode.resumeCredits,1);
+});
+
+test('legacy failure references only match actual same-target errors, never fabricated or another command',()=>{
+ const id=randomUUID(),at='2026-10-25T10:00:00.000Z',run={executionId:randomUUID(),steps:[],events:[{id,type:'tool_error',at,detail:{action:'run_command',command:'right',message:'same error'}}]};
+ const legacy={version:1,executionId:run.executionId,records:[{id:'failure',target:{action:'run_command',command:'right'},errorClass:'ERROR',status:'open',failures:2,recoveries:0,lastAt:at,message:'same error'}]};run.failureEpisodes=legacy;const before=JSON.stringify(legacy);assert.equal(episodes.context(run)[0].details.observationId,id);assert.equal(JSON.stringify(legacy),before);
+ legacy.records[0].target.command='other';assert.equal(episodes.context(run)[0].details.available,false);legacy.records[0].target.command='right';legacy.records[0].message='different error';assert.equal(episodes.context(run)[0].details.available,false);
+ legacy.records[0].message='same error';legacy.records[0].lastAt='2026-10-25T09:59:59.000Z';assert.equal(episodes.context(run)[0].details.available,false);
+});

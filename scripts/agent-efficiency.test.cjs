@@ -24,12 +24,12 @@ test('plan and memory review ride with real work, survive restart, and do not im
  const {base,task,w}=await setup(t);Object.assign(w.run,{...plan,mode:'task',status:'paused',actionsSincePlan:6});delete w.run.action;
  w.run.observations=[];for(let i=0;i<24;i++)w.run.observations.push({action:{action:'read_file',path:'old'+i},response:{result:{text:'old'}}});await w.save();
  let calls=0;
- const result=await runAgent({base,task,model:{contextWindow:65536},signal:new AbortController().signal,ask:async messages=>{const s=JSON.parse(messages.at(-1).content);if(calls++===0)return reply({action:'route',kind:'task'});if(calls===2){assert.equal(s.requiredAction,'checkpoint');return reply({action:'write_file',path:'actual.txt',content:'actual',progress:{memory,steps:plan.steps}});}assert.equal(s.requiredAction,undefined);assert.equal(s.workingMemory,memory);assert.equal(s.steps[0].status,'running');return reply({action:'pause',text:'继续检查'});}});
+ const result=await runAgent({base,task,model:{contextWindow:65536},signal:new AbortController().signal,ask:async messages=>{const s=JSON.parse(messages.at(-1).content);if(calls++===0)return reply({action:'route',kind:'task'});if(calls===2){assert.equal(s.requiredAction,'checkpoint');return reply({action:'write_file',path:'actual.txt',content:'actual',progress:{memory,steps:plan.steps.map(({id,status})=>({id,status}))}});}assert.equal(s.requiredAction,undefined);assert.equal(s.workingMemory,memory);assert.equal(s.steps[0].status,'running');return reply({action:'pause',text:'继续检查'});}});
  assert.equal(calls,3);assert.equal(await fs.readFile(path.join(w.files,'actual.txt'),'utf8'),'actual');assert.equal(result.agentRun.status,'paused');assert.equal(result.agentRun.performance.attachedUpdates,1);
  assert.equal((await createWorkspace(base,task)).run.workingMemory,memory);
 });
 test('invalid attached memory prevents a simultaneous step change and side effect',async t=>{
- const {base,task,w}=await setup(t);let n=0;const actions=[{action:'route',kind:'task'},plan,{action:'write_file',path:'bad.txt',content:'bad',progress:{steps:[{...plan.steps[0],status:'done'}],memory:'bad'}},{action:'pause',text:'未执行'}];
+ const {base,task,w}=await setup(t);let n=0;const actions=[{action:'route',kind:'task'},plan,{action:'write_file',path:'bad.txt',content:'bad',progress:{steps:[{id:plan.steps[0].id,status:'done'}],memory:'bad'}},{action:'pause',text:'未执行'}];
  await runAgent({base,task,model:{contextWindow:65536},signal:new AbortController().signal,ask:async()=>reply(actions[n++])});
  await assert.rejects(fs.stat(path.join(w.files,'bad.txt')));assert.equal((await createWorkspace(base,task)).run.steps[0].status,'running');
 });
@@ -55,7 +55,7 @@ test('the same six independent file reads need nine sequential decisions or four
  for(const batched of [false,true]){
   const {base,task,w}=await setup(t);for(let i=0;i<6;i++)await fs.writeFile(path.join(w.files,i+'.txt'),'source '+i);
   const reads=Array.from({length:6},(_,i)=>({action:'read_file',path:i+'.txt',limit:100}));
-  const actions=[{action:'route',kind:'task'},plan,...(batched?[{action:'batch_read',items:reads,progress:{steps:plan.steps,memory}}]:reads),{action:'pause',text:'已读取，后续检查'}];let n=0;
+  const actions=[{action:'route',kind:'task'},plan,...(batched?[{action:'batch_read',items:reads,progress:{steps:plan.steps.map(({id,status})=>({id,status})),memory}}]:reads),{action:'pause',text:'已读取，后续检查'}];let n=0;
   const result=await runAgent({base,task,model:{contextWindow:65536},signal:new AbortController().signal,ask:async()=>reply(actions[n++])});
   const saved=await createWorkspace(base,task);assert.equal(new Set(saved.run.readCoverage.map(r=>r.path)).size,6);assert.equal(result.agentRun.status,'paused');counts.push(result.agentRun.performance.modelRequests);
  }

@@ -47,12 +47,12 @@ test('explicit tool incompatibility falls back to JSON mode and retains it for t
 test('authentication failure is never retried as formatting incompatibility',async t=>{
  const storage=await fixture(t);let calls=0;
  const chat=createChat(storage,async()=>{calls++;return new Response('secret',{status:401});});
- await assert.rejects(chat.complete(input),/API Key/);assert.equal(calls,1);
+ const waiting=await chat.complete(input);assert.equal(waiting.agentRun.status,'blocked');assert.equal(waiting.agentRun.taskContinuation.taskOpen,true);assert.match(waiting.content,/API Key/);assert.equal(calls,1);
 });
 test('malformed actions get bounded recovery and a user-facing failure',async t=>{
  const storage=await fixture(t);let calls=0;
  const chat=createChat(storage,async()=>{calls++;return new Response(JSON.stringify({choices:[{message:{content:'我来帮你开发'}}]}));});
- await assert.rejects(chat.complete(input),e=>/任务和材料已保留/.test(e.message)&&!e.message.includes('JSON'));assert.equal(calls,3);
+ const waiting=await chat.complete(input);assert.equal(waiting.agentRun.status,'blocked');assert.equal(waiting.agentRun.taskContinuation.taskOpen,false);assert.match(waiting.content,/尚未形成可交付成果/);assert.doesNotMatch(waiting.agentRun.taskContinuation.gap,/JSON/);assert.equal(calls,3);
 });
 test('ambiguous or unknown native tools are rejected even alongside valid-looking content',()=>{
  const call={function:{name:'ailo_action',arguments:'{"action":"route","kind":"chat"}'}};
@@ -180,7 +180,7 @@ test('two idle decisions recover automatically without requiring a manual retry'
 test('agent tool output still obeys idle timeout after decision timer clears',async t=>{
  const storage=await fixture(t);let calls=0;
  const chat=createChat(storage,async()=>{calls++;return slowDecision({action:'route',kind:'chat'},{reasoning:0,end:false});},{first:200,idle:35,text:20,decision:200,total:1000});
- await assert.rejects(chat.complete(input),/模型内容已停止更新.*已自动重试 2 次/);assert.equal(calls,3);assert.deepEqual(chat.sessions(),[]);
+ const waiting=await chat.complete(input);assert.equal(waiting.agentRun.taskContinuation.state,'waiting_service');assert.match(waiting.content,/模型内容已停止更新.*已自动重试 2 次/);assert.equal(calls,3);assert.deepEqual(chat.sessions(),[]);
 });
 
 test('idle decision retries only the interrupted step and discards unfinished tools',async t=>{
@@ -218,7 +218,7 @@ test('persistent empty responses exhaust staged recovery while filtering is neve
  const chat=createChat(storage,async()=>{calls++;return new Response(JSON.stringify({choices:[{message:{content:''},finish_reason:'stop'}]}));});
  const paused=await chat.complete(input);assert.equal(paused.agentRun.status,'blocked');assert.match(paused.content,/尚未完成/);assert.equal(calls,4);assert.deepEqual(chat.sessions(),[]);
  calls=0;const filtered=createChat(storage,async()=>{calls++;return new Response(JSON.stringify({choices:[{message:{content:''},finish_reason:'content_filter'}]}));});
- await assert.rejects(filtered.complete(input),e=>e.code==='MODEL_CONTENT_FILTER');assert.equal(calls,1);
+ const waiting=await filtered.complete(input);assert.equal(waiting.agentRun.taskContinuation.code,'MODEL_CONTENT_FILTER');assert.equal(waiting.agentRun.taskContinuation.taskOpen,true);assert.equal(calls,1);
 });
 
 test('missing discriminator switches to named tools and recovers without guessing command action',async t=>{

@@ -11,35 +11,42 @@ async function listFiles(root, relative='') {
 }
 // Seatbelt localhost selectors also admit wildcard listeners on current macOS.
 // Build mode is separately authorized; do not claim loopback-only enforcement.
-function sandboxProfile(root, sdk, build=false, javaHome, readDirectories=[], networkOutbound=true) {
+function sandboxProfile(root, sdk, build=false, javaHome, readDirectories=[], networkOutbound=true,runtimePaths=[]) {
   const q=s=>JSON.stringify(s);
-  const read=['/System','/usr','/bin','/sbin','/opt/homebrew','/Library/Java','/Library/Developer','/Library/Apple','/Applications/Android Studio.app','/private/etc','/private/var/db/dyld','/dev',sdk,javaHome,...readDirectories].filter(Boolean);
+  const read=['/System','/usr','/bin','/sbin','/opt/homebrew','/Library/Java','/Library/Developer','/Library/Apple','/Applications/Android Studio.app','/private/etc','/private/var/db/dyld','/dev',sdk,javaHome,...readDirectories,...runtimePaths].filter(Boolean);
   const readable=read.map(p=>`(subpath ${q(p)})`).join(' ')+` (subpath ${q(root)})`;
   return `(version 1)(deny default)(allow process*)(allow sysctl-read)(allow mach-lookup (global-name "com.apple.system.logger") (global-name "com.apple.logd") (global-name "com.apple.system.notification_center") (global-name "com.apple.mDNSResponder"))(allow file-read-metadata)${build?'(allow network-bind (local ip "localhost:*"))(allow network-inbound (local ip "localhost:*"))':''}${networkOutbound?'(allow network-outbound)':''}(allow file-read* (literal "/") ${readable})(allow file-map-executable ${readable})(allow file-write* (subpath ${q(root)}) (literal "/dev/null") (literal "/dev/tty"))`;
 }
 async function runCommand(root,command,signal,timeout=120000,options={}) {
+  let runtime,env,sdk,javaHome,runtimePaths;
+  try {
   if(typeof command!=='string'||!command.trim()||command.length>8000)throw Error('命令无效');
   if(process.platform!=='darwin')throw Error('此版本命令隔离仅支持 macOS，未启动命令');
   await fs.access('/usr/bin/sandbox-exec');
   root=await fs.realpath(root);
-  const runtime=path.join(root,'.runtime');
+  runtime=path.join(root,'.runtime');
   for(const dir of ['home','tmp','gradle'])await fs.mkdir(await resolveFile(root,'.runtime/'+dir,true),{recursive:true});
-  const {sdk,javaHome}=await require('./android-environment.cjs').androidEnvironment({required:!!options.build});
-  const env={PATH:'/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin',HOME:path.join(runtime,'home'),TMPDIR:path.join(runtime,'tmp'),GRADLE_USER_HOME:path.join(runtime,'gradle'),...(sdk?{ANDROID_HOME:sdk,ANDROID_SDK_ROOT:sdk}:{}),...(javaHome?{JAVA_HOME:javaHome}:{}),LANG:'en_US.UTF-8'};
+  ({sdk,javaHome}=await require('./android-environment.cjs').androidEnvironment({required:!!options.build}));
+  const commandRuntime=require('./command-runtime.cjs'),commands=await commandRuntime.environment(root,options.commandRuntime||await commandRuntime.resolve());
+  runtimePaths=commands.readPaths;
+  env={...commands.env,GRADLE_USER_HOME:path.join(runtime,'gradle'),...(sdk?{ANDROID_HOME:sdk,ANDROID_SDK_ROOT:sdk}:{}),...(javaHome?{JAVA_HOME:javaHome}:{}),LANG:'en_US.UTF-8'};
+  } catch(error){error.notExecuted=true;throw error;}
   // No inherited API keys or unrestricted fallback when sandbox setup fails.
   return new Promise((resolve,reject)=>{
-    if(signal.aborted)return reject(Error('已停止执行'));
-    const child=spawn('/usr/bin/sandbox-exec',['-p',sandboxProfile(root,sdk,!!options.build,javaHome,options.readDirectories,options.networkOutbound!==false),'/bin/bash','-o','pipefail','-c',command],{cwd:root,env,detached:true,stdio:['ignore','pipe','pipe']});
+    if(signal.aborted)return reject(Object.assign(Error('已停止执行'),{notExecuted:true}));
+    const child=spawn('/usr/bin/sandbox-exec',['-p',sandboxProfile(root,sdk,!!options.build,javaHome,options.readDirectories,options.networkOutbound!==false,runtimePaths),'/bin/bash','-o','pipefail','-c',command],{cwd:root,env,detached:true,stdio:['ignore','pipe','pipe']});
     let output='',stdout='',stderr='',truncated=false,timedOut=false;
     const kill=()=>{try{process.kill(-child.pid,'SIGKILL');}catch{child.kill('SIGKILL');}};
     const timer=setTimeout(()=>{timedOut=true;kill();},timeout);
-    let lastUpdate=0;
-    const collect=b=>{output+=b.toString();if(output.length>24000){output=output.slice(-24000);truncated=true;}if(Date.now()-lastUpdate>1000){lastUpdate=Date.now();options.onOutput?.(output.slice(-800));}};
-    child.stdout.on('data',b=>{stdout=(stdout+b.toString()).slice(-24000);collect(b);});child.stderr.on('data',b=>{stderr=(stderr+b.toString()).slice(-24000);collect(b);});
+    let lastUpdate=0,pendingUpdate;
+    const emit=()=>{clearTimeout(pendingUpdate);pendingUpdate=undefined;lastUpdate=Date.now();try{Promise.resolve(options.onOutput?.(output,{truncated})).catch(()=>{});}catch{}};
+    const collect=text=>{output+=text;if(output.length>24000){output=output.slice(-24000);truncated=true;}if(Date.now()-lastUpdate>=1000)emit();else if(!pendingUpdate)pendingUpdate=setTimeout(emit,1000-(Date.now()-lastUpdate));};
+    child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
+    child.stdout.on('data',text=>{stdout=(stdout+text).slice(-24000);collect(text);});child.stderr.on('data',text=>{stderr=(stderr+text).slice(-24000);collect(text);});
     signal.addEventListener('abort',kill,{once:true});
-    const cleanup=()=>{clearTimeout(timer);signal.removeEventListener('abort',kill);};
-    child.on('error',e=>{cleanup();reject(e);});
-    child.on('close',(exitCode,terminationSignal)=>{cleanup();kill();if(signal.aborted)return reject(Error('已停止执行'));resolve({exitCode,terminationSignal,output,stdout,stderr,truncated,timedOut,pipelineFailurePreserved:true});});
+    const cleanup=()=>{clearTimeout(timer);clearTimeout(pendingUpdate);signal.removeEventListener('abort',kill);};
+    child.on('error',e=>{cleanup();if(!child.pid)e.notExecuted=true;reject(e);});
+    child.on('close',(exitCode,terminationSignal)=>{emit();cleanup();kill();if(signal.aborted)return reject(Error('已停止执行'));resolve({exitCode,terminationSignal,output,stdout,stderr,truncated,timedOut,pipelineFailurePreserved:true});});
   });
 }
 async function execute(workspace,action,signal,options={}) {
@@ -66,10 +73,10 @@ async function execute(workspace,action,signal,options={}) {
     case 'write_file': {
       if(typeof action.content!=='string'||action.content.length>200000)throw Error('文件内容超过限制');
       if(action.path?.split('/').includes('.runtime'))throw Error('运行目录不允许写入');
-      const file=await resolveFile(files,action.path,true);
-      try{const before=await fs.readFile(file);if(before.length<=10*1024*1024){const backupDir=require('node:path').join(workspace.project,'backups');await fs.mkdir(backupDir,{recursive:true,mode:0o700});await fs.writeFile(require('node:path').join(backupDir,require('node:crypto').createHash('sha256').update(normalizeProjectPath(action.path)).digest('hex')+'.backup'),before,{mode:0o600});}}catch(e){if(e.code!=='ENOENT')throw e;}
-      await fs.writeFile(file,action.content,{mode:0o600,flag:require('node:fs').constants.O_WRONLY|require('node:fs').constants.O_CREAT|require('node:fs').constants.O_TRUNC|require('node:fs').constants.O_NOFOLLOW});
-      return {path:action.path,bytes:Buffer.byteLength(action.content)};
+      const file=await resolveFile(files,action.path,true),data=Buffer.from(action.content),sha256=require('node:crypto').createHash('sha256').update(data).digest('hex');
+      try{const before=await fs.readFile(file);if(before.equals(data))return {path:action.path,bytes:data.length,sha256,version:sha256,changed:false};if(before.length<=10*1024*1024){const backupDir=require('node:path').join(workspace.project,'backups');await fs.mkdir(backupDir,{recursive:true,mode:0o700});await fs.writeFile(require('node:path').join(backupDir,require('node:crypto').createHash('sha256').update(normalizeProjectPath(action.path)).digest('hex')+'.backup'),before,{mode:0o600});}}catch(e){if(e.code!=='ENOENT')throw e;}
+      await fs.writeFile(file,data,{mode:0o600,flag:require('node:fs').constants.O_WRONLY|require('node:fs').constants.O_CREAT|require('node:fs').constants.O_TRUNC|require('node:fs').constants.O_NOFOLLOW});
+      return {path:action.path,bytes:data.length,sha256,version:sha256,changed:true};
     }
     case 'request_directory': {
       if(!options.directoryAccess)throw Object.assign(Error('当前环境未提供目录授权入口，任务已保留。'),{code:'DIRECTORY_UNAVAILABLE'});
@@ -80,7 +87,7 @@ async function execute(workspace,action,signal,options={}) {
     }
     case 'run_command': {
       const commandOptions=options.permissions?await options.permissions.commandOptions():{readDirectories:options.directoryAccess?.directories(workspace.run.taskId)};
-      const result=await runCommand(files,action.command,signal,120000,commandOptions);
+      const result=await runCommand(files,action.command,signal,120000,{...commandOptions,onOutput:options.onOutput});
       if(commandOptions.networkOutbound===false)result.networkNotice='本次命令未获得联网权限。若任务需要下载依赖或请求网络，请先 request_network，不要通过其他工具绕过。';
       if(/Operation not permitted|Permission denied/i.test(result.output))result.notice='访问被拒绝，尚不能判断是否为系统隐私限制。若需要工作区外目录，请使用 request_directory 获取只读授权；已授权仍失败时说明具体路径，并引导用户检查系统文件与文件夹权限或管理员策略，不要重复探测或直接断言 TCC。';
       return result;
@@ -90,7 +97,7 @@ async function execute(workspace,action,signal,options={}) {
     case 'mcp': if(!options.mcp)throw Object.assign(Error('当前对话未选择自定义应用连接。'),{code:'MCP_UNAVAILABLE'});return options.mcp.execute(action,signal);
     case 'amap': if(!options.amap)throw Object.assign(Error('当前环境未启用高德地图，请在应用连接中配置。'),{code:'AMAP_UNAVAILABLE'});return options.amap.execute(action,signal);
     case 'feishu': if(!options.feishuCli)throw Error('当前未启用飞书应用连接');return options.feishuCli.execute(action,signal,workspace.run.executionId||workspace.run.taskId);
-    case 'build_android': return require('./android-build.cjs').buildAndroid(files,action,signal,options);
+    case 'build_android': return require('./android-build.cjs').buildAndroid(files,action,signal,{...options,cacheDirectory:path.join(workspace.project,'build-cache')});
     case 'android_device': {
       if(!options.android)throw Error('当前执行环境没有启用 Android 设备管理服务');
       if(action.operation==='check')return require('./android-check.cjs').execute(workspace,action,signal,options);

@@ -4,7 +4,7 @@ function createPersonalAssistant({storage,chat,schedules,notify=()=>{}}){
   const launches=new Map();
   function launch(task,modelId){
     const id=randomUUID();
-    const promise=chat.complete({id,taskId:task.id,modelId,extensionIds:task.extensionIds,searchEnabled:task.searchEnabled,feishuEnabled:task.feishuEnabled,amapEnabled:task.amapEnabled,mcpConnectionIds:task.mcpConnectionIds,
+    const promise=chat.complete({id,taskId:task.id,executionOrigin:'assistant',modelId,extensionIds:task.extensionIds,searchEnabled:task.searchEnabled,feishuEnabled:task.feishuEnabled,amapEnabled:task.amapEnabled,mcpConnectionIds:task.mcpConnectionIds,
       messages:(task.messages||[]).map(({role,content})=>({role,content})),
       onRun:run=>notify({id,taskId:task.id,run}),onStatus:message=>notify({id,taskId:task.id,message}),onText:content=>notify({id,taskId:task.id,content})});
     launches.set(task.id,promise);

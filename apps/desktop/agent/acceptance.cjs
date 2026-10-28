@@ -3,23 +3,31 @@ const {createHash}=require('node:crypto');
 const {resolveFile}=require('./workspace.cjs');
 const criterionId=text=>'a_'+createHash('sha256').update(text).digest('hex').slice(0,16);
 const appropriate=(type,kind)=>type==='visual'?kind==='visual':type==='behavior'?['command','observation'].includes(kind):type==='content'?kind!=='file_exists':true;
-function criteria(run){return require('./requirements.cjs').current(run).map(({id,text,type,scope,scopes})=>{const check=run.acceptanceResults?.[id];return {id,text,type,scope,scopes,check:check&&(check.type||'content')===type&&(check.parts||[check]).every(p=>appropriate(type,p.kind)&&!(type==='visual'&&run.visualObservations?.some(o=>o.eventId===p.evidenceId&&o.designBinding)&&p.designReviewVersion!==1))?check:undefined};});}
+function criteria(run){return require('./requirements.cjs').current(run).map(({id,text,type,scope,scopes,evidenceBinding})=>{
+ const check=run.acceptanceResults?.[id];
+ // Older auto mode accepted image blocks without establishing understanding.
+ // A documented text model cannot inherit that assessment as a visual pass.
+ // Keep the original result for audit; every delivery/pending/UI consumer uses
+ // this projection. Unknown proxies and independently capable runs retain their
+ // existing evidence contract rather than guessing a new observer provenance.
+ const unavailableHistoricalVisual=type==='visual'&&run.observationCapabilities?.source==='documented_text_model'&&run.observationCapabilities.visualReview===false;
+ return {id,text,type,scope,scopes,evidenceBinding,check:!unavailableHistoricalVisual&&check&&(check.type||'content')===type&&(check.parts||[check]).every(p=>appropriate(type,p.kind)&&!(type==='visual'&&run.visualObservations?.some(o=>o.eventId===p.evidenceId&&o.designBinding)&&p.designReviewVersion!==1))?check:undefined};
+ });}
 async function verify(workspace,action){
+ // Malformed request fields are not evidence of an artifact
+ // defect. Validate the complete batch before checking any file or proof.
+ require('./verification-request.cjs').validate(action,criteria(workspace.run),id=>require('./evidence.cjs').resolveId(workspace.run,id));
  let activeCheck;
  try{return await verifyBatch(workspace,action,check=>{activeCheck=check;});}
- catch(error){if(error.code==='VISUAL_REVIEW_UNAVAILABLE')throw error;await require('./validation-recovery.cjs').failed(workspace,activeCheck,error);throw error;}
+ catch(error){if(activeCheck?.criterionId)error.criterionId=activeCheck.criterionId;if(['VISUAL_REVIEW_UNAVAILABLE','VISUAL_REVIEW_PENDING','VERIFY_REQUEST_INVALID'].includes(error.code))throw error;await require('./validation-recovery.cjs').failed(workspace,activeCheck,error);throw error;}
 }
 async function verifyBatch(workspace,action,track){
  const run=workspace.run;
  if(!Array.isArray(action.checks)||!action.checks.length||action.checks.length>12)throw Error('verify.checks 必须包含 1–12 条验收检查');
- const results=[],regionReviews=[],seen=new Set(),proof=require('./evidence.cjs');
+ const results=[],regionReviews=[],proof=require('./evidence.cjs');
  for(const raw of action.checks){
   track(raw);
   const check={...raw,...(raw.evidenceId?{evidenceId:proof.resolveId(run,raw.evidenceId)}:{})};
-  const key=JSON.stringify([check.criterionId,check.kind,check.path,check.evidenceId,check.scope,check.contains]);
-  if(!check||!criteria(run).some(c=>c.id===check.criterionId)||seen.has(key))throw Error('验收项 id 无效或重复，请使用 acceptanceCriteria 中的 id');
-  seen.add(key);
-  if(typeof check.reason!=='string'||!check.reason.trim()||check.reason.length>800)throw Error('请说明检查如何覆盖这条验收要求');
   const type=criteria(run).find(c=>c.id===check.criterionId).type;
   if(type==='visual'&&run.observationCapabilities?.images===false)throw Object.assign(Error('当前没有模型图像观察能力，无法自动进行视觉验收。请继续生成与结构检查；交付时使用 outcome=limited，在 review.unverified 列出未核验视觉要求 ID，明确需要人工看图确认，不要反复截图或改用关键词冒充视觉检查。'),{code:'VISUAL_REVIEW_UNAVAILABLE'});
   if(type==='visual'&&check.kind!=='visual')throw Error('视觉要求必须绑定已传给模型的当前版本图像观察，文件或关键词检查不能替代');
@@ -41,6 +49,13 @@ async function verifyBatch(workspace,action,track){
    const referenced=await proof.lookup(workspace,check.evidenceId),event=['browser','android_device'].includes(referenced?.type)?referenced:undefined;
    const image=run.visualObservations?.find(o=>o.eventId===check.evidenceId&&o.delivered);
    if(check.kind==='visual'){
+    if(image?.previewOnly){
+     const navigation=require('./evidence-navigation.cjs'),nav=await navigation.context(workspace),target=navigation.pendingNavigation(image,check),pair=await navigation.pairedForPending(workspace,target,{context:nav});
+     const candidates=nav.visual.paired.filter(p=>p.path===target.path&&p.sha256===target.sha256&&p.apkSha256===target.apkSha256);
+     if(pair)target.reference=pair.reference;
+     if(candidates.length)throw Object.assign(Error('所选证据是未配对预览，已有当前图的成对核验候选。请逐字复制 verificationEvidence.visual.paired 中匹配原稿与范围的 eventId；候选不代表验收通过。'),{code:'VERIFY_REQUEST_INVALID',diagnostics:{field:'checks',expected:'verification_checks',issue:'paired_evidence_selection',criterionId:check.criterionId,evidenceId:check.evidenceId,candidateIds:candidates.map(p=>p.eventId)},navigation:target});
+     throw Object.assign(Error('自动截图预览不能替代原稿成对核验；请先 view_image(path=当前截图,reference=正确原稿)，再按实际图像检查。'),{code:'VISUAL_REVIEW_PENDING',navigation:target});
+    }
     if(!image)throw Error('视觉证据尚未传给模型或已过期；先 browser 或 view_image，再依据图像检查');
     if(image.comparison?.grossMismatch)throw Error('原稿与结果存在已知大面积差异，请修复实现后重新成对观察，不能声明视觉验收通过');
     if(image.designBinding&&!image.reference)throw Error('设计验收缺少成对原稿，请 view_image 同时提供 reference');
@@ -54,7 +69,10 @@ async function verifyBatch(workspace,action,track){
      designReviewVersion=1;
     }
     sha256=image.sha256;observationPath=image.path;sources=image.sources;observedScope=image.scope;rendererState=image.rendererState;
-   }else if(!event||event.type==='browser'&&!event.detail.result?.dom)throw Error('运行观察证据无效；使用 browser 或 android_device 的真实操作事件，图片读取不等于行为验证');
+   }else if(!event||event.type==='browser'&&!event.detail.result?.dom){
+    if(referenced?.type==='view_image'||image){const nav=await require('./evidence-navigation.cjs').context(workspace);throw Object.assign(Error('图片观察不能作为行为操作证据。请使用 verificationEvidence.byKind.observation 中覆盖原要求的真实 browser/android_device 事件；不要自动替换为图片或宣称行为通过。'),{code:'VERIFY_REQUEST_INVALID',diagnostics:{field:'checks',expected:'verification_checks',issue:'evidence_kind',criterionId:check.criterionId,evidenceId:check.evidenceId,allowedKind:'observation',candidateIds:nav.byKind.observation}});}
+    throw Error('运行观察证据无效；使用 browser 或 android_device 的真实操作事件，图片读取不等于行为验证');
+   }
    await proof.event(workspace,check.evidenceId);
    observedScope ||= event?.detail.result.scope;rendererState ||= event?.detail.result.rendererState;
    if(event&&(event.detail.result.dom?.missingImages?.length||event.detail.result.errors?.length))throw Error('网页观察仍包含图片加载失败或运行错误，请修复后重新核验');
@@ -69,7 +87,6 @@ async function verifyBatch(workspace,action,track){
    // only parsers need the small text buffer limit.
    const data=presence?undefined:await fs.readFile(file);sha256=presence?await proof.hashFile(file):createHash('sha256').update(data).digest('hex');sources=[{path:check.path,sha256}];observedScope={kind:'file',path:check.path};
    if(check.kind==='text_contains'){
-    if(!Array.isArray(check.contains)||!check.contains.length||check.contains.length>24||check.contains.some(s=>typeof s!=='string'||!s||s.length>800))throw Error('contains 必须为 1–24 个非空检查文本');
     const source=data.toString('utf8'),missing=check.contains.filter(s=>!source.includes(s));
     if(missing.length){
      const normalize=text=>text.replace(/[\s\p{P}]/gu,'');

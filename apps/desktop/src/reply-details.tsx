@@ -17,6 +17,8 @@ export function ReplyDetails({message}:{message:Message}) {
       <p>结束：{new Date(details.completedAt).toLocaleString('zh-CN')}</p>
       <p className="muted">用时包含准备、排队、模型响应和工具执行。</p>
       {details.goal&&<p>{details.goal}</p>}
+      {details.modelRoutes?.map((route,i)=><p key={'route-'+i}>{route.message} · {new Date(route.at).toLocaleTimeString('zh-CN')}</p>)}
+      {!!details.visualReviews?.length&&<p>视觉分析：{[...new Set(details.visualReviews.map(r=>r.modelName))].join('、')} · 观察结果仍须按任务要求核验</p>}
       {!!details.events?.length&&<ExecutionEvents events={details.events}/>}
     </div>
   </details>;

@@ -63,3 +63,8 @@ test('stopping cancels all active jobs and queued work does not start',async t=>
  service.stop();releases.forEach(r=>r());await finished(service);assert.equal(started.length,1);assert.equal(cancelled.length,2);
  assert.equal((await service.list()).find(t=>t.id===b.id).runs[0].status,'failed');
 });
+
+test('a settled partial delivery is recorded separately from completed and failed runs',async t=>{
+ const {service}=await setup(t,async()=>({status:'partial'}));const task=await service.save(input);
+ await service.run(task.id);const [saved]=await finished(service);assert.equal(saved.runs[0].status,'partial');assert.equal(saved.runs[0].error,undefined);
+});

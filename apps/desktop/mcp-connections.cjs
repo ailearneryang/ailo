@@ -17,7 +17,7 @@ function createMCPConnections({directory,safeStorage,fetchImpl=fetch,confirmCall
  function redact(value,credentials){let encoded=JSON.stringify(value);for(const secret of [credentials.token,credentials.accessToken,credentials.refreshToken].filter(Boolean)){encoded=encoded.split(JSON.stringify(secret).slice(1,-1)).join('[已隐藏凭据]').split(encodeURIComponent(secret)).join('[已隐藏凭据]');}return JSON.parse(encoded);}
  async function credentials(c,signal){let value=decrypt(c);if(c.authType!=='oauth')return value;if(!value.accessToken)throw fail('请先在应用连接中完成 OAuth 授权。','MCP_AUTH_REQUIRED');if(value.expiresAt&&value.expiresAt<=Date.now()+30000){let pending=refreshes.get(c.id);if(!pending){pending=(async()=>{const next=await oauth.refresh({credentials:value,fetchImpl,signal});await update(c,{secret:encrypt(next)});return next;})();refreshes.set(c.id,pending);void pending.finally(()=>{if(refreshes.get(c.id)===pending)refreshes.delete(c.id);}).catch(()=>{});}value=await pending;signal.throwIfAborted();}return value;}
  async function use(id,action,externalSignal,{testing=false}={}) {
-  const c=await current(id);if(!c.enabled&&!testing)throw fail('此连接已断开，请在应用连接中重新连接。');
+  let c;try{c=await current(id);if(!c.enabled&&!testing)throw fail('此连接已断开，请在应用连接中重新连接。');}catch(error){error.notExecuted=true;throw error;}
   const op=operation(c,externalSignal);let sent=false,callId;
   try{
    const credential=await credentials(c,op.signal);const client=createHttpClient({url:c.url,token:c.authType==='token'?credential.token:c.authType==='oauth'?credential.accessToken:undefined,headerName:c.authType==='token'?c.headerName:'Authorization',fetchImpl,signal:op.signal});
@@ -40,6 +40,7 @@ function createMCPConnections({directory,safeStorage,fetchImpl=fetch,confirmCall
    if(!String(e.code||'').startsWith('MCP_'))e=fail(op.deadline.aborted?'MCP 请求超时，请检查服务状态。':'无法连接 MCP 或解析响应，请检查地址、网络和服务状态。');
    if(sent&&!['MCP_DECLINED','MCP_AUTH_REQUIRED'].includes(e.code))e=fail('MCP 工具请求已发出，但结果未确认。请先核对远端状态，避免重复执行。','MCP_RESULT_UNKNOWN');
    if(!['MCP_DECLINED','MCP_CANCELLED'].includes(e.code))await update(c,{verifiedAt:null,error:e.message}).catch(()=>{});
+   if(!sent)e.notExecuted=true;
    throw e;
   }finally{op.close();}
  }
@@ -72,7 +73,7 @@ function createMCPConnections({directory,safeStorage,fetchImpl=fetch,confirmCall
   remove:id=>serial(async()=>{const state=await load();cancel(id);state.servers=state.servers.filter(s=>s.id!==id);await writeJson(file,state);}),
   permissions:({id,permissions})=>serial(async()=>{const state=await load(),c=state.servers.find(s=>s.id===id);if(!c||!permissions||typeof permissions!=='object'||Array.isArray(permissions))throw fail('工具权限配置无效。');for(const [name,mode]of Object.entries(permissions)){const t=c.tools?.find(t=>t.name===name);if(!t||!['ask','read','disabled'].includes(mode)||mode==='read'&&!t.readOnly)throw fail('仅标记为只读的工具可设置为自动读取。');}cancel(id);c.revision++;c.tools=c.tools.map(t=>({...t,permission:Object.hasOwn(permissions,t.name)?permissions[t.name]:t.permission}));await writeJson(file,state);return publicServer(c);}),
   resolveCall:({id,callId})=>clearCall(id,callId),
-  scope(ids=[]){if(!Array.isArray(ids)||ids.length>20||ids.some(id=>typeof id!=='string'||id.length>100))throw fail('对话连接选择无效。');const selected=new Set(ids);return {catalog:async()=>(await api.list()).filter(s=>selected.has(s.id)).map(s=>({id:s.id,name:s.name,description:s.description,connected:s.connected})),execute:async(action,signal)=>{if(!['list','call'].includes(action.operation)||typeof action.id!=='string'||!selected.has(action.id))throw fail('此连接未在当前对话中启用，请通过 ＋ → 应用连接选择。');if(action.operation==='call'&&(typeof action.query!=='string'||!action.query.trim()||!action.params||typeof action.params!=='object'||Array.isArray(action.params)||JSON.stringify(action.params).length>30000))throw fail('请提供真实工具名称和不超过 30000 字符的参数对象。');return use(action.id,action,signal);}};},
+  scope(ids=[]){if(!Array.isArray(ids)||ids.length>20||ids.some(id=>typeof id!=='string'||id.length>100))throw fail('对话连接选择无效。');const selected=new Set(ids);return {catalog:async()=>(await api.list()).filter(s=>selected.has(s.id)).map(s=>({id:s.id,name:s.name,description:s.description,connected:s.connected})),execute:async(action,signal)=>{if(!['list','call'].includes(action.operation)||typeof action.id!=='string'||!selected.has(action.id))throw Object.assign(fail('此连接未在当前对话中启用，请通过 ＋ → 应用连接选择。'),{notExecuted:true});if(action.operation==='call'&&(typeof action.query!=='string'||!action.query.trim()||!action.params||typeof action.params!=='object'||Array.isArray(action.params)||JSON.stringify(action.params).length>30000))throw Object.assign(fail('请提供真实工具名称和不超过 30000 字符的参数对象。'),{notExecuted:true});return use(action.id,action,signal);}};},
   dispose(){for(const id of active.keys())cancel(id);},
  };
  return api;

@@ -9,22 +9,31 @@ const {
   nativeImage,
   powerMonitor,
 } = require("electron");
+// This explicit packaging probe exits before locks, storage, workers or UI.
+if(process.argv?.includes('--ailo-startup-check')){
+ if(!process.env.AILO_DATA_DIR){console.error('启动自检必须提供隔离数据目录');app.exit(1);}else{
+  app.setPath('userData',process.env.AILO_DATA_DIR);
+  app.whenReady().then(()=>{console.info(JSON.stringify({type:'ailo-startup-check',version:app.getVersion(),appPath:app.getAppPath(),dataPath:app.getPath('userData')}));app.exit(0);}).catch(()=>app.exit(1));
+ }
+}else{
 require('electron').protocol.registerSchemesAsPrivileged([{scheme:'ailo-project',privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
 app.setName("Ailo");
+require('./runtime-provenance.cjs');
 const { readMaterial, importPastedMaterials } = require("./materials.cjs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 if (process.env.AILO_DATA_DIR)
   app.setPath("userData", process.env.AILO_DATA_DIR);
-console.info(`[Ailo ${app.getVersion()}] 主进程启动；任务无动作等待上限 180 秒`);
+console.info(`[Ailo ${app.getVersion()}] 主进程启动`);
 const primaryInstance=app.requestSingleInstanceLock();
-if(!primaryInstance)app.quit();
+if(!primaryInstance){console.warn('已有 Ailo 实例正在运行，本次未切换运行版本。请先完全退出旧实例，再执行 npm start。');app.exit(1);}
 let win;
 app.on('second-instance',()=>{if(win&&!win.isDestroyed()){if(win.isMinimized())win.restore();win.show();win.focus();}});
 const storage = require("./storage.cjs").createStorage(
   app.getPath("userData"),
   safeStorage,
 );
+storage.executionPower=require('./execution-power.cjs').createExecutionPower(require('electron').powerSaveBlocker);
 const chat = require("./chat.cjs").createChat(storage,require('./model-transport.cjs').createModelTransport());
 storage.personalMemory=require('./personal-memory.cjs').createPersonalMemory({directory:app.getPath('userData'),account:()=>storage.account(),workspace:()=>storage.readWorkspace(),notify:owner=>{if(win&&!win.isDestroyed())win.webContents.send('memory:changed',owner);}});
 const memoryWorker=require('./memory-worker.cjs').createMemoryWorker({store:storage.personalMemory,storage,fetchImpl:require('./model-transport.cjs').createModelTransport(),sessions:()=>chat.sessions()});
@@ -115,7 +124,7 @@ ipcMain.handle("chat:complete", async (e, input) => {
   // A reconnect must attach to the existing job, never mark it as failed.
   if(chat.sessions().some(s=>s.taskId===input.taskId))throw Error('此会话正在执行或排队，请补充消息或等待完成。');
   try {
-    const result=await chat.complete({...input,onRun:run=>send({run}),onText:content=>send({content}),onStatus:message=>send({message})});
+    const result=await chat.complete({...input,executionOrigin:'user',onRun:run=>send({run}),onText:content=>send({content}),onStatus:message=>send({message})});
     if(input.taskId)await storage.patchTask(input.taskId,{contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens,lastError:undefined,lastErrorCode:undefined,modelRequestDiagnostics:undefined,partialReply:undefined},[{id:input.id+'-assistant',role:'assistant',content:result.content,clarification:result.clarification,replyDetails:result.replyDetails,modelName:result.modelName}]);
     send({finished:true});return result;
   }catch(error){
@@ -149,8 +158,9 @@ const schedules=require('./scheduled-tasks.cjs').createScheduledTasks({
     const prompt=task.prompt+'\n\n[定时执行时间：'+new Date().toLocaleString('zh-CN')+'。请直接完成任务并报告结果；缺少信息或权限时请说明，不要假装已经完成。]';
     await storage.patchTask(run.taskId,{projectId:task.projectId,scheduledTaskId:task.id,scheduledContextMode:task.contextMode||'continuity',scheduledRunId:run.id,scheduledAt:run.at,title:'定时 · '+task.title,request:prompt,materials:[],created:new Date().toISOString(),modelId:task.modelId,feishuEnabled:task.feishuEnabled===true,searchEnabled:task.searchEnabled},[{id:run.id+'-user',role:'user',content:prompt}]);
     try{
-      const result=await chat.complete({id:run.id,taskId:run.taskId,modelId:task.modelId,feishuEnabled:task.feishuEnabled===true,searchEnabled:task.searchEnabled,messages:[{role:'user',content:prompt}],onRun:run=>send({run}),onText:content=>send({content}),onStatus:message=>send({message})});
+      const result=await chat.complete({id:run.id,taskId:run.taskId,executionOrigin:'scheduled',modelId:task.modelId,feishuEnabled:task.feishuEnabled===true,searchEnabled:task.searchEnabled,messages:[{role:'user',content:prompt}],onRun:run=>send({run}),onText:content=>send({content}),onStatus:message=>send({message})});
       await storage.patchTask(run.taskId,{modelName:result.modelName,contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens},[{id:run.id+'-assistant',role:'assistant',content:result.content,replyDetails:result.replyDetails,modelName:result.modelName,clarification:result.clarification}]);
+      if(result.agentRun?.delivery?.status==='settled'){if(result.agentRun.status==='partial')return {status:'partial'};throw Error('本轮已结束，尚未形成可交付成果。');}
       if(result.clarification||['blocked','waiting_permission','paused','running','understanding'].includes(result.agentRun?.status))throw Error('任务需要人工处理，请查看对话继续。');
     }catch(error){await storage.patchTask(run.taskId,{lastError:error.message});throw error;}
   },
@@ -426,9 +436,11 @@ app.whenReady().then(async () => {
 let quitting=false;
 app.on("before-quit", e => {
   if(quitting)return;
-  e.preventDefault();storage.browserObserver.dispose();memoryWorker.stop();storage.permissions.cancelAll();schedules.stop();chat.cancelAll();
+  e.preventDefault();storage.executionPower.dispose();storage.browserObserver.dispose();memoryWorker.stop();storage.permissions.cancelAll();schedules.stop();chat.cancelAll();
   Promise.allSettled([experience.dispose(),dictation.cancel(),storage.androidManager.dispose(),feishuCli.dispose(),storage.amap.dispose(),storage.mcpConnections.dispose()]).finally(()=>{quitting=true;app.quit();});
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
+
+}

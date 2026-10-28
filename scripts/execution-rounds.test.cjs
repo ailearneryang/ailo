@@ -36,7 +36,7 @@ test('finish cannot silently convert blocked steps to done despite valid files a
  else if(n===5)action={action:'finish',review:{summary:'已对照要求检查当前成果',issues:[],unverified:[]},text:'完成',evidence:[s.recentEvents.find(e=>e.type==='run_command').id]};
  else {assert.match(s.toolResults.at(-1).error,/尚未全部验收/);action={action:'blocked',text:'APK 构建受阻'};}
  return {content:JSON.stringify(action)};
- }});assert.equal(result.agentRun.status,'blocked');assert.equal(result.agentRun.steps[0].status,'blocked');
+ }});assert.equal(result.agentRun.status,'partial');assert.equal(result.agentRun.delivery.outcome,'partial');assert.equal(result.agentRun.delivery.status,'settled');assert.equal(result.agentRun.steps[0].status,'blocked');
 });
 
 test('ordinary chat preserves paused task anchor and actual blocked status',async t=>{
@@ -77,12 +77,17 @@ test('loaded skills are reported before the first decision, persisted, and scope
  assert.ok(!second.agentRun.events.some(e=>e.type==='extensions_loaded'));
 });
 
-test('failed skill preparation never reports a skill as loaded',async t=>{
+test('failed skill preparation is never reported as loaded and does not cancel generic task execution',async t=>{
  const base=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-skills-failed-'));t.after(()=>fs.rm(base,{recursive:true,force:true}));
- const updates=[],statuses=[];
- await assert.rejects(runAgent({base,task:{id:'failure',request:'写书'},model:{contextWindow:32768},signal:new AbortController().signal,
-  extensions:[{id:'book',kind:'skill',name:'book',enabled:true,instructions:'write'}],
+ const updates=[],statuses=[];let index=0;
+ const actions=[{action:'route',kind:'task'},{action:'plan',goal:'写书',decisions:[],requirements:[{id:'book',text:'书稿包含正文',type:'content'}],steps:[{id:'s',title:'写书并核对',status:'running'}]},
+  {action:'write_file',path:'book.md',content:'书稿正文'},{action:'artifact',path:'book.md',label:'书稿'},
+  {action:'verify',checks:[{criterionId:'book',kind:'text_contains',path:'book.md',contains:['正文'],reason:'核对真实书稿正文'}],progress:{steps:[{id:'s',status:'done'}]}},
+  {action:'finish',text:'书稿已生成并核对，未使用损坏的参考技能。',review:{summary:'书稿文件的原要求已通过检查',issues:[],unverified:[]}}];
+ const result=await runAgent({base,task:{id:'failure',request:'写书'},model:{contextWindow:32768},signal:new AbortController().signal,
+  extensions:[{id:'book',kind:'skill',name:'book',enabled:true,instructions:'MUST_NOT_USE_CORRUPT_SKILL'}],
   skillPackages:{prepare:async()=>{throw Error('技能包已损坏');}},
-  onRun:run=>updates.push(run),onStatus:s=>statuses.push(s),ask:()=>assert.fail('should not ask model')}),/技能包已损坏/);
- assert.equal(updates.length,0);assert.equal(statuses.length,0);
+  onRun:run=>updates.push(run),onStatus:s=>statuses.push(s),ask:async messages=>{assert.ok(!JSON.stringify(messages).includes('MUST_NOT_USE_CORRUPT_SKILL'));assert.ok(JSON.parse(messages.at(-1).content).extensionPreparationFailure);return {content:JSON.stringify(actions[index++])};}});
+ assert.equal(result.agentRun.status,'completed');assert.ok(updates.every(run=>!run.loadedExtensions?.length));assert.ok(statuses.every(s=>!s.includes('已加载')));
+ const saved=await createWorkspace(base,{id:'failure',request:'写书'});assert.equal(saved.run.events.filter(e=>e.type==='extension_prepare_failed').length,1);assert.equal(saved.run.acceptanceResults.book.status,'passed');
 });

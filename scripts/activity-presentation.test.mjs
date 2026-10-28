@@ -12,8 +12,8 @@ test('retry explanation uses real recovery events and last actual progress time'
  assert.match(result.detail,/输出长度限制.*自动重试/);assert.doesNotMatch(JSON.stringify(result),/32768|10 分钟/);
 });
 test('completed retries no longer claim recovery and in-flight work takes precedence',()=>{
- assert.equal(activityPresentation({...run,events:[...run.events,{type:'write_file',at,detail:{}}]},'正在决定下一步').label,'正在准备下一步操作');
- assert.equal(activityPresentation({...run,inFlight:{action:'write_file',purpose:'同步目录',at}},'正在决定下一步').label,'正在更新文件');
+ assert.equal(activityPresentation({...run,events:[...run.events,{type:'write_file',at,detail:{}}]},'正在决定下一步').label,'操作已返回，正在分析结果');
+ assert.equal(activityPresentation({...run,inFlight:{action:'write_file',purpose:'同步目录',at}},'正在决定下一步').label,'同步目录 · 正在更新文件');
  assert.equal(activityPresentation({...run,events:[{type:'output_limit',at,detail:{message:'自动重试已用尽'}}]},'').label,'恢复执行未成功');
 });
 test('queue and task without recorded progress do not invent progress timestamps',()=>{
@@ -22,10 +22,10 @@ test('queue and task without recorded progress do not invent progress timestamps
 });
 test('normal activity stays inline while recovery and user action expose explanations',()=>{
  const normal=activityPresentation({mode:'task',status:'running',events:[]},'正在决定下一步 · 模型仍在思考 · 已等待 100 秒（最长 10 分钟）');
- assert.equal(normal.label,'正在准备下一步操作');assert.equal(normal.detail,undefined);assert.equal(normal.expanded,false);
+ assert.equal(normal.label,'正在分析任务，尚无工具执行记录');assert.equal(normal.detail,undefined);assert.equal(normal.expanded,false);
  assert.equal(activityPresentation(run,'').expanded,true);
  const confirmation=activityPresentation({...run,status:'waiting_user'},'');
- assert.equal(confirmation.label,'等待你确认');assert.equal(confirmation.expanded,true);
+ assert.match(confirmation.label,/等待你确认/);assert.equal(confirmation.expanded,true);
  assert.equal(activityPresentation({...run,status:'paused'},'').label,'任务已暂停');
 });
 test('progress age uses readable minutes without claiming a completion deadline',async()=>{

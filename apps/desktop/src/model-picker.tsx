@@ -9,7 +9,7 @@ export function ModelPicker({
   defaultId,
   disabled,
   onSelect,
-  onConfigure,
+  onConfigure, onConfigureAuto,
   reasoningSupported, reasoningEffort, onReasoningChange,
 }: {
   reasoningSupported?: boolean;
@@ -21,6 +21,7 @@ export function ModelPicker({
   disabled: boolean;
   onSelect: (id: string) => void;
   onConfigure: () => void;
+  onConfigureAuto?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [quick, setQuick] = useState(false);
@@ -212,6 +213,7 @@ export function ModelPicker({
               />
             </div>
             <div className="model-options">
+              {!models.some(m=>m.id==='auto')&&onConfigureAuto&&(!query||'auto 自动'.includes(query.toLowerCase()))&&<button type="button" className="model-option" disabled={disabled} onClick={()=>{close();onConfigureAuto();}}><span className="model-option-icon" aria-hidden="true">✳</span><span className="model-option-copy"><span>Auto</span><small>按任务需要选择模型 · 首次配置</small></span></button>}
               {filtered.map((m) => (
                 <button
                   type="button"

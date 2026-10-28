@@ -52,7 +52,7 @@ function createScheduledTasks({directory,execute,cancel=()=>{},notify=()=>{},now
         if(stopped||claimed.controller.signal.aborted)throw Error('Ailo 已退出，执行中断。可手动重试。');
         await mutate(tasks=>{const run=tasks.find(t=>t.id===id)?.runs.find(r=>r.id===job.run.id);if(run){run.status='running';run.startedAt=new Date(now()).toISOString();}});
         job.run.status='running';job.run.startedAt=new Date(now()).toISOString();
-        await execute(job.task,job.run);outcome={status:'completed'};
+        const result=await execute(job.task,job.run);outcome={status:result?.status==='partial'?'partial':'completed'};
       }
       catch(error){outcome={status:'failed',error:String(error.message||'执行失败').slice(0,1000)};}
       try{

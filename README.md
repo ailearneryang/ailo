@@ -15,7 +15,7 @@
 
 Ailo 是一个以对话为入口的桌面 AI 助手。你可以让它整理材料、分析需求、规划项目，也可以选择专家和技能，按任务需要调用工具执行并查看成果。暖白与鼠尾草绿的界面，加上一只陪伴工作的柴犬，让日常工作更轻松。
 
-**当前版本：0.1.64，macOS 开发预览版。** 已实现「我的 Ailo」持续助手会话、本地项目与对话管理、定时任务、材料读取、专家与技能、模型配置、本地知识库、高德地图 AMap MCP，以及第一版 Agent 执行循环。尚未实现云端账号同步；当前打包配置未启用 Apple 签名和公证。
+**当前版本：0.1.71，macOS 开发预览版。** 已实现「我的 Ailo」持续助手会话、本地项目与对话管理、定时任务、材料读取、专家与技能、模型配置、本地知识库、高德地图 AMap MCP，以及第一版 Agent 执行循环。尚未实现云端账号同步；当前打包配置未启用 Apple 签名和公证。
 
 ![我的 Ailo：首页助手入口、项目导航与定时任务最新记录](docs/images/home.png)
 
@@ -182,6 +182,7 @@ design/              早期界面草案
 
 - [产品定位](docs/product-brief.md)
 - [Agent 执行机制与限制](docs/agent-runtime.md)
+- [0.1.71 长任务优化与验证](docs/agent-optimization-20261025.md)
 - [桌面功能与验证记录](docs/desktop-preview.md)
 - [飞书连接](docs/feishu-connection.md) / [联网搜索](docs/web-search.md)
 - [macOS 打包与发布](docs/macos-release.md)

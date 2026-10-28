@@ -7,8 +7,25 @@ const {spawn}=require('node:child_process');
 const {randomUUID}=require('node:crypto');
 const {key,resolveFile}=require('./workspace.cjs');
 const {androidEnvironment,exists}=require('./android-environment.cjs');
-const operations=['status','start','install','launch','logs','screenshot','stop'];
-function validate(action){if(!operations.includes(action.operation))throw Error('无效的 Android 设备操作');if(action.display!==undefined){if(action.operation!=='start')throw Error('display 仅适用于 start');require('./android-display.cjs').validate(action.display);}}
+const operations=['status','start','install','launch','logs','screenshot','tap','back','type','stop'];
+function validate(action){
+ if(!action||!operations.includes(action.operation))throw Error('无效的 Android 设备操作');
+ const fields=['action','operation','purpose','progress','stepId','conversationTitle',...(action.operation==='start'?['display']:[]),...(['install','screenshot'].includes(action.operation)?['path']:[]),...(action.operation==='screenshot'?['name']:[]),...(action.operation==='tap'?['x','y']:[]),...(action.operation==='type'?['text']:[])];
+ if(Object.keys(action).some(key=>!fields.includes(key)))throw Error('Android 操作仅支持受管项目参数；不能指定设备、包名、命令或其他参数');
+ if(action.display!==undefined)require('./android-display.cjs').validate(action.display);
+ if(action.operation==='tap'&&(!Number.isSafeInteger(action.x)||!Number.isSafeInteger(action.y)||action.x<0||action.y<0))throw Error('tap 需要屏幕内非负整数坐标 x、y');
+ if(action.operation==='type'&&(typeof action.text!=='string'||action.text.length<1||action.text.length>120||!/^[A-Za-z0-9 ._@+\-]+$/.test(action.text)))throw Error('type 仅支持1–120个安全 ASCII 字符：英文字母、数字、空格及 ._@+-；不支持中文、换行或 shell 元字符');
+}
+// Use application controls rather than whole-screen pixels: a status-bar clock,
+// random evidence name or repeated ineffective input must not create progress.
+function hierarchyState(bytes,packageName){
+ const parsed=require('./android-hierarchy.cjs').parse(bytes,packageName);
+ const {DOMParser}=require(path.join(__dirname,'../node_modules/@xmldom/xmldom'));
+ const all=new DOMParser().parseFromString(bytes.toString('utf8'),'text/xml').getElementsByTagName('node'),nodes=[];
+ const attributes=['resource-id','class','text','content-desc','bounds','checkable','checked','clickable','enabled','focusable','focused','scrollable','long-clickable','password','selected','visible-to-user'];
+ for(let i=0;i<all.length;i++)if(all[i].getAttribute('package')===packageName)nodes.push(attributes.map(key=>all[i].getAttribute(key)));
+ return {parsed,uiStateHash:require('./evidence.cjs').hash(JSON.stringify({package:packageName,nodes}))};
+}
 function command(file,args,{env,signal,timeout=30000,input,maxBytes=24000}={}){
  return new Promise((resolve,reject)=>{
   if(signal?.aborted)return reject(Error('已停止执行'));
@@ -35,6 +52,34 @@ async function findImage(sdk){
 function createAndroidManager({directory,authorize,runCommand=command,spawnEmulator=spawn,environment=androidEnvironment,serverPortFor=freePort,devicePortFor=emulatorPort}){
  const sessions=new Map(),busy=new Set(),children=new Set();let starting=Promise.resolve(),closed=false;
  async function checked(file,args,options){const r=await runCommand(file,args,options);if(r.exitCode!==0)throw Error('Android 工具失败：'+(r.stderr||r.output.toString()).slice(-2000));return r.output;}
+ async function readHierarchy(s,signal){
+  const remote='/data/local/tmp/ailo-ui-'+randomUUID()+'.xml',prefix=['-P',String(s.serverPort),'-s',s.serial];
+  try{
+   await checked(s.adb,[...prefix,'shell','uiautomator','dump',remote],{env:s.env,signal,timeout:15000});
+   const bytes=await checked(s.adb,[...prefix,'exec-out','cat',remote],{env:s.env,signal,timeout:10000,maxBytes:2*1024*1024});
+   return {bytes,...hierarchyState(bytes,s.package)};
+  }finally{await runCommand(s.adb,[...prefix,'shell','rm','-f',remote],{env:s.env,timeout:5000}).catch(()=>{});}
+ }
+ async function readFrame(s,signal){
+  const r=await runCommand(s.adb,['-P',String(s.serverPort),'-s',s.serial,'exec-out','screencap','-p'],{env:s.env,signal,maxBytes:10*1024*1024});
+  if(r.exitCode!==0)throw Error('未能取得有效截图');
+  return {bytes:r.output,pixelSize:require('./android-display.cjs').pngSize(r.output)};
+ }
+ async function foreground(s,signal){
+  const text=(await checked(s.adb,['-P',String(s.serverPort),'-s',s.serial,'shell','dumpsys','activity','activities'],{env:s.env,signal,timeout:15000,maxBytes:2*1024*1024})).toString();
+  const lines=text.split(/\r?\n/),top=lines.filter(line=>/\btopResumedActivity\s*[:=]/.test(line));
+  const active=(top.length?top:lines.filter(line=>/\bmResumedActivity\s*[:=]/.test(line))).filter(line=>!/:\s*null\s*$/.test(line));
+  const packages=active.map(line=>line.match(/\bu\d+\s+([A-Za-z][A-Za-z0-9_.]*)\/[A-Za-z0-9_.$]+/)?.[1]);
+  if(!packages.length||packages.some(name=>name!==s.package))throw Object.assign(Error('当前受管模拟器前台不是已安装的项目应用；请先 launch，不能操作系统界面或其他应用'),{code:'ANDROID_APP_NOT_FOREGROUND'});
+  const windows=(await checked(s.adb,['-P',String(s.serverPort),'-s',s.serial,'shell','dumpsys','window','windows'],{env:s.env,signal,timeout:15000,maxBytes:2*1024*1024})).toString();
+  const focused=windows.split(/\r?\n/).filter(line=>/\bmCurrentFocus\s*[:=]/.test(line));
+  if(!focused.length||focused.some(line=>line.match(/\bu\d+\s+([A-Za-z][A-Za-z0-9_.]*)\/[A-Za-z0-9_.$]+/)?.[1]!==s.package))throw Object.assign(Error('当前受管模拟器焦点不在项目应用；请关闭系统面板或其他应用后再交互'),{code:'ANDROID_APP_NOT_FOREGROUND'});
+ }
+ async function sampleState(s,signal){
+  const frame=await readFrame(s,signal),tree=await readHierarchy(s,signal);
+  s.uiStateHash=tree.uiStateHash;
+  return {...frame,...tree};
+ }
  async function stop(session){
   if(!session)return;
   const child=session.child;
@@ -99,12 +144,12 @@ function createAndroidManager({directory,authorize,runCommand=command,spawnEmula
  async function execute(root,action,signal,onStatus){
   validate(action);root=await fs.realpath(root);
   if(closed)throw Error('设备服务正在退出');
-  if(action.operation==='status'){const s=sessions.get(root);return {running:!!s,busy:busy.has(root),sessionId:s?.sessionId,device:s?.name,package:s?.package,apkPath:s?.apkPath,apkSha256:s?.apkSha256,display:s?.display,notice:'只报告 Ailo 为当前项目管理的模拟器，不访问个人设备。'};}
+  if(action.operation==='status'){const s=sessions.get(root);return {running:!!s,busy:busy.has(root),sessionId:s?.sessionId,device:s?.name,package:s?.package,apkPath:s?.apkPath,apkSha256:s?.apkSha256,uiStateHash:s?.uiStateHash,display:s?.display,notice:'只报告 Ailo 为当前项目管理的模拟器，不访问个人设备。'};}
   if(!authorize||!await authorize(root,signal))throw Object.assign(Error('尚未授权当前项目使用本机测试模拟器。任务已保留。'),{code:'ANDROID_PERMISSION'});
   if(signal.aborted)throw Error('已停止执行');
   if(busy.has(root))throw Error('当前项目设备正在被另一项操作使用，请稍后重试');busy.add(root);
   try {
-   if(action.operation==='start'){const s=await start(root,signal,onStatus,action.display);return {device:s.name,sessionId:s.sessionId,running:true,display:s.display,notice:'已配置项目测试屏幕；必须安装启动并截图核对实际尺寸，启动不代表视觉还原通过'};}
+   if(action.operation==='start'){const s=await start(root,signal,onStatus,action.display);return {device:s.name,sessionId:s.sessionId,uiStateHash:s.uiStateHash,running:true,display:s.display,notice:'已配置项目测试屏幕；必须安装启动并截图核对实际尺寸，启动不代表视觉还原通过'};}
    const s=sessions.get(root);if(!s)throw Error('请先使用 android_device start 启动当前项目模拟器');
    const adb=args=>checked(s.adb,['-P',String(s.serverPort),'-s',s.serial,...args],{env:s.env,signal,timeout:120000,maxBytes:24000});
    if(action.operation==='stop'){await stop(s);return {stopped:true};}
@@ -121,20 +166,38 @@ function createAndroidManager({directory,authorize,runCommand=command,spawnEmula
      const pkg=info.match(/package: name='([A-Za-z][A-Za-z0-9_.]+)'/)?.[1];
      const activity=info.match(/launchable-activity: name='([A-Za-z][A-Za-z0-9_.$]+)'/)?.[1];
      if(!pkg||!activity)throw Error('APK 没有有效包名或可启动 Activity');
-     const output=(await adb(['install','-r',copy])).toString();s.package=pkg;s.activity=activity;s.apkPath=action.path;s.apkSha256=require('./evidence.cjs').hash(await fs.readFile(copy));
-     return {installed:true,package:pkg,apkPath:s.apkPath,apkSha256:s.apkSha256,sources:[{path:s.apkPath,sha256:s.apkSha256}],scope:{kind:'file',path:s.apkPath},display:s.display,output,notice:'安装成功不等于功能验收通过；未清除应用数据。'};
+     const output=(await adb(['install','-r',copy])).toString(),apkSha256=require('./evidence.cjs').hash(await fs.readFile(copy));if(s.package!==pkg||s.apkSha256!==apkSha256)s.uiStateHash=undefined;s.package=pkg;s.activity=activity;s.apkPath=action.path;s.apkSha256=apkSha256;
+     return {installed:true,sessionId:s.sessionId,uiStateHash:s.uiStateHash,package:pkg,apkPath:s.apkPath,apkSha256:s.apkSha256,sources:[{path:s.apkPath,sha256:s.apkSha256}],scope:{kind:'file',path:s.apkPath},display:s.display,output,notice:'安装成功不等于功能验收通过；未清除应用数据。'};
     }finally{await fs.unlink(copy).catch(()=>{});}
    }
    if(!s.package)throw Error('请先安装当前项目 APK');
-   if(action.operation==='launch')return {display:s.display,apkPath:s.apkPath,apkSha256:s.apkSha256,sources:[{path:s.apkPath,sha256:s.apkSha256}],scope:{kind:'file',path:s.apkPath},output:(await adb(['shell','am','start','-W','-n',s.package+'/'+s.activity])).toString(),notice:'请继续读取应用日志、截图并验证业务行为。'};
+   if(action.operation==='launch'){
+    const output=(await adb(['shell','am','start','-W','-n',s.package+'/'+s.activity])).toString();let uiStateAvailable=false;
+    try{const tree=await readHierarchy(s,signal);s.uiStateHash=tree.uiStateHash;uiStateAvailable=true;}catch(error){if(signal.aborted)throw Object.assign(error,{code:'ACTION_RESULT_UNKNOWN'});}
+    return {sessionId:s.sessionId,display:s.display,apkPath:s.apkPath,apkSha256:s.apkSha256,uiStateHash:s.uiStateHash,uiStateAvailable,sources:[{path:s.apkPath,sha256:s.apkSha256}],scope:{kind:'file',path:s.apkPath},output,notice:'请继续读取应用日志、截图并验证业务行为。'};
+   }
+   if(['tap','back','type'].includes(action.operation)){
+    await foreground(s,signal);
+    const before=await sampleState(s,signal);
+    if(!before.parsed.nodes.length)throw Object.assign(Error('未取得当前应用控件，不能安全发送交互；请先 launch 并截图检查'),{code:'ANDROID_UI_STATE_UNAVAILABLE'});
+    if(action.operation==='tap'&&(action.x>=before.pixelSize.width||action.y>=before.pixelSize.height))throw Error('tap 坐标超出当前实际屏幕范围');
+    // Recheck immediately before sending input; only broker-owned serial/package
+    // are used. adb shell joins argv remotely, so text has a narrow allowlist.
+    await foreground(s,signal);
+    const args=action.operation==='tap'?['tap',String(action.x),String(action.y)]:action.operation==='back'?['keyevent','KEYCODE_BACK']:['text',action.text.replaceAll(' ','%s')];
+    try{
+     await adb(['shell','input',...args]);
+     const after=await sampleState(s,signal);
+     return {operation:action.operation,sessionId:s.sessionId,applied:true,uiStateHash:after.uiStateHash,previousUiStateHash:before.uiStateHash,stateChanged:after.uiStateHash!==before.uiStateHash,uiStateBasis:'application_hierarchy',nodeCount:after.parsed.nodes.length,apkPath:s.apkPath,apkSha256:s.apkSha256,sources:[{path:s.apkPath,sha256:s.apkSha256}],scope:{kind:'file',path:s.apkPath},behaviorAcceptance:'unverified',notice:'仅确认已发送受管输入并重新采样应用控件；stateChanged 不证明操作达到预期、功能通过或视觉还原通过。请继续截图、读取控件和验证业务结果。'};
+    }catch(error){s.uiStateHash=undefined;throw Object.assign(Error('受管交互已尝试，但结果未完成核对，禁止自动重放；请先检查设备状态和截图'),{code:'ACTION_RESULT_UNKNOWN',cause:error});}
+   }
    if(action.operation==='logs'){
     const pid=(await adb(['shell','pidof',s.package]).catch(()=>Buffer.alloc(0))).toString().trim().split(/\s+/)[0];
-    if(!/^\d+$/.test(pid||''))return {running:false,output:(await adb(['logcat','-d','-b','crash','-t','60'])).toString(),notice:'应用进程不存在；以下为当前项目专用模拟器的近期崩溃日志。'};
-    return {running:true,apkPath:s.apkPath,apkSha256:s.apkSha256,sources:[{path:s.apkPath,sha256:s.apkSha256}],scope:{kind:'file',path:s.apkPath},output:(await adb(['logcat','-d','--pid='+pid,'-t','120'])).toString()};
+    if(!/^\d+$/.test(pid||''))return {running:false,sessionId:s.sessionId,uiStateHash:s.uiStateHash,apkPath:s.apkPath,apkSha256:s.apkSha256,output:(await adb(['logcat','-d','-b','crash','-t','60'])).toString(),notice:'应用进程不存在；以下为当前项目专用模拟器的近期崩溃日志。'};
+    return {running:true,sessionId:s.sessionId,uiStateHash:s.uiStateHash,apkPath:s.apkPath,apkSha256:s.apkSha256,sources:[{path:s.apkPath,sha256:s.apkSha256}],scope:{kind:'file',path:s.apkPath},output:(await adb(['logcat','-d','--pid='+pid,'-t','120'])).toString()};
    }
    if(action.operation==='screenshot'){
-    const r=await runCommand(s.adb,['-P',String(s.serverPort),'-s',s.serial,'exec-out','screencap','-p'],{env:s.env,signal,maxBytes:10*1024*1024});
-    if(r.exitCode!==0||!r.output.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))throw Error('未能取得有效截图');
+    const frame=await readFrame(s,signal),r={output:frame.bytes};
     const relative='verification/screenshot-'+randomUUID()+'.png';
     await fs.writeFile(await resolveFile(root,relative,true),r.output,{flag:'wx',mode:0o600});
     const pixelSize=require('./android-display.cjs').pngSize(r.output);
@@ -142,20 +205,21 @@ function createAndroidManager({directory,authorize,runCommand=command,spawnEmula
     if(!Number.isSafeInteger(density)||density<=0)throw Error('未能读取模拟器实际屏幕密度，不能记录有效显示规格');
     const displayCheck=require('./android-display.cjs').check(s.display,{...pixelSize,density});
     const sources=[{path:relative,sha256:require('./evidence.cjs').hash(r.output)},{path:s.apkPath,sha256:s.apkSha256},...s.display.sources];
-    let uiHierarchy;const remote='/data/local/tmp/ailo-ui-'+randomUUID()+'.xml';
+    let uiHierarchy;
     try{
-     await checked(s.adb,['-P',String(s.serverPort),'-s',s.serial,'shell','uiautomator','dump',remote],{env:s.env,signal,timeout:15000});
-     const bytes=await checked(s.adb,['-P',String(s.serverPort),'-s',s.serial,'exec-out','cat',remote],{env:s.env,signal,timeout:10000,maxBytes:2*1024*1024});
-     const parsed=require('./android-hierarchy.cjs').parse(bytes,s.package),uiPath=relative.replace('screenshot-','ui-').replace(/\.png$/,'.xml');
+     const {bytes,parsed,uiStateHash}=await readHierarchy(s,signal),uiPath=relative.replace('screenshot-','ui-').replace(/\.png$/,'.xml');s.uiStateHash=uiStateHash;
      await fs.writeFile(await resolveFile(root,uiPath,true),bytes,{flag:'wx',mode:0o600});
      uiHierarchy={path:uiPath,sha256:require('./evidence.cjs').hash(bytes),package:s.package,nodeCount:parsed.nodes.length,complete:parsed.complete,nodes:parsed.nodes.slice(0,120),notice:parsed.notice+' 截图和控件树是相邻采样，不证明中间没有状态变化。完整树可 read_file。'};sources.push({path:uiPath,sha256:uiHierarchy.sha256});
     }catch(error){if(signal.aborted)throw error;uiHierarchy={available:false,reason:String(error.message).slice(0,300),notice:'未取得控件树，不能宣称数量或边界机器检查通过；须逐区域图像核对。'};}
-    finally{await runCommand(s.adb,['-P',String(s.serverPort),'-s',s.serial,'shell','rm','-f',remote],{env:s.env,timeout:5000}).catch(()=>{});}
-    return {path:relative,package:s.package,apkPath:s.apkPath,apkSha256:s.apkSha256,pixelSize,display:s.display,displayCheck,uiHierarchy,sources,scope:{kind:'viewport',path:relative,rect:{x:0,y:0,...pixelSize}},notice:displayCheck.matches?'截图尺寸符合测试屏幕，布局、颜色和内容仍须对照原设计；模型未接收图片时不得声称视觉还原通过。':'截图方向或尺寸与目标屏幕不符；先检查应用方向锁定和设备配置，不能把此图作为设计还原通过证据。'};
+    return {path:relative,sessionId:s.sessionId,package:s.package,apkPath:s.apkPath,apkSha256:s.apkSha256,uiStateHash:s.uiStateHash,pixelSize,display:s.display,displayCheck,uiHierarchy,sources,scope:{kind:'viewport',path:relative,rect:{x:0,y:0,...pixelSize}},notice:displayCheck.matches?'截图尺寸符合测试屏幕，布局、颜色和内容仍须对照原设计；模型未接收图片时不得声称视觉还原通过。':'截图方向或尺寸与目标屏幕不符；先检查应用方向锁定和设备配置，不能把此图作为设计还原通过证据。'};
    }
   }finally{busy.delete(root);}
  }
+ async function state(root){
+  root=await fs.realpath(root);const s=sessions.get(root);
+  return {running:!!s,busy:busy.has(root),sessionId:s?.sessionId,package:s?.package,apkPath:s?.apkPath,apkSha256:s?.apkSha256,uiStateHash:s?.uiStateHash,display:s?.display?structuredClone(s.display):undefined};
+ }
  async function dispose(){closed=true;await Promise.allSettled([...sessions.values()].map(stop));for(const child of children)child.kill('SIGTERM');}
- return {execute,dispose};
+ return {execute,state,dispose};
 }
 module.exports={createAndroidManager,validate,operations,command,findImage};

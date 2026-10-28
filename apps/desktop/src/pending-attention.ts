@@ -1,4 +1,5 @@
 import type { Task } from './types';
+import {networkRecovery} from '../network-recovery.cjs';
 export type PendingAttention = {task: Task; kind: 'permission' | 'reply' | 'failed' | 'blocked'; label: string; action: string; description: string};
 const rank = {permission: 0, reply: 1, failed: 2, blocked: 3};
 function updated(task: Task) {
@@ -13,6 +14,7 @@ export function pendingAttention(tasks: Task[], runningIds: string[]): PendingAt
     if(task.scheduledTaskId&&latest.get(task.scheduledTaskId)!==task)return [];
     const status=task.agentRun?.status,last=task.messages?.at(-1);
     if(status==='paused'||status==='cancelled')return [];
+    if(task.agentRun?.taskContinuation?.taskOpen){const network=networkRecovery(task.agentRun);return [{task,kind:'reply',label:network?'等待网络恢复':'等待处理',action:network?'重试当前步骤':'补充后继续',description:network?.question||task.agentRun.taskContinuation.question}];}
     if(status==='waiting_permission')return [{task,kind:'permission',label:'等待授权',action:'查看授权',description:'打开任务查看所需权限与授权方式。'}];
     if(last?.role==='assistant'&&last.clarification)return [{task,kind:'reply',label:'等待回答',action:'去回答',description:last.clarification.title||'补充信息后，Ailo 才能继续。'}];
     if(task.lastError||status==='failed')return [{task,kind:'failed',label:'执行失败',action:'查看原因',description:task.lastError||'本次执行未完成，打开任务查看原因并决定是否重试。'}];

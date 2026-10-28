@@ -97,9 +97,9 @@ test('real runner sends paired images, reopens done work immediately and persist
    assert.equal(state.steps[0].status,'running');assert.equal(state.designComparisons[0].comparison.grossMismatch,true);
    assert.equal(messages.flatMap(m=>Array.isArray(m.content)?m.content:[]).filter(c=>c.type==='image_url').length,2);
   }
-  assert.ok(n<actions.length);return {content:JSON.stringify(actions[n++])};
+  assert.ok(n<=actions.length);return {content:JSON.stringify(actions[Math.min(n++,actions.length-1)])};
  }});
- assert.equal(n,4);assert.equal(result.agentRun.status,'blocked');
+ assert.equal(n,5);assert.equal(result.agentRun.status,'partial');assert.equal(result.agentRun.delivery.outcome,'partial');assert.ok(result.agentRun.acceptanceCriteria.some(c=>c.status==='pending'));
  const saved=await createWorkspace(base,task);assert.throws(()=>visual.assertComparisons(saved.run),/已知原稿差异/);
  assert.equal(saved.run.visualObservations.at(-1).delivered,true);
  assert.ok(!JSON.stringify(saved.run).includes('data:image/png;base64'));
