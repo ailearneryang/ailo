@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import {stripTypeScriptTypes} from 'node:module';
-const source=stripTypeScriptTypes(fs.readFileSync(new URL('../apps/desktop/src/task-presentation.ts',import.meta.url),'utf8'));const {taskPresentation,mergeSessionSnapshot,syncLiveTaskRuns,activityForSession}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const deliverySource=stripTypeScriptTypes(fs.readFileSync(new URL('../apps/desktop/src/delivery-status.ts',import.meta.url),'utf8'));const deliveryModule='data:text/javascript;base64,'+Buffer.from(deliverySource).toString('base64');const source=stripTypeScriptTypes(fs.readFileSync(new URL('../apps/desktop/src/task-presentation.ts',import.meta.url),'utf8')).replace("'./delivery-status'",JSON.stringify(deliveryModule));const {taskPresentation,mergeSessionSnapshot,syncLiveTaskRuns,activityForSession}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 const task={id:'t',messages:[{id:'old',role:'user',content:'任务'},{id:'answer',role:'assistant',content:'暂停'},{id:'new',role:'user',content:'需要什么材料'}],agentRun:{mode:'task',status:'paused',progressInputId:'old',events:[],steps:[],artifacts:[]}};
 const session={id:'request',taskId:'t',inputId:'new',content:'',status:'正在检查上下文',phase:'preparing'};
 test('a new request overrides an old paused plan without presenting old timestamps as current work',()=>{const view=taskPresentation(task,session);assert.equal(view.state,'preparing');assert.equal(view.activityRun,undefined);assert.equal(view.historical,true);assert.equal(view.progressStatus,'paused');});
@@ -33,3 +33,5 @@ test('sidebar animation belongs only to a live working session and stops while q
  assert.equal(taskPresentation(task,session).animating,true);
  assert.equal(taskPresentation(task,{...session,phase:'settling',run:{...task.agentRun,currentIntent:'chat'}}).animating,true);
 });
+
+test('source-only stopped work and unverified effects use the same truthful label in navigation and result cards',()=>{const run={...task.agentRun,status:'partial',delivery:{status:'settled',outcome:'partial',hasNewDeliverable:false,changes:{changedArtifacts:['android-design.json']}}};assert.equal(taskPresentation({...task,agentRun:run}).label,'修改待核验');run.delivery.hasNewDeliverable=true;run.resultPreview={available:true};assert.equal(taskPresentation({...task,agentRun:run}).label,'当前效果待核验');});

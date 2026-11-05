@@ -3,7 +3,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 // Only render Markdown elements; provider HTML and remote images stay disabled.
-export function AssistantText({content}:{content:string}){
+// Memoized so that streaming updates of one message do not re-parse the others.
+export const AssistantText=React.memo(function AssistantText({content}:{content:string}){
  const [error,setError]=useState('');
  return <><ReactMarkdown skipHtml remarkPlugins={[remarkGfm]} components={{
   table:({children})=><div className="assistant-table-scroll" role="region" aria-label="回复表格"><table>{children}</table></div>,
@@ -14,4 +15,4 @@ export function AssistantText({content}:{content:string}){
   },
   img:({alt})=>alt?<span className="assistant-image-description">{alt}</span>:null,
  }}>{content}</ReactMarkdown>{error&&<span role="alert">{error}</span>}</>;
-}
+});

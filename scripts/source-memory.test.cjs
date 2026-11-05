@@ -93,5 +93,5 @@ for(const batched of [false,true])test('recovery reuses long source across tools
   if(n===11)return reply({action:'verify',checks:[{criterionId:s.acceptanceCriteria[0].id,kind:'text_contains',path:'report.txt',contains:['BUILD SUCCESSFUL'],reason:'核验构建报告'}],progress:{steps:[{id:'fix',status:'done'}]}});
   return reply({action:'finish',text:'完成',review:{summary:'已修复并构建',issues:[],unverified:[]}});
  }});
- assert.equal(result.agentRun.status,'completed');assert.equal(n,12);assert.equal(reads,1);assert.equal(builds,1);
+ assert.equal(result.agentRun.status,'completed');assert.equal(n,11);assert.equal(reads,1);assert.equal(builds,1);
 });

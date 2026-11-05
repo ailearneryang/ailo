@@ -1,4 +1,4 @@
-import { Pet } from "./pet";
+import { BrandMark } from "./pet";
 import React, { useEffect, useRef, useState } from "react";
 import {AutoModelSettings} from "./auto-model-settings";
 import type { Model, User, Workspace } from "./types";
@@ -378,7 +378,7 @@ export function AccountPage({
         ← 返回对话
       </button>
       <div className="account-card">
-        <Pet size="brand" interactive />
+        <BrandMark size={64}/>
         {user ? (
           <>
             <h1>你好，{user.name}</h1>

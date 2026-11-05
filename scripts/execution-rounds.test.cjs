@@ -59,7 +59,7 @@ test('loaded skills are reported before the first decision, persisted, and scope
   ask:async messages=>{
    assert.ok(prepared);
    assert.ok(updates.length,'load receipt is published before asking the model');
-   if(extensions.length){assert.deepEqual(updates.at(-1).loadedExtensions,[{id:'book',name:'book-writing-workspace',kind:'skill'}]);assert.match(messages[0].content,/按章节整理书稿/);}
+   if(extensions.length){assert.deepEqual(updates.at(-1).loadedExtensions,[{id:'book',name:'book-writing-workspace',kind:'skill',source:'manual',reason:'用户明确选用'}]);assert.match(messages[0].content,/按章节整理书稿/);}
    const state=JSON.parse(messages.at(-1).content);
    return {content:JSON.stringify(state.phase==='route'?{action:'route',kind:'chat'}:{action:'reply',text:'已整理'})};
   }});

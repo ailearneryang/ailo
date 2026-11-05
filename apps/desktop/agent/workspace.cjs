@@ -9,7 +9,7 @@ async function writeJson(file, value) {
   await fs.rename(temp,file);
 }
 async function json(file, fallback) {
-  try { return JSON.parse(await fs.readFile(file,'utf8')); }
+  try { return require('./recovery-state.cjs').hydrate(JSON.parse(await fs.readFile(file,'utf8'))); }
   catch(e) { if(e.code==='ENOENT') return fallback; throw e; }
 }
 // All file operations reject symlinks as well as lexical escapes. Never accept
@@ -46,14 +46,7 @@ function searchSelection(text,material,entry,pointer,offset,query) {
   while(hits.length<8){const index=text.indexOf(query,cursor);if(index<0)break;hits.push({offset:Math.max(0,index-200),matchOffset:index,text:text.slice(Math.max(0,index-200),index+600)});cursor=index+query.length;}
   return {id:material.id,name:material.name,entry,pointer,kind:'json_search',query,hits,next:hits.length===8&&text.indexOf(query,cursor)>=0?cursor:null,total:text.length,notice:'大小写敏感的关键词定位；用同一 pointer 和命中 offset 读取上下文。next 用于继续搜索。没有命中不代表材料不存在，请核对关键词和所选节点。'};
 }
-async function createWorkspace(base, task) {
-  const project=require('./workspace-path.cjs').workspacePath(base,task);
-  const files=await require('./workspace-path.cjs').workspaceFiles(base,task);
-  const runFile=path.join(project,'runs',key(task.runRecordId||task.id)+'.json');
-  await fs.mkdir(files,{recursive:true,mode:0o700});
-  const catalogFile=path.join(project,'materials.json');
-  let catalog=await json(catalogFile,[]);
-  const materials=task.messages?.flatMap(m=>m.materials||[]) || task.materials || [];
+async function receiveMaterials(base,project,files,catalog,materials){
   for(const material of materials) {
     const id=key(JSON.stringify([material.name,material.sourceId || material.text]));
     let sourceId;
@@ -98,8 +91,19 @@ async function createWorkspace(base, task) {
     } else merged.push({...item,identity});
   }
   catalog=merged;
-  await writeJson(catalogFile,catalog);
+  await writeJson(path.join(project,'materials.json'),catalog);
+  return catalog;
+}
+async function createWorkspace(base, task) {
+  const project=require('./workspace-path.cjs').workspacePath(base,task);
+  const files=await require('./workspace-path.cjs').workspaceFiles(base,task);
+  const runFile=path.join(project,'runs',key(task.runRecordId||task.id)+'.json');
+  await fs.mkdir(files,{recursive:true,mode:0o700});
+  const catalogFile=path.join(project,'materials.json');
+  let catalog=await json(catalogFile,[]);
+  catalog=await receiveMaterials(base,project,files,catalog,task.messages?.flatMap(m=>m.materials||[]) || task.materials || []);
   let run=await json(runFile,{version:1,taskId:task.id,projectId:task.projectId,status:'understanding',mode:'chat',goal:'',steps:[],decisions:[],acceptance:[],artifacts:[],events:[],revision:0});
+  require('./recovery-state.cjs').bind(run);
   if(run.taskId!==task.id||run.projectId!==task.projectId)throw Error('任务所属项目不匹配');
   await fs.mkdir(path.dirname(runFile),{recursive:true,mode:0o700});
   // Seed the archive once so upgrading does not orphan earlier execution records.
@@ -112,7 +116,7 @@ async function createWorkspace(base, task) {
     catch(error){if(error.code!=='ENOENT')throw error;}finally{lines.close();input.destroy();}
   }
   const lookup=id=>catalog.find(m=>m.id===id||m.aliases?.includes(id));
-  async function save() {run.updatedAt=new Date().toISOString();await writeJson(runFile,run);}
+  async function save() {require('./recovery-state.cjs').bind(run);run.updatedAt=new Date().toISOString();await writeJson(runFile,run);}
   async function observationRecord(reference,options={}){
     if(typeof reference!=='string'||! /^[a-f0-9-]{8,36}$/i.test(reference))throw Error('工具记录 ID 无效');
     const receipts=[...(run.observationIndex||[]),...(run.observations||[]).map(o=>({id:o.observationId,eventId:o.response?.eventId}))];
@@ -139,7 +143,8 @@ async function createWorkspace(base, task) {
     }
     throw Object.assign(Error('未找到当前任务的执行记录：'+reference+'。这不表示原操作失败，不能据此重复执行写入、安装或发送。'),{code:'EXECUTION_RECORD_NOT_FOUND'});
   }
-  return {files,project,catalog,run,save,lookup,
+  return {files,project,get catalog(){return catalog;},run,save,lookup,
+    async receiveMaterials(materials){if(!materials.length)return catalog;catalog=await receiveMaterials(base,project,files,catalog,materials);return catalog;},
     async archivedEvent(id){
       const current=run.events.find(e=>e.id===id);if(current)return current;
       if(typeof id!=='string'||! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id))return;

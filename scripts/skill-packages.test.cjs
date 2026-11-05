@@ -190,3 +190,24 @@ test('deleting an imported skill persists and clears selections while retaining 
   assert.deepEqual(state.tasks[0].extensionIds, []);
   assert.deepEqual(state.tasks[0].messages, task.messages);
 });
+
+test('large SkillHub-style ZIP instructions survive save, restart and complete paginated reads without prompt expansion', async t => {
+  const {base}=await setup(t),storage=createStorage(base,{});
+  // Both the reported 20k-character failure and adjacent >80KB UTF-8 case.
+  for (const body of ['original instructions\n'.repeat(1500)+'FINAL_RULE_ASCII', '完整技能指令：必须核验成果并读取引用资料。\n'.repeat(3000)+'FINAL_RULE_UNICODE']) {
+    const original='---\nname: large-skill\ndescription: 完整的大技能\n---\n'+body;
+    const item=await importZip(storage.skillPackages,await zip([['bundle/skill.md',original],['bundle/references/guide.md','reference retained']]));
+    assert.ok(item.instructions.length<1000);assert.match(item.instructions,/read_file.*next/);assert.ok(!item.instructions.includes('FINAL_RULE'));
+    await storage.saveWorkspace({...await storage.readWorkspace(),extensions:[item]});
+    const restarted=createStorage(base,{}),saved=(await restarted.readWorkspace()).extensions[0];
+    assert.deepEqual(saved.package,item.package);
+    const workspace=await createWorkspace(path.join(base,'agent'),{id:item.id,projectId:'large-skill-project'});
+    const [prepared]=await restarted.skillPackages.prepare(workspace,[saved]);
+    assert.ok(prepared.instructions.length<5000);assert.match(prepared.instructions,/skill.md/);
+    const resource='.runtime/ailo-skills/'+saved.package.id+'/skill.md';
+    assert.equal(await fs.readFile(path.join(workspace.files,resource),'utf8'),original);
+    let offset=0,content='',pages=0;
+    for(;;){const result=await execute(workspace,{action:'read_file',path:resource,offset,limit:4000});content+=result.text;pages++;if(result.next==null)break;assert.ok(result.next>offset);offset=result.next;}
+    assert.ok(pages>5);assert.equal(content,original);
+  }
+});

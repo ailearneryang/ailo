@@ -2,8 +2,10 @@ const fs=require('node:fs/promises'),path=require('node:path');
 const {resolveFile}=require('./workspace.cjs'),{hash}=require('./evidence.cjs');
 // Inspect extracted Sketch pages, never execute the generated conversion script.
 // Counts are diagnostics of the selected source graph, not proof of visual fidelity.
-async function readSource(root){
- const queue=[{dir:'',depth:0}],candidates=[];let entries=0,truncated=false;
+async function readSource(root,sourceRoots){
+ if(sourceRoots!==undefined&&(!Array.isArray(sourceRoots)||!sourceRoots.length||sourceRoots.length>8||sourceRoots.some(p=>typeof p!=='string'||!p.trim())))throw Error('sourceRoots须为1–8个项目内原稿提取目录');
+ if(sourceRoots)for(const dir of sourceRoots)if(!(await fs.stat(await resolveFile(root,dir))).isDirectory())throw Error('sourceRoots须指向原稿目录');
+ const queue=(sourceRoots||['']).map(dir=>({dir,depth:0})),candidates=[];let entries=0,truncated=false;
  while(queue.length){
   const {dir,depth}=queue.shift();
   for(const item of await fs.readdir(dir?await resolveFile(root,dir):root,{withFileTypes:true})){
@@ -11,7 +13,7 @@ async function readSource(root){
    if(item.name.startsWith('.')||['node_modules','__MACOSX','build','dist','out','images'].includes(item.name)||item.isSymbolicLink())continue;
    const relative=dir?dir+'/'+item.name:item.name;
    if(item.isDirectory()&&depth<4)queue.push({dir:relative,depth:depth+1});
-   if(item.isFile()&&/\.json$/i.test(item.name)&&(path.posix.basename(dir)==='pages'||item.name==='document.json'))candidates.push(relative);
+   if(item.isFile()&&/\.json$/i.test(item.name)&&(path.posix.basename(dir)==='pages'||item.name==='document.json'||sourceRoots&&item.name==='design.json'))candidates.push(relative);
   }
   if(truncated)break;
  }
@@ -25,6 +27,7 @@ async function readSource(root){
   if(seenHashes.has(sha256))continue;
   if(bytes+data.length>24*1024*1024){truncated=true;continue;}bytes+=data.length;seenHashes.add(sha256);
   let value;try{value=JSON.parse(data);}catch{continue;}
+  if(sourceRoots&&value?.dsl)value=require('./design-dsl.cjs').parse(value);
   if(value?._class==='page'&&Array.isArray(value.layers))pages.push(value);
   else if(value?._class==='document'&&Array.isArray(value.foreignSymbols))documents.push(value);
   else continue;

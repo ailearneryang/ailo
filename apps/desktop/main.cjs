@@ -4,7 +4,6 @@ const {
   Menu,
   ipcMain,
   dialog,
-  safeStorage,
   shell,
   nativeImage,
   powerMonitor,
@@ -27,6 +26,9 @@ if (process.env.AILO_DATA_DIR)
 console.info(`[Ailo ${app.getVersion()}] 主进程启动`);
 const primaryInstance=app.requestSingleInstanceLock();
 if(!primaryInstance){console.warn('已有 Ailo 实例正在运行，本次未切换运行版本。请先完全退出旧实例，再执行 npm start。');app.exit(1);}
+const safeStorage=require('./session-secrets.cjs').createSessionSecrets(()=>require('electron').safeStorage);
+app.on('before-quit',()=>safeStorage.clearSession());
+
 let win;
 app.on('second-instance',()=>{if(win&&!win.isDestroyed()){if(win.isMinimized())win.restore();win.show();win.focus();}});
 const storage = require("./storage.cjs").createStorage(
@@ -45,6 +47,7 @@ storage.modelNetworkContext=async url=>{
 };
 storage.imageObserver=require('./agent/image-observer.cjs').createImageObserver(nativeImage);
 storage.browserObserver=require('./agent/browser-observer.cjs').createBrowserObserver(require('electron'));
+storage.autonomousTasks=true;
 storage.agentDirectory = path.join(app.getPath("userData"), "agent");
 const {experience,dictation}=require('./experience-ipc.cjs').attachExperience({app,ipcMain,storage,chat,trusted,getWin:()=>win,dialog,shell,workspaceState,readMaterial,createWindow:()=>create()});
 storage.permissions=require('./permissions.cjs').createPermissions({directory:app.getPath('userData'),base:storage.agentDirectory,account:()=>storage.account(),workspace:()=>storage.readWorkspace(),patchTask:(id,patch)=>storage.patchTask(id,patch),notify:owner=>{if(win&&!win.isDestroyed())win.webContents.send('permissions:changed',owner);},
@@ -115,6 +118,8 @@ storage.androidManager=require('./agent/android-device.cjs').createAndroidManage
   },
 });
 
+const skillHub = require('./skill-hub.cjs').createSkillHub({ packages: storage.skillPackages, imageData: bytes => { const image = require('electron').nativeImage.createFromBuffer(bytes); return image.isEmpty() ? '' : image.resize({width:68,height:68,quality:'good'}).toDataURL(); }, fetch: require('./skill-hub-transport.cjs').createSkillHubTransport() });
+for (const action of ['search','detail','install','categories','icon']) ipcMain.handle('skillHub:'+action, (e, input) => { trusted(e); return skillHub[action](input); });
 ipcMain.handle('extensions:importSkill', (e, input) => { trusted(e); return storage.skillPackages.importSkill(input); });
 ipcMain.handle("chat:sessions", e=>{trusted(e);return chat.sessions();});
 ipcMain.handle("chat:complete", async (e, input) => {
@@ -124,7 +129,7 @@ ipcMain.handle("chat:complete", async (e, input) => {
   // A reconnect must attach to the existing job, never mark it as failed.
   if(chat.sessions().some(s=>s.taskId===input.taskId))throw Error('此会话正在执行或排队，请补充消息或等待完成。');
   try {
-    const result=await chat.complete({...input,executionOrigin:'user',onRun:run=>send({run}),onText:content=>send({content}),onStatus:message=>send({message})});
+    const result=await chat.complete({...input,executionOrigin:'user',onActivity:activity=>send({activity}),onRun:run=>send({run}),onText:content=>send({content}),onStatus:message=>send({message})});
     if(input.taskId)await storage.patchTask(input.taskId,{contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens,lastError:undefined,lastErrorCode:undefined,modelRequestDiagnostics:undefined,partialReply:undefined},[{id:input.id+'-assistant',role:'assistant',content:result.content,clarification:result.clarification,replyDetails:result.replyDetails,modelName:result.modelName}]);
     send({finished:true});return result;
   }catch(error){
@@ -140,6 +145,7 @@ ipcMain.handle("task:edit-last-message", async (e, {id,messageId,content}) => {
   const task=await storage.editLastMessage(id,messageId,content);
   if(!task.temporary)await companion.activity(task,[task.messages.at(-1)],owner).catch(error=>console.error('陪伴记录保存失败',error.message));return task;
 });
+ipcMain.handle('message:feedback',(e,input)=>{trusted(e);return storage.messageFeedback(input);});
 ipcMain.handle("task:patch", async (e, {id,patch,append}) => {trusted(e);if(patch?.permissionMode!==undefined&&chat.sessions().some(s=>s.taskId===id)){const old=(await storage.readWorkspace()).tasks.find(t=>t.id===id);if(old?.permissionMode!==patch.permissionMode)throw Error('请先停止任务再更改权限模式');}return storage.isTemporary(id)?storage.patchTask(id,patch,append):companionModule.patchUserTask(storage,companion,id,patch,append);});
 ipcMain.handle("task:pin", (e, {id,pinned}) => { trusted(e); return storage.setTaskPinned(id,pinned); });
 ipcMain.handle("chat:steer", async (e, input) => {
@@ -158,7 +164,7 @@ const schedules=require('./scheduled-tasks.cjs').createScheduledTasks({
     const prompt=task.prompt+'\n\n[定时执行时间：'+new Date().toLocaleString('zh-CN')+'。请直接完成任务并报告结果；缺少信息或权限时请说明，不要假装已经完成。]';
     await storage.patchTask(run.taskId,{projectId:task.projectId,scheduledTaskId:task.id,scheduledContextMode:task.contextMode||'continuity',scheduledRunId:run.id,scheduledAt:run.at,title:'定时 · '+task.title,request:prompt,materials:[],created:new Date().toISOString(),modelId:task.modelId,feishuEnabled:task.feishuEnabled===true,searchEnabled:task.searchEnabled},[{id:run.id+'-user',role:'user',content:prompt}]);
     try{
-      const result=await chat.complete({id:run.id,taskId:run.taskId,executionOrigin:'scheduled',modelId:task.modelId,feishuEnabled:task.feishuEnabled===true,searchEnabled:task.searchEnabled,messages:[{role:'user',content:prompt}],onRun:run=>send({run}),onText:content=>send({content}),onStatus:message=>send({message})});
+      const result=await chat.complete({id:run.id,taskId:run.taskId,executionOrigin:'scheduled',modelId:task.modelId,feishuEnabled:task.feishuEnabled===true,searchEnabled:task.searchEnabled,messages:[{role:'user',content:prompt}],onActivity:activity=>send({activity}),onRun:run=>send({run}),onText:content=>send({content}),onStatus:message=>send({message})});
       await storage.patchTask(run.taskId,{modelName:result.modelName,contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens},[{id:run.id+'-assistant',role:'assistant',content:result.content,replyDetails:result.replyDetails,modelName:result.modelName,clarification:result.clarification}]);
       if(result.agentRun?.delivery?.status==='settled'){if(result.agentRun.status==='partial')return {status:'partial'};throw Error('本轮已结束，尚未形成可交付成果。');}
       if(result.clarification||['blocked','waiting_permission','paused','running','understanding'].includes(result.agentRun?.status))throw Error('任务需要人工处理，请查看对话继续。');
@@ -182,7 +188,7 @@ async function workspaceState(){
   for (const task of state.tasks) {
 
     const run = await json(path.join(require('./agent/workspace-path.cjs').workspacePath(storage.agentDirectory,task),"runs",key(task.runRecordId||task.id)+".json"),null);
-    if (run) {task.agentRun = publicRun(run);if(!chat.sessions().some(s=>s.taskId===task.id)&&['running','understanding'].includes(task.agentRun.status))task.agentRun.status='paused';}
+    if (run) {await require('./agent/result-preview.cjs').projectLegacy(path.join(require('./agent/workspace-path.cjs').workspacePath(storage.agentDirectory,task),'files'),run);task.agentRun = publicRun(run);if(!chat.sessions().some(s=>s.taskId===task.id)&&['running','understanding'].includes(task.agentRun.status))task.agentRun.status='paused';}
   }
   state.tasks=require('./scheduled-records.cjs').associateScheduledRecords(state.tasks,await schedules.list());
   return state;
@@ -244,7 +250,8 @@ ipcMain.handle('agent:openArtifact', async (e, {taskId, artifactPath, projectFil
   if(!task)throw Error('任务不存在');
   const project=require('./agent/workspace-path.cjs').workspacePath(storage.agentDirectory,task);
   const run=await json(path.join(project,'runs',key(task.runRecordId||task.id)+'.json'),null);
-  if(!projectFile&&!run?.artifacts.some(a=>a.path===artifactPath))throw Error('成果不属于当前任务');
+  await require('./agent/result-preview.cjs').projectLegacy(path.join(project,'files'),run);
+  if(!projectFile)require('./artifact-ownership.cjs').assertOwnedArtifact(run,artifactPath,{taskId:task.id});
   const root=projectFile?await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task):await require('./schedule-context.cjs').scheduleArtifactRoot(storage.agentDirectory,task,artifactPath);
   const file=projectFile?await require('./agent/project-files.cjs').projectFile(root,artifactPath):await resolveFile(root,artifactPath);
   const error=await shell.openPath(file);if(error)throw Error('无法打开文件：'+error);
@@ -256,9 +263,10 @@ ipcMain.handle("agent:reveal", async (e, {taskId, artifactPath, projectFile = fa
   if (!task) throw Error("任务不存在");
   const project = require('./agent/workspace-path.cjs').workspacePath(storage.agentDirectory,task);
   const run = await json(path.join(project,"runs",key(task.runRecordId||task.id)+".json"),null);
+  await require('./agent/result-preview.cjs').projectLegacy(path.join(project,'files'),run);
   if (artifactPath) {
     if (projectFile) await require("./agent/project-files.cjs").projectFile(await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task),artifactPath);
-    else if (!run?.artifacts.some(a => a.path === artifactPath)) throw Error("成果不属于此任务");
+    else require('./artifact-ownership.cjs').assertOwnedArtifact(run,artifactPath,{taskId:task.id});
     const root=projectFile?await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task):await require('./schedule-context.cjs').scheduleArtifactRoot(storage.agentDirectory,task,artifactPath);
     shell.showItemInFolder(await resolveFile(root,artifactPath));
   } else {
@@ -276,11 +284,21 @@ ipcMain.handle("agent:preview", async (e, {taskId, artifactPath, projectFile = f
   if(!task)throw Error('任务不存在');
   const project=require('./agent/workspace-path.cjs').workspacePath(storage.agentDirectory,task);
   const run=await json(path.join(project,'runs',key(task.runRecordId||task.id)+'.json'),null);
+  await require('./agent/result-preview.cjs').projectLegacy(path.join(project,'files'),run);
   if(projectFile)await require('./agent/project-files.cjs').projectFile(await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task),artifactPath);
-  else if(!run?.artifacts.some(a=>a.path===artifactPath))throw Error('成果不属于当前任务');
+  else require('./artifact-ownership.cjs').assertOwnedArtifact(run,artifactPath,{taskId:task.id});
   const root=projectFile?await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task):await require('./schedule-context.cjs').scheduleArtifactRoot(storage.agentDirectory,task,artifactPath);
   const file=await resolveFile(root,artifactPath);
   return require('./artifact-edit.cjs').previewFile(file,root);
+});
+ipcMain.handle('agent:candidate',async(e,{taskId,candidateId,artifactPath,operation})=>{
+  trusted(e);if(!['preview','reveal'].includes(operation))throw Error('快照操作无效');
+  const state=await storage.readWorkspace(),task=state.tasks.find(t=>t.id===taskId);if(!task)throw Error('任务不存在');
+  const project=require('./agent/workspace-path.cjs').workspacePath(storage.agentDirectory,task),run=await json(path.join(project,'runs',key(task.runRecordId||task.id)+'.json'),null);
+  if(!run||run.taskId!==task.id)throw Error('快照不属于当前任务');
+  const files=await require('./agent/workspace-path.cjs').workspaceFiles(storage.agentDirectory,task),snapshot=await require('./agent/candidate-versions.cjs').resolve({project,files,run},{candidateId,path:artifactPath});
+  if(operation==='reveal'){shell.showItemInFolder(snapshot.file);return;}
+  return {...await require('./artifact-edit.cjs').previewFile(snapshot.file,snapshot.root),snapshotNotice:snapshot.notice};
 });
 ipcMain.handle("state:write", (e, state) => {
   trusted(e);

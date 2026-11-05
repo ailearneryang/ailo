@@ -61,7 +61,7 @@ test('cannot finish with nonexistent evidence, no artifact, or writes before a p
   const actions=[{action:'write_file',path:'bad.txt',content:'bad'},plan,{action:'finish',review:{summary:'已对照要求检查当前成果',issues:[],unverified:[]},text:'完成',evidence:['fake']},{action:'blocked',text:'缺少验证成果'}];
   if(calls===1)assert.match(s.toolResults.at(-1).error,/计划/);
   if(calls===3)assert.match(s.toolResults.at(-1).error,/实际成果/);
-  return {content:JSON.stringify(actions[calls++])};
+  return {content:JSON.stringify(actions[Math.min(calls++,actions.length-1)])};
  }));assert.equal(result.agentRun.status,'blocked');const w=await createWorkspace(base,task);await assert.rejects(fs.access(path.join(w.files,'bad.txt')));
 });
 test('stop preserves file and recoverable state without replaying writes',async t=>{
@@ -211,7 +211,7 @@ test('persistent output truncation stops after staged recovery within configured
 });
 test('non-length provider failures are not replayed by output recovery',async t=>{
  const base=await setup(t);let calls=0;
- await assert.rejects(runAgent(options(base,async()=>{calls++;throw Error('HTTP 401');})),/401/);assert.equal(calls,1);
+ await assert.rejects(runAgent(options(base,async()=>{calls++;throw Object.assign(Error('HTTP 401'),{code:'MODEL_HTTP_ERROR'});})),/401/);assert.equal(calls,1);
 });
 
 test('progress review survives restart and checkpoint, gates tools and publishes updated steps',async t=>{
@@ -287,6 +287,8 @@ test('steering arriving during decision discards stale write and re-routes with 
   else if(turn===2){queue.push({id:'steer1',role:'user',content:'改为生成 rainy.txt，保留原任务'});action={action:'write_file',path:'stale.txt',content:'旧决策'};}
   else if(turn===3){assert.equal(s.phase,'route');assert.match(s.conversation.at(-1).content,/rainy/);action={action:'route',kind:'task'};}
   else if(turn===4)action={action:'write_file',path:'rainy.txt',content:'new'};
+  else if(turn===5){assert.equal(s.inputCoverage.inputs.find(e=>e.inputId==='steer1').status,'received');assert.ok(s.toolResults.some(r=>r.error?.includes('本次补充要求尚未纳入计划')));action={...plan,requirements:[...s.acceptanceCriteria.map(({id,text,type,scope,scopes})=>({id,text,type,...(scope?{scope}:{}),...(scopes?{scopes}:{})})),{id:'rainy',text:'生成 rainy.txt 并保留晴天要求',type:'content'}]};}
+  else if(turn===6){assert.equal(s.inputCoverage.inputs.find(e=>e.inputId==='steer1').status,'planned');action={action:'write_file',path:'rainy.txt',content:'new'};}
   else action={action:'pause',text:'已按补充调整'};
   turn++;return {content:JSON.stringify(action)};
  }});
@@ -303,7 +305,7 @@ test('oversized arguments recover with smaller actions, fixed budget and bounded
  },{model:{contextWindow:100000,maxOutputTokens:32000},executeTool:()=>assert.fail('partial action must not execute')}));
  assert.deepEqual(budgets,[8192,8192,8192]);
  const failBase=await setup(t);let retries=0;
- await assert.rejects(runAgent(options(failBase,async()=>{retries++;throw Object.assign(Error('large'),{code:'MODEL_TOOL_ARGUMENT_LIMIT'});})),/重试 2 次/);
+ const stopped=await runAgent(options(failBase,async()=>{retries++;throw Object.assign(Error('large'),{code:'MODEL_TOOL_ARGUMENT_LIMIT'});}));assert.equal(stopped.agentRun.status,'blocked');assert.equal(stopped.agentRun.delivery.status,'settled');assert.equal(stopped.agentRun.delivery.outcome,'blocked');assert.match(stopped.content,/重试 2 次/);
  assert.equal(retries,3);
 });
 
@@ -341,7 +343,7 @@ test('bookkeeping-only batches refocus internally while retaining the overall ex
 test('repeated action guard remains effective across batch boundaries',async t=>{
  const base=await setup(t);let n=0;
  const result=await runAgent(options(base,async()=>({content:JSON.stringify(n++===0?plan:{action:'read_file',path:'a.txt'})}),{batchSize:2,maxSteps:12,executeTool:async()=>({text:'same'})}));
- assert.equal(result.agentRun.status,'blocked');assert.ok(n<12);assert.match(result.content,/已停止无效请求/);assert.ok(result.agentRun.events.some(e=>e.type==='loop_recovery'));
+ assert.equal(result.agentRun.status,'partial');assert.equal(result.agentRun.delivery.outcome,'partial');assert.ok(result.agentRun.delivery.findings.length);assert.ok(n<12);assert.match(result.content,/已停止无效请求/);assert.ok(result.agentRun.events.some(e=>e.type==='loop_recovery'));
 });
 
 test('thinking truncation learns bounded headroom across actions and continuation',async t=>{
@@ -448,7 +450,7 @@ test('completed steps without actual artifacts and evidence cannot bypass finish
  const result=await runAgent(options(base,async messages=>{
   const s=JSON.parse(messages.at(-1).content);
   if(calls++===0)return {content:JSON.stringify({...plan,steps:plan.steps.map(step=>({...step,status:'done'}))})};
-  assert.equal(s.requiredAction,'finish_review');
+  assert.equal(s.requiredAction,s.resultRecovery?'complete_remaining':'finish_review');
   if(calls===2)return {content:JSON.stringify({action:'finish',review:{summary:'已对照要求检查当前成果',issues:[],unverified:[]},text:'完成',evidence:['fake']})};
   assert.match(s.toolResults.at(-1).error,/实际成果/);
   return {content:JSON.stringify({action:'blocked',text:'缺少实际成果与验收证据'})};
@@ -496,30 +498,24 @@ test('large static context does not force checkpoint after every single read',as
 });
 
 test('changed artifact errors identify every file and successful repairs reset finish failure counters',async t=>{
- const base=await setup(t);let call=0,repairs=0;const repairQueue=[];let checkedGate=false;let savedError,lastEvidence;
+ const base=await setup(t);let call=0,repairs=0,lastEvidence;
  const w=await createWorkspace(base,task);
  const initial=[plan,{action:'write_file',path:'weather.txt',content:'晴天'},{action:'write_file',path:'extra.txt',content:'extra'},{action:'run_command',command:'test -f weather.txt',purpose:'检查成果'},{action:'artifact',path:'weather.txt',label:'天气'},{action:'artifact',path:'extra.txt',label:'附录'},{...plan,steps:plan.steps.map(s=>({...s,status:'done'}))}];
  const result=await runAgent(options(base,async messages=>{
-  const s=JSON.parse(messages.at(-1).content);
-  lastEvidence=s.completionEvidence?.at(-1)?.id||lastEvidence;
+  const state=JSON.parse(messages.at(-1).content);lastEvidence=state.completionEvidence?.at(-1)?.id||lastEvidence;
   if(call<initial.length)return {content:JSON.stringify(initial[call++])};
-  if(s.requiredAction==='checkpoint'){savedError=s.toolResults.at(-1)?.error||savedError;return {content:JSON.stringify({action:'checkpoint',text:'已制作天气和附录，外部修改导致旧登记失效；正在逐个重新登记最终内容，之后核验并完成。'+call+'-'+repairs})};}
-  if(!checkedGate&&s.pendingArtifactUpdates?.length&&repairs===1){assert.deepEqual(s.pendingArtifactUpdates,['weather.txt','extra.txt']);checkedGate=true;}
-  if(repairQueue.length)return {content:JSON.stringify(repairQueue.shift())};
-  const error=s.toolResults.at(-1)?.error||savedError;savedError=undefined;
+  const error=state.toolResults.at(-1)?.error;
   if(error){
    assert.match(error,/weather\.txt/);assert.match(error,/extra\.txt/);assert.match(error,/不要直接重复 finish/);
-   repairs++;
-   assert.deepEqual(s.pendingArtifactUpdates,['weather.txt','extra.txt']);
-   if(repairs===1){repairQueue.push({action:'artifact',path:'weather.txt',label:'天气'},{action:'artifact',path:'extra.txt',label:'附录'});return {content:JSON.stringify({action:'verify',checks:s.acceptanceCriteria.map(c=>({criterionId:c.id,kind:'file_exists',path:'weather.txt',reason:'不能跳过登记'}))})};}
-   repairQueue.push({action:'artifact',path:'extra.txt',label:'附录'},{action:'run_command',command:'test -f weather.txt',purpose:'重新检查最终成果'});
-   return {content:JSON.stringify({action:'artifact',path:'weather.txt',label:'天气'})};
+   assert.deepEqual(state.pendingArtifactUpdates,[]);
+   for(const file of state.artifacts)assert.equal(file.sha256,require('node:crypto').createHash('sha256').update(await fs.readFile(path.join(w.files,file.path))).digest('hex'));
+   assert.ok(state.acceptanceCriteria.some(c=>c.check?.status!=='passed'));repairs++;
+   return {content:JSON.stringify({action:'read_file',path:'weather.txt',purpose:'核对重新登记后的实际内容'})};
   }
-  if(repairs<3){
-   await fs.writeFile(path.join(w.files,'weather.txt'),'晴天 '+repairs);
-   await fs.writeFile(path.join(w.files,'extra.txt'),'extra '+repairs);
-  }else if(!s.acceptanceCriteria.every(c=>c.check?.status==='passed'))return {content:JSON.stringify({action:'verify',checks:s.acceptanceCriteria.map(c=>({criterionId:c.id,kind:'text_contains',path:'weather.txt',contains:['晴天'],reason:'最终文件包含晴天'}))})};
-  return {content:JSON.stringify({action:'finish',review:{summary:'已对照要求检查当前成果',issues:[],unverified:[]},text:'完成',evidence:[lastEvidence]})};
+  if(repairs<3){await fs.writeFile(path.join(w.files,'weather.txt'),'晴天 '+repairs);await fs.writeFile(path.join(w.files,'extra.txt'),'extra '+repairs);}
+  else if(!state.acceptanceCriteria.every(c=>c.check?.status==='passed'))return {content:JSON.stringify({action:'verify',checks:state.acceptanceCriteria.map(c=>({criterionId:c.id,kind:'text_contains',path:'weather.txt',contains:['晴天'],reason:'检查最终真实文件内容'}))})};
+  return {content:JSON.stringify({action:'finish',review:{summary:'最终文件已重新登记并独立核验',issues:[],unverified:[]},text:'完成',evidence:[lastEvidence]})};
  },{executeTool:checkWeatherFile}));
- assert.equal(checkedGate,true);assert.equal(result.agentRun.status,'completed',JSON.stringify(result));assert.equal(repairs,3);
+ assert.equal(result.agentRun.status,'completed',JSON.stringify(result));assert.equal(repairs,3);assert.ok(result.agentRun.acceptanceCriteria.every(c=>c.status==='passed'));
+ const saved=await createWorkspace(base,task);assert.equal(saved.run.events.filter(e=>e.type==='artifact_reconciled').length,6);
 });

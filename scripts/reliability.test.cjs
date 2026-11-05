@@ -41,7 +41,7 @@ test('persisted unknown commands block on resume before tool invocation',async t
  const result=await runAgent({base,task,model:{contextWindow:32768},signal:new AbortController().signal,ask:async messages=>{
   const s=JSON.parse(messages.at(-1).content);assert.equal(s.actionRecovery[0].status,'unknown');return {content:JSON.stringify(calls++?command:{action:'route',kind:'task'})};
  },executeTool:()=>assert.fail('unknown mutation must not execute')});
- assert.equal(result.agentRun.status,'blocked');assert.match(result.content,/禁止自动重放/);
+ assert.equal(result.agentRun.status,'blocked');assert.match(result.content,/尚未确认/);
 });
 test('project memory selects newest tasks when more than 100 exist',async t=>{
  const {base}=await setup(t),tasks=Array.from({length:105},(_,i)=>({...task,id:'task'+i,title:'t'+i,created:new Date(Date.UTC(2026,0,105-i)).toISOString()}));

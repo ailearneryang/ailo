@@ -12,8 +12,10 @@ function validateExtensions(items) {
   return items.map(e => {
     if (!e || typeof e.id !== 'string' || e.id.length > 100 || ids.has(e.id) || !['expert','skill'].includes(e.kind) || typeof e.name !== 'string' || !e.name.trim() || e.name.length > 60 || typeof e.description !== 'string' || e.description.length > 300 || typeof e.instructions !== 'string' || !e.instructions.trim() || e.instructions.length > 20000 || typeof e.enabled !== 'boolean') throw Error('扩展配置无效，请检查名称和指令长度。');
     ids.add(e.id);
+    if (e.invocation !== undefined && (e.kind !== 'skill' || !['auto','manual'].includes(e.invocation))) throw Error('技能调用方式无效，请选择自动可用或仅手动。');
     if (e.package !== undefined && (e.kind !== 'skill' || !e.package || typeof e.package.id !== 'string' || !/^[a-f0-9]{64}$/.test(e.package.id) || !Number.isSafeInteger(e.package.files) || e.package.files < 1 || e.package.files > 1000)) throw Error('技能包配置无效，请重新导入。');
-    return { id:e.id, kind:e.kind, name:e.name.trim(), description:e.description.trim(), instructions:e.instructions.trim(), enabled:e.enabled, ...(e.package ? {package:{id:e.package.id,files:e.package.files}} : {}) };
+    if (e.source !== undefined && (e.kind !== 'skill' || !e.package || e.source?.provider !== 'skillhub' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,149}$/.test(e.source.slug) || typeof e.source.slug !== 'string' || typeof e.source.version !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,149}$/.test(e.source.version) || !/^[a-f0-9]{64}$/.test(e.source.sha256) || typeof e.source.sha256 !== 'string')) throw Error('技能来源配置无效。');
+    return { id:e.id, kind:e.kind, name:e.name.trim(), description:e.description.trim(), instructions:e.instructions.trim(), enabled:e.enabled, ...(e.kind==='skill'?{invocation:e.invocation||'auto'}:{}), ...(e.source ? {source:{provider:'skillhub',slug:e.source.slug,version:e.source.version,sha256:e.source.sha256}} : {}), ...(e.package ? {package:{id:e.package.id,files:e.package.files}} : {}) };
   });
 }
 function selectedExtensions(items, ids = []) {

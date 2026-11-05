@@ -1,0 +1,16 @@
+/* Follow the text size and theme, keeping identity separate from status. */
+.execution-icon{display:inline-flex;align-items:center;justify-content:center;flex:none;width:1.15em;height:1.15em;line-height:1;color:inherit;vertical-align:-.15em}
+.execution-icon>.ui-icon{width:100%;height:100%;flex:none}
+.execution-icon-running{color:var(--accent)}
+.execution-icon-failed,.execution-icon-unknown{color:var(--warning)}
+.execution-process-skills>span,.execution-extension{display:inline-flex;align-items:flex-start;gap:.45em;min-width:0;max-width:100%;line-height:1.65}
+.execution-process-skills>span>.execution-icon,.execution-extension>.execution-icon{margin-top:.25em}
+.execution-process-skills>span>span:last-child,.execution-extension>span:last-child{min-width:0;overflow-wrap:anywhere}
+.story-operation>summary{align-items:flex-start;gap:.6em}
+.story-operation>summary>.execution-icon{margin-top:.225em}
+.story-operation>summary>.ui-icon{width:1.15em;height:1.15em;margin-top:.225em}
+.story-operation-state{display:inline-flex;align-items:center;gap:.4em;line-height:1.9}
+.story-operation-state>.activity-spinner{width:.9em;height:.9em;flex:none}
+.execution-event-mark{display:inline-flex;align-items:center;justify-content:center;left:-.65em;top:.22em;width:1.3em;height:1.3em;color:var(--muted)}
+.execution-event-mark>.ui-icon{width:1.15em;height:1.15em}
+.execution-event-meta>.activity-spinner{display:inline-block;width:.9em;height:.9em;margin-right:.4em;vertical-align:-.08em}

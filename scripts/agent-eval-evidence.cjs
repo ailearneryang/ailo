@@ -1,0 +1,27 @@
+// Derive release guard evidence from actual frozen trial files, never flags.
+const fs=require('node:fs/promises'),path=require('node:path'),{isDeepStrictEqual}=require('node:util');
+const config=require('./agent-eval-config.cjs'),net=require('./agent-eval-net-gain.cjs');
+async function read(file){const bytes=await fs.readFile(file);return {value:JSON.parse(bytes),sha256:config.hash(bytes)};}
+async function guards(plan,{directory,calibrationReview,calibrationRoot,predictionRoot}={}){
+ const {planFingerprint,...frozen}=plan;if(config.hash(frozen)!==planFingerprint)throw Error('Frozen comparison plan changed');directory=path.resolve(directory);
+ const expected=plan.configuration,configuration=await read(path.join(directory,'configuration.json'));if(configuration.value.configurationFingerprint!==expected?.configurationFingerprint)throw Error('Evidence directory does not match the frozen input/model plan');
+ const files=[],required={complete:true,violations:0},safety={complete:true,violations:0};
+ for(const version of ['baseline','candidate'])for(const fixture of expected.cases)for(let repeat=1;repeat<=expected.repeats;repeat++){
+  const trial=path.join(directory,version,fixture.id+'-'+repeat);let raw;try{raw=await read(path.join(trial,'result.json'));}catch(e){if(e.code==='ENOENT'){required.complete=false;if(version==='candidate'&&fixture.id==='unknown-effect')safety.complete=false;continue;}throw e;}
+  files.push({path:path.relative(directory,path.join(trial,'result.json')),sha256:raw.sha256});if(raw.value.configurationFingerprint!==expected.configurationFingerprint||!isDeepStrictEqual(raw.value.rubric,fixture.rubric)||raw.value.runtimeFingerprint!==plan.runtime[version].runtimeFingerprint)required.violations++;
+  const review=await require('./agent-eval-review.cjs').inspect(trial);if(!review)required.complete=false;
+  if(version==='candidate'&&fixture.id==='unknown-effect'){
+   let evidence;try{evidence=await read(path.join(trial,'scenario-evidence.json'));}catch(e){if(e.code==='ENOENT'){safety.complete=false;continue;}throw e;}
+   files.push({path:path.relative(directory,path.join(trial,'scenario-evidence.json')),sha256:evidence.sha256});const e=evidence.value;
+   const counterFile=path.join(trial,'workspace/projects',config.hash('eval'),'files/counter.txt');let bytes;try{bytes=await fs.readFile(counterFile);}catch{safety.complete=false;continue;}
+   files.push({path:path.relative(directory,counterFile),sha256:config.hash(bytes)});if(e.scenario!=='unknown_effect_fault_injection'||!e.complete||!e.events?.some(x=>x.type==='committed_receipt_lost')||!e.checks?.some(c=>c.check==='runtime reconciled actual expected bytes with durable receipt'&&c.passed===true))safety.complete=false;if(e.counterWrites?.length!==1||bytes.toString()!=='1')safety.violations++;
+  }
+ }
+ let sameEnvironment={complete:false,violations:0};try{const a=await read(path.join(directory,'environment-baseline.json')),b=await read(path.join(directory,'environment-candidate.json'));sameEnvironment={complete:a.value.passed===true&&b.value.passed===true,violations:a.value.environmentFingerprint===b.value.environmentFingerprint?0:1,evidenceId:config.hash([a.sha256,b.sha256])};}catch(e){if(e.code!=='ENOENT')throw e;}
+ const bound=config.hash(files),result={unknownSideEffectReplay:{...safety,evidenceId:'actual-query-and-invocation:'+bound},requiredAcceptancePreserved:{...required,evidenceId:'actual-rubric-and-human-review:'+bound},sameEnvironment};
+ if(calibrationReview){if(!calibrationRoot||!predictionRoot)throw Error('Calibration guards require explicit frozen image and raw prediction roots');const data=await read(calibrationReview),predictions=await read(path.join(predictionRoot,'predictions.json'));if(data.value.datasetFingerprint!==predictions.value.datasetFingerprint)throw Error('Human labels and predictions do not share the same frozen image/requirement dataset');for(const sample of data.value.samples)sample.prediction=predictions.value.samples.find(p=>p.id===sample.id)?.prediction;const score=await require('./agent-eval-visual-calibration.cjs').evaluate(data.value,{root:path.resolve(calibrationRoot),predictionRoot:path.resolve(predictionRoot)});result.visualCalibration={complete:score.status==='measured',evidenceId:'actual-image-and-prediction:'+config.hash([data.sha256,predictions.sha256]),result:score};}
+ return result;
+}
+async function evaluate(plan,options){const evidence=await guards(plan,options),report=await require('./agent-eval-report.cjs').summarize(options.directory,{print:false});return {comparison:net.compare(plan,report,{hardGuardEvidence:evidence}),hardGuardEvidence:evidence};}
+async function main(argv=process.argv.slice(2)){const o={};for(let i=0;i<argv.length;i++){const k={'--plan':'plan','--directory':'directory','--calibration-review':'calibrationReview','--calibration-root':'calibrationRoot','--predictions-root':'predictionRoot','--output':'output'}[argv[i]];if(!k||!argv[i+1])throw Error('Unknown evidence option');o[k]=argv[++i];}if(!o.plan||!o.directory||!o.output)throw Error('Use frozen --plan, real --directory and new --output');const result=await evaluate(JSON.parse(await fs.readFile(o.plan,'utf8')),o);await fs.writeFile(o.output,JSON.stringify(result,null,2),{flag:'wx',mode:0o600});console.log(JSON.stringify({status:result.comparison.status,netGain:result.comparison.netGain,modelRequests:0,output:path.resolve(o.output)}));return result;}
+module.exports={guards,evaluate,main};if(require.main===module)main().catch(e=>{console.error(e.message);process.exitCode=1;});

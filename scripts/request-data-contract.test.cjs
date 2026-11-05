@@ -1,0 +1,20 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),contract=require('../apps/desktop/agent/request-contract.cjs'),html=require('../apps/desktop/agent/html-validation.cjs');
+const request='根据天气切换背景，保留原city="北京"及temperature=20，并输出background-switch.md说明本次映射。请先采用所有待处理输入，再修改文件；只用原生文件读写及内容核验，不执行代码。';
+test('the actual live-trial data-only instruction does not manufacture an interactive application obligation',()=>{
+ const described=contract.describe(request);assert.equal(described.kind,'document');assert.equal(described.checks.behavior,false);assert.equal(described.checks.visual,false);
+ const run={executionId:'e',inputKey:'u',requirementsManaged:true,requirements:[{id:'page',text:'保留城市和温度',type:'content'}],requestContract:{version:1,inputId:'u',executionId:'e',kind:'application',request,checks:{content:true,structure:true,behavior:true,visual:false},explicit:{behavior:true,visual:false,runtime:false}}},task={messages:[{id:'u',role:'user',content:request}]};
+ html.configure(run,task);assert.equal(run.requestContract.version,2);assert.equal(run.htmlValidation.mode,'document');assert.equal(run.requestContractHistory[0].checks.behavior,true,'旧误分类记录保留');assert.doesNotThrow(()=>html.assertPlan(run,{requirements:[run.requirements[0],{id:'mapping',text:'JSON含晴雨映射',type:'content'},{id:'notes',text:'说明文件存在',type:'presence'}]}));
+});
+test('a data format alone or an explicit functional deliverable still requires real behavior verification',()=>{
+ for(const text of ['开发天气应用，支持切换背景，输出JSON配置','只修改本地JSON配置，同时实现可点击的切换页面','生成JSON配置，必须支持点击切换并通过运行测试','开发可交互网页并输出Markdown说明','只修改本地JSON配置，实测页面切换背景是否正常','只修改本地JSON配置，测试网页切换背景是否正常','只修改本地JSON配置，请点击应用里的切换按钮']){const d=contract.describe(text);assert.equal(d.checks.behavior,true,text);}
+ const run={executionId:'e',inputKey:'new',requirementsManaged:true,requirements:[{id:'app',text:'天气应用可切换背景',type:'behavior'}],requestContract:{version:1,inputId:'old',executionId:'e',kind:'application',request:'开发天气应用，支持切换背景',checks:{content:true,structure:true,behavior:true,visual:false},explicit:{behavior:true,visual:false,runtime:true}}};
+ html.configure(run,{messages:[{id:'new',role:'user',content:request}]});assert.equal(run.requestContract.checks.behavior,true,'新增文件范围不能撤销原应用运行要求');assert.throws(()=>html.assertPlan(run,{requirements:[{id:'text',text:'只看配置文字',type:'content'}]}),/behavior/);
+});
+test('legacy inherited application and visual obligations remain when there is no explicit file-only data boundary',()=>{
+ const run={executionId:'e',inputKey:'u',requirementsManaged:true,requirements:[{id:'visual',text:'符合原稿',type:'visual'}],requestContract:{version:1,inputId:'u',executionId:'e',kind:'design',request:'希望天气背景可以根据天气变换不同背景',checks:{content:true,structure:true,behavior:true,visual:true},explicit:{behavior:true,visual:true,runtime:true}}};
+ html.configure(run,{messages:[{id:'u',role:'user',content:run.requestContract.request}]});assert.equal(run.requestContract.checks.behavior,true);assert.equal(run.requestContract.checks.visual,true);assert.throws(()=>html.assertPlan(run,{requirements:[{id:'text',text:'源码有背景',type:'content'}]}),/visual/);
+});
+test('reclassifying a legacy file-only cache cannot turn genuine registered design verification into a forbidden extra check',()=>{
+ const request='只修改本地JSON配置，更新主题颜色',requirements=[{id:'visual',text:'对照原稿截图验收',type:'visual',scope:{kind:'viewport',path:'app.html'}}],run={executionId:'e',inputKey:'u',requirementsManaged:true,requirements,requestContract:{version:1,inputId:'u',executionId:'e',kind:'design',request,checks:{content:true,structure:true,behavior:false,visual:true},explicit:{behavior:false,visual:true,runtime:true}}};
+ html.configure(run,{messages:[{id:'u',role:'user',content:request}]});assert.equal(run.requestContract.checks.visual,true);assert.doesNotThrow(()=>html.assertPlan(run,{requirements}));assert.equal(contract.validationFor(run,'app.html').visual,true);assert.equal(contract.validationFor(run,'theme.json').visual,false,'JSON变更仍不因此新增无关截图');
+});

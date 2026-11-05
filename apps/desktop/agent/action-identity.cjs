@@ -23,7 +23,12 @@ async function fileVersion(root,relative){
 }
 async function identity(workspace,value,{android}={}){
  const target=action(value),name=target.action;
- if(name==='build_android'){
+ if(name==='finish'){
+  // Actual file changes or newly validated coverage make this a different
+  // delivery attempt. Reads, checkpoint text and renamed explanations do not.
+  const artifacts=await Promise.all((workspace.run.artifacts||[]).map(async f=>({path:f.path,sha256:await fileVersion(workspace.files,f.path)})));
+  target.inputVersion={kind:'delivery',artifacts:artifacts.sort((a,b)=>a.path.localeCompare(b.path)),checks:Object.entries(workspace.run.acceptanceResults||{}).sort(([a],[b])=>a.localeCompare(b)).map(([id,c])=>({id,status:c.status,revision:c.revision})),complete:true};
+ }else if(name==='build_android'){
   const build=await require('./android-build.cjs').inputIdentity(workspace.files,target);
   target.inputVersion={kind:'android_build',sha256:build.key,complete:build.complete,sourceSignature:build.sourceSignature,environmentSignature:build.environmentSignature};
  }else if(['read_file','write_file','edit_file','edit_spreadsheet','view_image','artifact'].includes(name)&&target.path){

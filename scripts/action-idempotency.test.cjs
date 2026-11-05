@@ -121,3 +121,11 @@ test('environment fingerprint tracks SDK/JDK versions, executable permissions an
  await fs.chmod(path.join(sdk,'build-tools/35/aapt2'),0o700);const third=await cache.environmentSnapshot(w.files);assert.notEqual(third.signature,second.signature);
  await fs.mkdir(path.join(w.files,'.runtime/gradle'),{recursive:true});await fs.writeFile(path.join(w.files,'.runtime/gradle/gradle.properties'),'org.gradle.parallel=true');const fourth=await cache.environmentSnapshot(w.files);assert.notEqual(fourth.signature,third.signature);
 });
+test('finish identity follows actual artifact bytes and coverage, while reads and bookkeeping cannot reset it',async t=>{
+ const {w}=await fixture(t);await fs.writeFile(path.join(w.files,'result.txt'),'first');w.run.artifacts=[{path:'result.txt',sha256:'registered'}];w.run.acceptanceResults={r:{status:'passed',revision:1,at:'old'}};
+ const a={action:'finish',text:'完成',review:{summary:'实际文件已核验',issues:[],unverified:[]}};
+ const before=await identity.identity(w,a);w.run.workingMemory='different summary';w.run.revision=99;w.run.events.push({id:'read',type:'read_file'});w.run.acceptanceResults.r.at='new timestamp';
+ assert.deepEqual(await identity.identity(w,a),before);
+ await fs.writeFile(path.join(w.files,'result.txt'),'second');const changed=await identity.identity(w,a);assert.notDeepEqual(changed,before);
+ w.run.acceptanceResults.r.status='pending';assert.notDeepEqual(await identity.identity(w,a),changed);
+});

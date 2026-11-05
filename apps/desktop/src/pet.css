@@ -1,46 +1,80 @@
 .ailo-pet { display:inline-flex; position:relative; flex-shrink:0; vertical-align:middle; align-items:center; justify-content:center; padding:0; line-height:0; letter-spacing:normal; background:transparent; border:0; border-radius:28%; -webkit-app-region:no-drag; isolation:isolate; }
 button.ailo-pet:hover { background:transparent; }
-button.ailo-pet:focus-visible { outline:2px solid #729262; outline-offset:3px; }
+button.ailo-pet:focus-visible { outline:2px solid var(--pet-detail,#5F8B75); outline-offset:3px; }
 .pet-hero { width:104px; height:98px; margin-left:-5px; }
-.pet-brand { width:40px; height:38px; margin-inline:-5px; }
-.pet-mini { width:32px; height:30px; }
+.pet-brand { width:36px; height:34px; margin-inline:0; }
+.pet-mini { width:28px; height:26px; }
 .pet-art { display:block; width:100%; height:100%; overflow:visible; }
-.pet-body { transform-origin:78px 132px; animation:pet-breathe 3.8s ease-in-out infinite; }
-.pet-tail { transform-origin:110px 115px; animation:pet-tail 3.2s ease-in-out infinite; }
-.pet-head { transform-origin:78px 92px; animation:pet-look 9s ease-in-out infinite; }
-.pet-eyes { transform-origin:78px 68px; animation:pet-blink 5.8s linear infinite; }
+.pet-body { transform-origin:78px 132px; animation:pet-breathe 5.2s ease-in-out infinite; }
+.pet-tail { transform-origin:110px 115px; animation:pet-tail 4.8s ease-in-out infinite; }
+.pet-head { transform-origin:78px 92px; animation:pet-look 12s ease-in-out infinite; }
+.pet-eyes { transform-origin:78px 72px; animation:pet-blink 6.4s linear infinite; }
 .pet-smile-eyes,.pet-thoughts,.pet-heart { opacity:0; }
-.pet-mini:not(.is-thinking) .pet-body,.pet-mini:not(.is-thinking) .pet-tail,.pet-mini:not(.is-thinking) .pet-head,.pet-mini:not(.is-thinking) .pet-eyes { animation:none; }
-.ailo-pet.is-happy .pet-body { animation:pet-hop .6s ease-in-out 3; }
-.ailo-pet.is-happy .pet-head { animation:none; transform:rotate(-5deg); }
+.pet-state-badge { display:none; }
+/* Small placements use the same face, with no tiny body or moving tail. */
+:is(.pet-brand,.pet-mini) .pet-body > :not(.pet-head),
+:is(.pet-brand,.pet-mini) .pet-shadow,
+:is(.pet-brand,.pet-mini) .pet-thoughts,
+:is(.pet-brand,.pet-mini) .pet-heart { display:none; }
+.ailo-pet:is(.pet-brand,.pet-mini) .pet-body,
+.ailo-pet:is(.pet-brand,.pet-mini) .pet-head { animation:none; transform:none; }
+.ailo-pet.is-thinking:not(.is-happy) .pet-head { animation:pet-think 3.6s ease-in-out infinite; }
+.ailo-pet.is-thinking .pet-thoughts { opacity:1; }
+.ailo-pet.is-thinking .pet-thoughts circle { animation:pet-dot 1.8s ease-in-out infinite; }
+.pet-thoughts circle:nth-child(2) { animation-delay:.2s; }
+.pet-thoughts circle:nth-child(3) { animation-delay:.4s; }
+.ailo-pet.is-running .pet-body { animation:pet-breathe 3.2s ease-in-out infinite; }
+.ailo-pet.is-running .pet-tail { animation:pet-tail 3.4s ease-in-out infinite; }
+.ailo-pet.is-running .pet-head { animation:none; transform:rotate(-2deg); }
+.ailo-pet:is(.pet-brand,.pet-mini).is-running .pet-body { animation:none; }
+.is-completed .pet-state-badge,.is-attention .pet-state-badge { display:block; }
+.ailo-pet.is-completed .pet-body { animation:pet-hop .85s ease-in-out 1; }
+.ailo-pet.is-completed .pet-eyes { opacity:0; }
+.ailo-pet.is-completed .pet-smile-eyes { opacity:1; }
+.ailo-pet.is-attention .pet-head { animation:none; transform:rotate(4deg); }
+.ailo-pet.is-happy .pet-body { animation:pet-hop .85s ease-in-out 1; }
+.ailo-pet.is-happy .pet-head { animation:none; transform:rotate(-4deg); }
 .ailo-pet.is-happy .pet-eyes { opacity:0; animation:none; }
 .ailo-pet.is-happy .pet-smile-eyes { opacity:1; }
 .ailo-pet.is-happy .pet-heart { animation:pet-heart 1.8s ease-out; }
-.ailo-pet.is-happy .pet-tail { animation:pet-tail .45s ease-in-out infinite; }
-.ailo-pet.is-thinking:not(.is-happy) .pet-head { animation:pet-think 2.4s ease-in-out infinite; }
-.ailo-pet.is-thinking .pet-thoughts { opacity:1; }
-.ailo-pet.is-thinking .pet-thoughts circle { animation:pet-dot 1.5s ease-in-out infinite; }
-.pet-thoughts circle:nth-child(2) { animation-delay:.2s; }
-.pet-thoughts circle:nth-child(3) { animation-delay:.4s; }
-@keyframes pet-breathe { 0%,100% { transform:translateY(0) scale(1); } 50% { transform:translateY(-2px) scale(1.018,1.025); } }
-@keyframes pet-tail { 0%,100% { transform:rotate(-7deg); } 50% { transform:rotate(10deg); } }
-@keyframes pet-look { 0%,35%,65%,100% { transform:rotate(0); } 42%,54% { transform:rotate(-5deg); } }
-@keyframes pet-blink { 0%,40%,44%,73%,77%,100% { transform:scaleY(1); } 42%,75% { transform:scaleY(.09); } }
-@keyframes pet-hop { 0%,100% { transform:translateY(0); } 45% { transform:translateY(-7px) rotate(-2deg); } 70% { transform:translateY(0) scale(1.025,.98); } }
-@keyframes pet-heart { 0% { opacity:0; transform:translateY(8px); } 20%,65% { opacity:1; } 100% { opacity:0; transform:translateY(-12px); } }
-@keyframes pet-think { 0%,100% { transform:rotate(4deg); } 50% { transform:rotate(-5deg); } }
-@keyframes pet-dot { 0%,100% { opacity:.25; } 50% { opacity:1; } }
-@media (max-height:700px) { .pet-hero { width:80px; height:75px; } .pet-brand { width:38px; height:36px; } }
+.ailo-pet.is-happy .pet-tail { animation:pet-tail .8s ease-in-out 2; }
+@keyframes pet-breathe { 0%,100% { transform:translateY(0) scale(1); } 50% { transform:translateY(-1px) scale(1.008,1.012); } }
+@keyframes pet-tail { 0%,70%,100% { transform:rotate(-3deg); } 35% { transform:rotate(7deg); } }
+@keyframes pet-look { 0%,38%,65%,100% { transform:rotate(0); } 45%,56% { transform:rotate(-3deg); } }
+@keyframes pet-blink { 0%,42%,46%,100% { transform:scaleY(1); } 44% { transform:scaleY(.12); } }
+@keyframes pet-hop { 0%,100% { transform:translateY(0); } 45% { transform:translateY(-3px); } 70% { transform:translateY(0) scale(1.015,.99); } }
+@keyframes pet-heart { 0% { opacity:0; transform:translateY(6px); } 20%,65% { opacity:1; } 100% { opacity:0; transform:translateY(-8px); } }
+@keyframes pet-think { 0%,100% { transform:rotate(2deg); } 50% { transform:rotate(-3deg); } }
+@keyframes pet-dot { 0%,100% { opacity:.3; } 50% { opacity:1; } }
+@media (max-height:700px) { .pet-hero { width:80px; height:75px; } .pet-brand { width:32px; height:30px; } }
+.ailo-pet.is-quiet * { animation:none !important; }
+.ailo-pet.is-quiet.is-happy .pet-heart { opacity:1; }
 @media (prefers-reduced-motion:reduce) { .ailo-pet * { animation:none !important; } .ailo-pet.is-happy .pet-heart { opacity:1; } }
+/* Identity is quiet; companionship is reserved for welcoming and live work. */
+.ailo-brand-mark { display:block; flex-shrink:0; object-fit:contain; user-select:none; }
+.pet-hero::before { content:""; position:absolute; inset:12% 2% 1%; z-index:-1; border-radius:50%; background:radial-gradient(ellipse at 50% 60%,color-mix(in srgb,var(--pet-mint) 30%,transparent),transparent 72%); pointer-events:none; }
+.ailo-pet.is-static:not(.is-happy) * { animation:none !important; }
+.ailo-pet.is-suspended * { animation-play-state:paused !important; }
+.byline .pet-mini { width:28px; height:28px; border:1px solid color-mix(in srgb,var(--border) 70%,transparent); border-radius:10px; background:transparent; }
+.byline .pet-mini .pet-art { width:24px; height:23px; }
 
-.pet-state-badge { display: none; }
-.is-completed .pet-state-badge, .is-attention .pet-state-badge { display: block; }
-.ailo-pet.is-running .pet-body { animation: pet-work 1.4s ease-in-out infinite; }
-.ailo-pet.is-running .pet-tail { animation: pet-tail .8s ease-in-out infinite; }
-.ailo-pet.is-running .pet-head { animation: none; transform: rotate(-6deg); }
-.ailo-pet.is-completed .pet-body { animation: pet-hop .6s ease-in-out 3; }
-.ailo-pet.is-completed .pet-eyes { opacity: 0; }
-.ailo-pet.is-completed .pet-smile-eyes { opacity: 1; }
-.ailo-pet.is-attention .pet-head { animation: none; transform: rotate(10deg); }
-@keyframes pet-work { 0%,100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-3px) rotate(2deg); } }
-@media (prefers-reduced-motion: reduce) { .ailo-pet * { animation: none !important; } }
+/* E palette: a light mint face tile; the full-body companion remains transparent. */
+.byline .pet-mini { border:0; border-radius:28%; }
+.byline .pet-mini .pet-art { width:100%; height:100%; }
+.ailo-pet.is-pat .pet-head { animation:pet-nuzzle .9s ease-in-out 1; }
+.ailo-pet.is-feed .pet-body { animation:pet-breathe 5.2s ease-in-out infinite; }
+.ailo-pet.is-feed .pet-head { animation:pet-nibble .6s ease-in-out 3; }
+.ailo-pet.is-feed .pet-mouth { transform-origin:78px 96px; animation:pet-chew .6s ease-in-out 3; }
+.ailo-pet.is-feed .pet-heart,.ailo-pet.is-play .pet-heart { animation:none; opacity:0; }
+.ailo-pet.is-play .pet-body { animation:pet-hop .65s ease-in-out 2; }
+.ailo-pet.is-play .pet-tail { animation:pet-tail .65s ease-in-out 3; }
+.pet-bowl { animation:pet-treat-in .3s ease-out 1; }
+.pet-ball { transform-origin:130px 140px; animation:pet-ball .65s ease-in-out 3; }
+/* These rules follow interaction rules so reduced motion also stops new actions. */
+.ailo-pet.is-quiet.is-happy:is(.is-feed,.is-play) .pet-heart { opacity:0; }
+@keyframes pet-nuzzle { 0%,100% { transform:rotate(0); } 45% { transform:translateY(-1px) rotate(-5deg); } 75% { transform:rotate(2deg); } }
+@keyframes pet-nibble { 0%,100% { transform:rotate(0); } 50% { transform:translateY(1.5px) rotate(1deg); } }
+@keyframes pet-chew { 0%,100% { transform:scaleY(1); } 50% { transform:scaleY(.65); } }
+@keyframes pet-treat-in { from { opacity:0; transform:translateY(3px); } to { opacity:1; transform:translateY(0); } }
+@keyframes pet-ball { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-5px) rotate(12deg); } }
+@media (prefers-reduced-motion:reduce) { .ailo-pet.is-happy:is(.is-feed,.is-play) .pet-heart { opacity:0; } }

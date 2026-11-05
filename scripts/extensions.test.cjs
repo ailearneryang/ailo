@@ -5,7 +5,21 @@ const os = require('node:os');
 const path = require('node:path');
 const { createStorage } = require('../apps/desktop/storage.cjs');
 const { createChat } = require('../apps/desktop/chat.cjs');
-const { builtins, selectedExtensions } = require('../apps/desktop/extensions.cjs');
+const { builtins, selectedExtensions, validateExtensions } = require('../apps/desktop/extensions.cjs');
+test('skill invocation policy preserves legacy auto, explicit-only selection and disabled status across storage reload',async t=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-skill-policy-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+ const storage=createStorage(dir,{}),state=await storage.readWorkspace();
+ const legacy={id:'legacy',kind:'skill',name:'旧技能',description:'原用途',instructions:'原指令',enabled:true};
+ const manual={...legacy,id:'manual',name:'手动技能',invocation:'manual'};
+ const disabled={...manual,id:'disabled',enabled:false};
+ await storage.saveWorkspace({...state,extensions:[legacy,manual,disabled,builtins[0]]});
+ const saved=(await createStorage(dir,{}).readWorkspace()).extensions;
+ assert.equal(saved[0].invocation,'auto');assert.equal(saved[1].invocation,'manual');assert.equal(saved[2].enabled,false);assert.equal(saved[2].invocation,'manual');assert.equal(saved[3].invocation,undefined);
+ assert.equal(selectedExtensions(saved,['manual'])[0].id,'manual','仅手动技能仍支持显式选择');
+ assert.throws(()=>selectedExtensions(saved,['disabled']),/停用/);
+ for(const invocation of ['off','automatic',null,true,{}])assert.throws(()=>validateExtensions([{...legacy,invocation}]),/调用方式无效/);
+ assert.throws(()=>validateExtensions([{...builtins[0],invocation:'auto'}]),/调用方式无效/);
+});
 test('migrates old workspaces, saves custom extensions, disabled state and project defaults', async () => {
  const dir = await fs.mkdtemp(path.join(os.tmpdir(),'ailo-extensions-'));
  try {

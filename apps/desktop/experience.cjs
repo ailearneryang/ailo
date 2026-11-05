@@ -5,7 +5,7 @@ const copy=value=>structuredClone(value);
 const messages=t=>t.messages?.length?t.messages:[{id:t.id+'-original',role:'user',content:t.request,materials:t.materials,createdAt:t.created},...(t.answer?[{id:t.id+'-answer',role:'assistant',content:t.answer,createdAt:t.created}]:[])];
 const clean=(v,max,label)=>{if(typeof v!=='string'||!v.trim()||v.length>max)throw Error(label+'无效');return v.trim();};
 function createExperience({storage,sessions=()=>[],cancel=()=>{}}){
- const temporary=new Map(),retired=new Set();const original={};for(const name of ['readWorkspace','patchTask','saveWorkspace','saveContextCheckpoint','recordModelRequest','recordExecution','editLastMessage'])original[name]=storage[name]?.bind(storage);
+ const temporary=new Map(),retired=new Set();const original={};for(const name of ['messageFeedback','readWorkspace','patchTask','saveWorkspace','saveContextCheckpoint','recordModelRequest','recordExecution','editLastMessage'])original[name]=storage[name]?.bind(storage);
  storage.isTemporary=id=>temporary.has(id)||retired.has(id);
  storage.readWorkspace=async()=>{const state=await original.readWorkspace();return {...state,tasks:[...temporary.values(),...state.tasks]};};
  storage.patchTask=async(id,patch,append=[])=>{
@@ -13,6 +13,7 @@ function createExperience({storage,sessions=()=>[],cancel=()=>{}}){
   if(temporary.has(id)){const old=temporary.get(id),merged=copy(old.messages||[]);for(const m of [...(patch.messages||[]),...append])if(!merged.some(x=>x.id===m.id))merged.push({...m,createdAt:m.createdAt||new Date().toISOString()});if(merged.some(m=>!['user','assistant'].includes(m.role)||typeof m.content!=='string'||m.materials?.length)||JSON.stringify(merged).length>1000000)throw Error('临时对话仅支持文本，或内容已超过容量');const task={...old,...patch,id,temporary:true,projectId:undefined,permissionMode:'standard',memoryEnabled:false,knowledgeIds:[],materials:[],extensionIds:[],feishuEnabled:false,amapEnabled:false,searchEnabled:false,mcpConnectionIds:[],messages:merged};temporary.set(id,task);return copy(task);}
   if(patch?.temporary)throw Error('请通过临时对话入口创建');return original.patchTask(id,patch,append);
  };
+ storage.messageFeedback=async input=>{if(retired.has(input?.taskId))throw Error('临时对话已结束');if(temporary.has(input?.taskId))return copy(require('./message-feedback.cjs').applyMessageFeedback(temporary.get(input.taskId),input));return original.messageFeedback(input);};
  storage.editLastMessage=async(id,messageId,content)=>{if(!temporary.has(id))return original.editLastMessage(id,messageId,content);const t=temporary.get(id),all=t.messages,index=all.findLastIndex(m=>m.role==='user');if(index<0||all[index].id!==messageId)throw Error('只能编辑最近一条用户消息');const replacement={...all[index],id:randomUUID(),content:clean(content,20000,'消息'),createdAt:new Date().toISOString()};const next={...t,messages:[...all.slice(0,index),replacement]};delete next.contextCheckpoint;delete next.lastError;temporary.set(id,next);return copy(next);};
  storage.saveWorkspace=(state,preserve)=>original.saveWorkspace({...state,tasks:state.tasks.filter(t=>!storage.isTemporary(t.id))},preserve);
  storage.saveContextCheckpoint=async(id,checkpoint)=>temporary.has(id)?storage.patchTask(id,{contextCheckpoint:checkpoint}):retired.has(id)?undefined:original.saveContextCheckpoint(id,checkpoint);

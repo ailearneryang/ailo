@@ -4,8 +4,16 @@ import { FeishuConnection } from './feishu-connection';
 import type { Material, Extension, ConnectionTarget } from './types';
 import './extensions.css';
 import { Icon } from './icon';
+import { SkillHub } from './skill-hub';
+function SkillInvocationSelect({item,disabled,onChange}:{item:Extension;disabled:boolean;onChange:(item:Extension)=>void}) {
+  const value=!item.enabled?'off':item.invocation||'auto';
+  return <select className="skill-invocation" aria-label={'技能调用方式：'+(item.name||'新技能')} disabled={disabled} value={value} onChange={e=>{const mode=e.target.value;onChange({...item,enabled:mode!=='off',invocation:mode==='off'?item.invocation||'auto':mode as 'auto'|'manual'});}}>
+    <option value="auto">自动可用</option><option value="manual">仅手动</option><option value="off">停用</option>
+  </select>;
+}
 export function ExtensionCenter({ initialTab='expert', items, busy, onSave, onUse, onMaterial, onImporting, onTryConnection }: { initialTab?:'expert'|'skill'|'connector'; onTryConnection:(text:string,connector:ConnectionTarget)=>void; onImporting:(busy:boolean)=>void; onMaterial:(material:Material)=>void; items: Extension[]; busy: boolean; onSave: (items: Extension[]) => Promise<boolean>; onUse: (item: Extension) => void }) {
   const [tab, setTab] = useState<'expert' | 'skill' | 'connector'>(initialTab);
+  const [skillView,setSkillView]=useState<'installed'|'market'>('installed');
   const [query, setQuery] = useState('');
   const [draft, setDraft] = useState<Extension | null>(null);
   const [error, setError] = useState('');
@@ -14,7 +22,7 @@ export function ExtensionCenter({ initialTab='expert', items, busy, onSave, onUs
   const removal = useRef<HTMLDialogElement>(null);
   const [removing, setRemoving] = useState<Extension | null>(null);
   const [deleting, setDeleting] = useState(false);
-  function create() { setError(''); setDraft({ id: crypto.randomUUID(), kind: tab === 'expert' ? 'expert' : 'skill', name: '', description: '', instructions: '', enabled: true }); }
+  function create() { setError(''); setDraft({ id: crypto.randomUUID(), kind: tab === 'expert' ? 'expert' : 'skill', name: '', description: '', instructions: '', enabled: true, ...(tab==='skill'?{invocation:'auto' as const}:{}) }); }
   async function importSkill(f?: File) {
     if (!f || importing) return;
     setError('');
@@ -30,21 +38,25 @@ export function ExtensionCenter({ initialTab='expert', items, busy, onSave, onUs
     <div className="extension-heading"><div><span className="eyebrow">让 Ailo 更懂你的工作</span><h1>扩展</h1><p>选择专业角色，复用熟悉的工作方法。</p></div></div>
     <div className="extension-tabs" role="tablist" aria-label="扩展分类">{([['expert','专家'],['skill','技能'],['connector','应用连接']] as const).map(([id,label]) => <button key={id} role="tab" disabled={importing} aria-selected={tab === id} onClick={() => { setTab(id); setDraft(null); setError(''); }}>{label}</button>)}</div>
     {tab === 'connector' ? <FeishuCliConnection onTry={onTryConnection}><details className="feishu-legacy"><summary>高级：使用自建应用凭证导入文档</summary><FeishuConnection busy={busy} onMaterial={onMaterial} onImporting={onImporting} /></details></FeishuCliConnection> : <>
+      {tab==='skill'&&<div className="extension-actions" role="group" aria-label="技能来源"><button disabled={importing} aria-pressed={skillView==='installed'} onClick={()=>setSkillView('installed')}>已安装</button><button disabled={importing} aria-pressed={skillView==='market'} onClick={()=>setSkillView('market')}>技能市场 · SkillHub</button></div>}
+      {tab==='skill'&&skillView==='market'?<SkillHub onWorking={setImporting} items={items} busy={busy} onSave={onSave}/>:<>
       <div className="extension-toolbar"><input aria-label="搜索扩展" placeholder="搜索名称或用途…" value={query} onChange={e => setQuery(e.target.value)} /><button disabled={busy || importing} onClick={create}>＋ 新建{tab === 'expert' ? '专家' : '技能'}</button>{tab === 'skill' && <><button disabled={busy || importing} onClick={() => file.current?.click()}>{importing ? '正在导入…' : '导入技能'}</button><input ref={file} type="file" accept=".md,.zip" hidden onChange={e => { void importSkill(e.target.files?.[0]); e.target.value = ''; }} /></>}</div>
-      {tab === 'skill' && <p className="extension-note">支持 SKILL.md、Markdown 和含 SKILL.md 的 ZIP 技能包。导入后可检查和编辑指令；选用技能时，按需读取包内引用文档、模板和脚本。</p>}
+      {tab === 'skill' && <p className="extension-note">自动可用：Ailo 根据任务选择相关技能；仅手动：通过 / 或“＋ → 技能”指定；停用：不再加载。支持导入 SKILL.md、Markdown 和 ZIP 技能包。</p>}
       {draft && <form className="extension-editor" onSubmit={async e => { e.preventDefault(); if (busy || importing) return; const next = items.some(i => i.id === draft.id) ? items.map(i => i.id === draft.id ? draft : i) : [...items,draft]; if (await onSave(next)) setDraft(null); }}>
         <h2>{items.some(i => i.id === draft.id) ? '编辑' : '新建'}{draft.kind === 'expert' ? '专家' : '技能'}</h2>
-        {draft.package && <p className="extension-note">ZIP 技能包 · 已保留 {draft.package.files} 个文件（含 SKILL.md）</p>}
+        {draft.package && <p className="extension-note">ZIP 技能包 · 已保留 {draft.package.files} 个文件（含 SKILL.md）。大技能的完整指令保留在包内，使用时分页读取；此处可编辑加载要求。</p>}
         <label>名称<input aria-label="扩展名称" required maxLength={60} value={draft.name} onChange={e => setDraft({...draft,name:e.target.value})} /></label>
-        <label>用途说明<input aria-label="扩展用途" maxLength={300} value={draft.description} onChange={e => setDraft({...draft,description:e.target.value})} placeholder="一句话说明它能帮你完成什么" /></label>
+        <label>用途说明<input aria-label="扩展用途" maxLength={300} value={draft.description} onChange={e => setDraft({...draft,description:e.target.value})} placeholder="说明适用任务、触发场景，以及不适用的情况" /></label>
+        {draft.kind==='skill'&&<label>调用方式<SkillInvocationSelect item={draft} disabled={busy||importing} onChange={setDraft}/><small className="extension-policy-hint">自动匹配主要依据名称和用途说明。技能加载不代表已完成任务。</small></label>}
         <label>工作指令<textarea aria-label="扩展指令" required maxLength={20000} rows={8} value={draft.instructions} onChange={e => setDraft({...draft,instructions:e.target.value})} placeholder="描述角色、工作步骤与输出要求…" /></label>
         <div className="extension-actions"><button className="primary" disabled={busy || importing || !draft.name.trim() || !draft.instructions.trim()}>保存扩展</button><button type="button" disabled={busy || importing} onClick={() => setDraft(null)}>取消</button></div>
       </form>}
       {error && <p className="error" role="alert">{error}</p>}
       <div className="extension-grid">{items.filter(i => i.kind === tab && (i.name + i.description).toLowerCase().includes(query.toLowerCase())).map(item => <article className={'extension-card ' + (!item.enabled ? 'extension-disabled' : '')} key={item.id}>
-        <div className="extension-card-top"><span className="extension-symbol"><Icon name={item.kind === 'expert' ? 'user' : 'sparkles'}/></span><small>{item.enabled ? '已启用' : '已停用'}</small></div><h2>{item.name}</h2><p>{item.description || '自定义工作指令'}</p><div className="extension-actions"><button className="primary" disabled={busy || importing || !item.enabled} onClick={() => onUse(item)}>在对话中使用</button><button disabled={busy || importing} onClick={() => setDraft({...item})}>编辑</button><button disabled={busy || importing} onClick={() => void onSave(items.map(i => i.id === item.id ? {...i,enabled:!i.enabled} : i))}>{item.enabled ? '停用' : '启用'}</button>{item.kind === 'skill' && <button className="extension-delete" disabled={busy || importing || deleting} onClick={() => { setRemoving(item); setError(''); removal.current?.showModal(); }}>删除</button>}</div>
+        <div className="extension-card-top"><span className="extension-symbol"><Icon name={item.kind === 'expert' ? 'user' : 'sparkles'}/></span>{item.kind==='skill'?<SkillInvocationSelect item={item} disabled={busy||importing} onChange={changed=>void onSave(items.map(i=>i.id===item.id?changed:i))}/>:<small>{item.enabled ? '已启用' : '已停用'}</small>}</div><h2>{item.name}</h2><p>{item.description || '自定义工作指令'}</p><div className="extension-actions"><button className="primary" disabled={busy || importing || !item.enabled} onClick={() => onUse(item)}>在对话中使用</button><button disabled={busy || importing} onClick={() => setDraft({...item})}>编辑</button>{item.kind==='expert'&&<button disabled={busy || importing} onClick={() => void onSave(items.map(i => i.id === item.id ? {...i,enabled:!i.enabled} : i))}>{item.enabled ? '停用' : '启用'}</button>}{item.kind === 'skill' && <button className="extension-delete" disabled={busy || importing || deleting} onClick={() => { setRemoving(item); setError(''); removal.current?.showModal(); }}>删除</button>}</div>
       </article>)}</div>
       {!items.some(i => i.kind === tab && (i.name+i.description).toLowerCase().includes(query.toLowerCase())) && <p className="extension-empty">没有匹配的扩展，试试其他关键词或创建一个。</p>}
+      </>}
     </>}
     <dialog ref={removal} className="extension-removal" aria-labelledby="extension-removal-title" onClose={() => setRemoving(null)} onCancel={e => { if (deleting) e.preventDefault(); }}>
       <h2 id="extension-removal-title">删除技能“{removing?.name}”？</h2>

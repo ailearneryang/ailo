@@ -1,6 +1,6 @@
 const contract={maxOutputTokens:8192,noActionTimeoutMs:180000,maxWriteChars:8000,maxCommandChars:2000,maxBatchItems:3};
 function stepId(run){return run.steps.find(s=>s.status==='running')?.id||run.steps.find(s=>s.status!=='done')?.id||null;}
-function active(run){const state=run.decisionRecovery;if(!state)return false;if(state.inputKey!==run.inputKey||state.stepId!==stepId(run)){delete run.decisionRecovery;return false;}return true;}
+function active(run){require('./recovery-state.cjs').bind(run);const state=run.decisionRecovery;if(!state)return false;if(state.inputKey!==run.inputKey||state.stepId!==stepId(run)){require('./recovery-state.cjs').clear(run,'decisionRecovery');return false;}return true;}
 function begin(run,code,attempt=1){const previous=active(run)?run.decisionRecovery:undefined;attempt=Math.max(attempt,previous?.attempt||1);run.decisionRecovery={...contract,maxOutputTokens:Math.min(32768,Math.max(previous?.maxOutputTokens||0,8192*2**Math.min(attempt-1,2))),noActionTimeoutMs:Math.min(300000,180000+(attempt-1)*60000),attempt,stage:attempt>=3?'direct_action':attempt>=2?'refocus':'small_action',inputKey:run.inputKey,stepId:stepId(run),cause:code,noActionFailures:previous?.noActionFailures||0,progressKeys:previous?.progressKeys||[],focus:run.executionState?.blocker||run.executionState?.gaps?.[0]||run.executionState?.expectedResult||run.steps.find(s=>s.id===stepId(run))?.title};return run.decisionRecovery;}
 function resume(run){
  if(!['blocked','paused','failed'].includes(run.status)||!active(run))return;
@@ -51,7 +51,7 @@ function progress(run,action,result){
  if(!state.progressKeys.includes(key))state.progressKeys.push(key);
  // Leave recovery after two distinct successful effects or connector observations,
  // even when a long-running plan step has not finished. Bookkeeping never counts.
- if(state.progressKeys.length>=2)delete run.decisionRecovery;
+ if(state.progressKeys.length>=2)require('./recovery-state.cjs').clear(run,'decisionRecovery');
 }
 function compact(snapshot,preview){
  const state=snapshot.decisionRecovery||{},stage=state.stage||'small_action';

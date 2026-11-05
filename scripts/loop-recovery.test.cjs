@@ -33,7 +33,7 @@ test('repeated browser opens reuse existing evidence and complete without a user
   if(calls===9){assert.ok(s.loopRecovery);return {content:JSON.stringify({action:'verify',checks:[{criterionId:'page',kind:'text_contains',path:file,contains:['天气'],reason:'核对标题'}],progress:{steps:[{id:'make',status:'done'}]}})};}
   return {content:JSON.stringify({action:'finish',text:'总览网页已交付',review:{summary:'已检查内容与网页结构',issues:[],unverified:[]}})};
  }});
- assert.ok(recoverySeen);assert.equal(result.agentRun.status,'completed',JSON.stringify(result.agentRun.events));assert.equal(browsers,2);assert.equal(calls,10);
+ assert.ok(recoverySeen);assert.equal(result.agentRun.status,'completed',JSON.stringify(result.agentRun.events));assert.equal(browsers,2);assert.equal(calls,9);
  assert.ok(!result.agentRun.events.some(e=>e.type==='no_progress'||e.type==='execution_budget'));
 });
 test('a batch without substantive progress refocuses internally and then produces a result',async t=>{

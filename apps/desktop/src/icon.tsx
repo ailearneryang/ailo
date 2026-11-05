@@ -1,7 +1,13 @@
 import React from 'react';
 // A single stroke weight and viewbox keep navigation icons optically consistent.
-export function Icon({ name }: { name: 'bell' | 'archive' | 'branch' | 'mic' | 'stop' | 'memory' | 'gauge' | 'pet' | 'sliders' | 'palette' | 'help' | 'logout' | 'lock' | 'globe' | 'settings' | 'book' | 'sparkles' | 'plug' | 'chevron-right' | 'plus' | 'arrow-up' | 'compose' | 'chat' | 'grid' | 'folder' | 'folder-open' | 'info' | 'user' | 'chevron' | 'paperclip' | 'panel' | 'expand' | 'file' | 'queue' | 'play' | 'edit' | 'trash' | 'check' | 'close' | 'clock' | 'refresh' | 'copy' | 'search' | 'more' | 'pin' }) {
+export function Icon({ name }: { name: 'tool' | 'image' | 'device' | 'terminal' | 'thumbs-up' | 'thumbs-down' | 'bell' | 'archive' | 'branch' | 'mic' | 'stop' | 'memory' | 'gauge' | 'pet' | 'sliders' | 'palette' | 'help' | 'logout' | 'lock' | 'globe' | 'settings' | 'book' | 'sparkles' | 'plug' | 'chevron-right' | 'plus' | 'arrow-up' | 'compose' | 'chat' | 'grid' | 'folder' | 'folder-open' | 'info' | 'user' | 'chevron' | 'paperclip' | 'panel' | 'expand' | 'file' | 'queue' | 'play' | 'edit' | 'trash' | 'check' | 'close' | 'clock' | 'refresh' | 'copy' | 'search' | 'more' | 'pin' }) {
   const shapes = {
+    tool: <><path d="M14.5 5.5a5 5 0 0 0-6 6L3 17a2.8 2.8 0 0 0 4 4l5.5-5.5a5 5 0 0 0 6-6l-3 3-4-4 3-3Z"/></>,
+    image: <><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/></>,
+    device: <><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 5h4M11 19h2"/></>,
+    terminal: <><rect x="3" y="4" width="18" height="16" rx="4"/><path d="m7 9 3 3-3 3m6 0h4"/></>,
+    'thumbs-up': <><path d="M7 10l5-8c3 0 2 5 2 7h5a2 2 0 0 1 2 2l-2 9H7Z"/><path d="M3 10h4v11H3Z"/></>,
+    'thumbs-down': <><g transform="rotate(180 12 12)"><path d="M7 10l5-8c3 0 2 5 2 7h5a2 2 0 0 1 2 2l-2 9H7Z"/><path d="M3 10h4v11H3Z"/></g></>,
     bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></>,
     archive: <><path d="M3 4h18v4H3zM5 8v13h14V8M10 12h4"/></>,
     branch: <><circle cx="6" cy="5" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="19" r="3"/><path d="M6 8v8m0-3c8 0 12-1 12-4"/></>,

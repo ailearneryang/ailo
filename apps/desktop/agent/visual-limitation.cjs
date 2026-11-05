@@ -2,7 +2,7 @@ const issueId='capability_visual_unavailable';
 const description='当前未确认具备视觉核验能力，未进行视觉核验；布局、外观与还原度需人工看图确认';
 const unavailable=run=>run.observationCapabilities?.images===false||run.observationCapabilities?.visualReview===false;
 function prepare(run,action,review,criteria){
- const pending=criteria.filter(c=>c.type==='visual'&&!c.check);
+ const pending=criteria.filter(c=>c.type==='visual'&&!c.check&&!require('./quality-contract.cjs').optional(c));
  if(action.outcome!=='limited'||!unavailable(run)||!pending.length)return null;
  const resolve=value=>pending.find(c=>value===c.id||value===c.text||value.startsWith(c.id+':')||value.startsWith(c.id+'：'))?.id;
  const canonical=review.unverified.map(resolve),entries=new Set(canonical);

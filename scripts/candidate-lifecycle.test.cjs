@@ -1,0 +1,13 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
+test('real execution preserves a verified increment before later edits regress it, without completing the missing original requirement',async t=>{
+ const base=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-candidate-lifecycle-'));t.after(()=>fs.rm(base,{recursive:true,force:true}));
+ const task={id:'candidate-lifecycle',request:'生成含A和B的说明文件'},plan={action:'plan',goal:task.request,decisions:[],requirements:[{id:'a',text:'说明包含A',type:'content'},{id:'b',text:'说明包含B',type:'content'}],steps:[{id:'make',title:'生成并核验说明',status:'running'}]};
+ const actions=[plan,{action:'write_file',path:'result.txt',content:'A'},{action:'artifact',path:'result.txt',label:'说明'}, {action:'verify',checks:[{criterionId:'a',kind:'text_contains',path:'result.txt',contains:['A'],reason:'真实核对A'}]}, {action:'write_file',path:'result.txt',content:'B'},{action:'artifact',path:'result.txt',label:'说明'}, {action:'verify',checks:[{criterionId:'b',kind:'text_contains',path:'result.txt',contains:['B'],reason:'真实核对B'}]}];
+ let calls=0;const result=await require('../apps/desktop/agent/runner.cjs').runAgent({base,task,model:{contextWindow:131072},signal:new AbortController().signal,maxSteps:40,ask:async messages=>{calls++;const s=JSON.parse(messages.at(-1).content);if(s.phase==='route')return {content:JSON.stringify({action:'route',kind:'task'})};const a=actions.shift()||{action:'blocked',text:'当前B存在，原要求A已回退，不能声明全部完成'};if(!['plan','blocked'].includes(a.action))a.progress={steps:[{id:'make',status:'running'}]};return {content:JSON.stringify(a)};}});
+ assert.equal(result.agentRun.status,'partial');assert.equal(result.agentRun.delivery.outcome,'partial');assert.ok(calls<20);
+ const w=await require('../apps/desktop/agent/workspace.cjs').createWorkspace(base,task),kept=w.run.candidateProtection.best;
+ assert.deepEqual(kept.passedIds,['a']);assert.equal(await fs.readFile(path.join(w.files,'result.txt'),'utf8'),'B');
+ const snapshot=await require('../apps/desktop/agent/candidate-versions.cjs').resolve(w,{candidateId:kept.id,path:'result.txt'});assert.equal(await fs.readFile(snapshot.file,'utf8'),'A');
+ assert.equal(result.agentRun.acceptanceCriteria.find(c=>c.id==='a').status,'pending');assert.equal(result.agentRun.acceptanceCriteria.find(c=>c.id==='b').status,'passed');assert.equal(result.agentRun.candidateProtection.best.id,kept.id);
+ assert.ok(!w.run.events.some(e=>e.type==='finish'));assert.equal(w.run.candidateProtection.lastAttempt.promoted,false);
+});

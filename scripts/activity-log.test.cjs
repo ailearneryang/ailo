@@ -41,18 +41,18 @@ async function components(){
  const Module=require('node:module'),app=path.resolve(__dirname,'../apps/desktop'),deps=Module.createRequire(path.join(app,'package.json'));
  const {build}=await import(require('node:url').pathToFileURL(deps.resolve('rolldown')).href),input=path.join(app,'src/task-activity.tsx');
  async function compile(name){const entry=path.join(app,'src',name+'.tsx'),bundle=await build({input:entry,platform:'node',plugins:[{name:'style-free-render',load(id){if(id.endsWith('/pet.tsx'))return {code:'export function Pet(){return null}',moduleType:'js'};if(id.endsWith('.css'))return {code:'',moduleType:'js'};}}],external:['react','react/jsx-runtime'],write:false,output:{format:'cjs'}});const compiled=new Module(input,module);compiled.paths=Module._nodeModulePaths(path.dirname(input));compiled._compile(bundle.output.find(o=>o.type==='chunk').code,input);return compiled.exports;}
- ui={React:deps('react'),render:deps('react-dom/server').renderToStaticMarkup,...await compile('task-activity'),...await compile('task-progress')};return ui;
+ ui={React:deps('react'),render:deps('react-dom/server').renderToStaticMarkup,...await compile('task-activity'),...await compile('task-progress'),...await compile('reply-details')};return ui;
 }
 test('activity headline uses current work and never substitutes bookkeeping or completed command output',async()=>{
  const {React,render,TaskActivity}=await components();
  const run={status:'running',mode:'task',currentIntent:'task',steps:[],events:[{id:'cmd',type:'run_command',at,detail:{output:'POLL_DL10_DONE',exitCode:0}},{id:'book',type:'attached_progress',at,detail:{}}]};
  const task={id:'t',messages:[],agentRun:run};
  const html=render(React.createElement(TaskActivity,{task,status:'执行中',session:{id:'s',phase:'running',startedAt:at,run,status:'执行中',content:''}}));
- const summary=html.match(/<summary class="task-activity-current">([\s\S]*?)<\/summary>/)[1];
- assert.match(summary,/运行项目命令 · 分析结果中/);assert.doesNotMatch(summary,/task-activity-subtitle/);assert.doesNotMatch(summary,/POLL_DL10_DONE|更新进度与记忆|更新任务状态/);
+ const summary=html.match(/<summary class="task-activity-current"[^>]*>([\s\S]*?)<\/summary>/)[1];
+ assert.match(summary,/已处理/);assert.match(html.match(/<div class="live-reply-status[^"]*"[^>]*>([\s\S]*?)<\/div>/)[1],/运行项目命令 · 分析结果中/);assert.doesNotMatch(summary,/task-activity-subtitle/);assert.doesNotMatch(summary,/POLL_DL10_DONE|更新进度与记忆|更新任务状态/);
  const live={...run,inFlight:{actionId:'a',action:'run_command',purpose:'检查模型文件完整性',command:'verify-model',at,output:'checking'}};
  const liveHtml=render(React.createElement(TaskActivity,{task,status:'执行中',session:{id:'s',phase:'running',startedAt:at,run:live,status:'执行中',content:''}}));
- assert.match(liveHtml,/检查模型文件完整性/);assert.match(liveHtml,/实时输出/);assert.match(liveHtml,/verify-model/);assert.doesNotMatch(liveHtml,/<details class="task-activity-details[^"]*"[^>]* open/);
+ assert.match(liveHtml,/检查模型文件完整性/);assert.match(liveHtml,/实时输出/);assert.match(liveHtml,/verify-model/);assert.match(liveHtml.match(/<details[^>]*class="task-activity-details[^"]*"[^>]*>/)?.[0]||'',/open=""/);
 });
 test('timeline separates internal records and preserves failures, timeouts, raw commands and legacy output',async()=>{
  const {React,render,ExecutionEvents,executionEventState}=await components();
@@ -67,9 +67,9 @@ test('folded activity exposes authorization and recovery context instead of over
  for(const state of ['waiting_permission','running']){
   const run={status:state,mode:'task',currentIntent:'task',goal:'部署本地模型',steps:[{id:'move',title:'移动模型到部署目录',status:'running'}],executionState:state==='waiting_permission'?{blocker:{message:'目标目录目前只有只读权限'}}:undefined,events:[{id:'retry',type:'no_action_recovery',at,detail:{}},{id:'book',type:'attached_progress',at,detail:{}}]};
   const html=render(React.createElement(TaskActivity,{task:{id:'t',messages:[],agentRun:run},status:'执行中',session:{id:'s',phase:'running',startedAt:at,run,status:'执行中',content:''}}));
-  const summary=html.match(/<summary class="task-activity-current">([\s\S]*?)<\/summary>/)[1];
-  assert.match(summary,state==='waiting_permission'?/等待授权/:/自动重试中/);
-  assert.match(summary,state==='waiting_permission'?/目标目录目前只有只读权限/:/移动模型到部署目录/);
+  const summary=html.match(/<summary class="task-activity-current"[^>]*>([\s\S]*?)<\/summary>/)[1];
+  assert.match(summary,state==='waiting_permission'?/待输入/:/已处理/);const footer=html.match(/<div class="live-reply-status[^"]*"[^>]*>([\s\S]*?)<\/div>/)[1];assert.match(footer,state==='waiting_permission'?/等待授权/:/自动重试中/);
+  assert.match(footer,state==='waiting_permission'?/目标目录目前只有只读权限/:/移动模型到部署目录/);
   assert.doesNotMatch(summary,/正在准备下一步操作|更新任务状态/);
  }
 });
@@ -78,8 +78,8 @@ test('recovery-only activity is grouped separately from tool results with origin
  const events=[{id:'limit',type:'output_limit',at,detail:{message:'未产出动作，将精简请求并适配输出预算与决策时间后继续'}},{id:'retry',type:'no_action_recovery',at,detail:{message:'自动恢复：精简决策上下文、缩小单次动作，保留已授权工具并适配输出预算。'}},{id:'meta',type:'intent',at,detail:{}}];
  const run={mode:'task',status:'running',currentIntent:'task',goal:'检查页面效果',steps:[{id:'verify',title:'逐区对照并提交verify证据',status:'running'}],events};
  const html=render(React.createElement(TaskActivity,{task:{id:'t',messages:[],agentRun:run},status:'执行中',session:{id:'s',phase:'running',startedAt:at,run,status:'执行中',content:''}}));
- const summary=html.match(/<summary class="task-activity-current">([\s\S]*?)<\/summary>/)[1];
- assert.match(summary,/核对各区域效果 · 自动重试中/);assert.doesNotMatch(summary,/task-activity-subtitle/);assert.doesNotMatch(summary,/verify|输出预算|决策上下文/);
+ const summary=html.match(/<summary class="task-activity-current"[^>]*>([\s\S]*?)<\/summary>/)[1];
+ assert.match(html.match(/<div class="live-reply-status[^"]*"[^>]*>([\s\S]*?)<\/div>/)[1],/核对各区域效果 · 自动重试中/);assert.doesNotMatch(summary,/task-activity-subtitle/);assert.doesNotMatch(summary,/verify|输出预算|决策上下文/);
  const timeline=render(React.createElement(ExecutionEvents,{events}));
  assert.doesNotMatch(timeline,/execution-event-done|execution-event-running|· 已执行/);
  assert.equal((timeline.match(/class="execution-recovery"/g)||[]).length,1);
@@ -88,13 +88,13 @@ test('recovery-only activity is grouped separately from tool results with origin
  assert.doesNotMatch(timeline,/<details class="execution-recovery"[^>]* open/);
  assert.doesNotMatch(timeline,/<details class="execution-internal"[^>]* open/);
 });
-test('only the live tool action animates in both collapsed header and timeline; paused, waiting, historical and finished actions stay still',async()=>{
+test('only the live tool action animates in its operation row and expanded details; paused, waiting, historical and finished actions stay still',async()=>{
  const {React,render,TaskActivity,ExecutionEvents}=await components();
  const flight={actionId:'live',action:'android_device',purpose:'安装当前 APK',at};
  const base={status:'running',mode:'task',currentIntent:'task',steps:[],inFlight:flight,events:[{id:'old',type:'android_device',at,detail:{operation:'start'}}]};
  function activity(run,session=true){return render(React.createElement(TaskActivity,{task:{id:'t',messages:[],agentRun:run},status:'执行中',...(session?{session:{id:'s',phase:'running',startedAt:at,run,status:'执行中',content:''}}:{})}));}
- const live=activity(base),summary=live.match(/<summary class="task-activity-current">([\s\S]*?)<\/summary>/)[1];
- assert.match(summary,/class="activity-spinner" aria-hidden="true"/);assert.match(summary,/安装当前 APK/);assert.equal((live.match(/class="activity-spinner"/g)||[]).length,2);
+ const live=activity(base),summary=live.match(/<summary class="task-activity-current"[^>]*>([\s\S]*?)<\/summary>/)[1];
+ assert.doesNotMatch(summary,/activity-spinner/);assert.match(live,/安装当前 APK/);assert.equal((live.match(/class="activity-spinner"/g)||[]).length,2);
  for(const status of ['paused','waiting_permission','waiting_user','blocked','failed'])assert.doesNotMatch(activity({...base,status}),/class="activity-spinner"/);
  assert.doesNotMatch(activity(base,false),/class="activity-spinner"/);
  assert.doesNotMatch(activity({...base,inFlight:undefined}),/class="activity-spinner"/);
@@ -107,13 +107,53 @@ test('live device snapshots identify the actual install operation before its res
  assert.equal(seen,true);
  const {React,render,TaskActivity}=await components(),run={status:'running',mode:'task',currentIntent:'task',steps:[],events:[],inFlight:{actionId:'install',action:'android_device',operation:'install',path:'app.apk',at}};
  const html=render(React.createElement(TaskActivity,{task:{id:'t',agentRun:run},status:'执行中',session:{id:'s',phase:'running',startedAt:at,run,status:'执行中',content:''}}));
- const summary=html.match(/<summary class="task-activity-current">([\s\S]*?)<\/summary>/)[1];assert.match(summary,/安装当前 APK · 执行中/);assert.match(summary,/activity-spinner/);
+ const summary=html.match(/<summary class="task-activity-current"[^>]*>([\s\S]*?)<\/summary>/)[1];assert.match(summary,/已处理/);assert.match(html,/安装当前 APK · 执行中/);assert.match(html,/activity-spinner/);
 });
 test('suspended-network task progress offers a direct retry while unknown effects still require result checking',async()=>{
  const {React,render,TaskProgress}=await components();
  const run={status:'blocked',mode:'task',currentIntent:'task',steps:[],decisions:[],acceptance:[],artifacts:[],events:[],waitingError:{code:'MODEL_NETWORK',networkCode:'ERR_NETWORK_IO_SUSPENDED'},taskContinuation:{taskOpen:true,state:'waiting_service',question:'旧的补充诊断提示',gap:'net::ERR_NETWORK_IO_SUSPENDED',retained:{requirements:5,artifacts:[],unknownActions:0}}};
  const view=r=>render(React.createElement(TaskProgress,{task:{id:'network',messages:[],agentRun:r},busy:false,onContinue:()=>{},onOpenArtifacts:()=>{}}));
- const html=view(run);assert.match(html,/重试当前步骤/);assert.match(html,/等待网络恢复/);assert.doesNotMatch(html,/补充信息后继续|旧的补充诊断提示/);assert.match(html,/此状态不计成功交付/);
+ const html=view(run);assert.match(html,/重试当前步骤/);assert.match(html,/连接待重试/);assert.match(html,/上次请求记录/);assert.doesNotMatch(html,/补充信息后继续|旧的补充诊断提示/);assert.match(html,/此状态不计成功交付/);
  const unknown=view({...run,taskContinuation:{...run.taskContinuation,state:'waiting_result_check',question:'先核对未知结果，不能直接重放',retained:{...run.taskContinuation.retained,unknownActions:1}}});
  assert.match(unknown,/补充信息后继续/);assert.match(unknown,/不能直接重放/);assert.doesNotMatch(unknown,/重试当前步骤/);
+});
+test('replying without task run shows real thinking and skill progress instead of empty execution placeholder',async()=>{const {React,render,TaskActivity}=await components();const activity={events:[],loadedExtensions:[{id:'jira',name:'jira',kind:'skill'}],statuses:[{id:'thinking',at,message:'模型正在思考 · 已等待 2 秒'}]};const task={id:'t',messages:[]};const html=render(React.createElement(TaskActivity,{task,status:'正在回复',session:{id:'s',phase:'preparing',status:'模型正在思考',content:'',startedAt:at,activity}}));assert.match(html,/加载技能/);assert.match(html,/jira/);assert.match(html,/模型正在思考 · 已等待 2 秒/);assert.match(html,/open=""/);assert.doesNotMatch(html,/尚无执行记录/);const fallback=render(React.createElement(TaskActivity,{task,status:'正在回复',session:{id:'s',phase:'preparing',status:'正在连接公司模型',content:'',startedAt:at}}));assert.match(fallback,/正在连接公司模型/);assert.doesNotMatch(fallback,/尚无执行记录/);});
+test('chat intent retains current operations from independent activity while hiding historical task operations',async()=>{const {React,render,TaskActivity}=await components();const run={currentIntent:'chat',status:'idle',events:[{id:'old',at:'2026-11-02T00:00:00Z',type:'read_file',detail:{path:'old-secret.txt'}}],steps:[]};const activity={events:[{id:'new',at,type:'read_file',detail:{path:'current.txt'}}],inFlight:{actionId:'cmd',action:'run_command',at,command:'check-current',purpose:'检查当前环境',output:'live output'}};const html=render(React.createElement(TaskActivity,{task:{id:'t',messages:[],agentRun:run},status:'正在回复',session:{id:'s',phase:'running',status:'正在检查',content:'回复中',startedAt:at,run,activity}}));assert.match(html,/current.txt/);assert.match(html,/check-current/);assert.match(html,/live output/);assert.doesNotMatch(html,/old-secret/);});
+
+test('finished response retains live phase history in default collapsed details',async()=>{const {React,render,ReplyDetails}=await components();const html=render(React.createElement(ReplyDetails,{message:{id:'r',role:'assistant',content:'结果',replyDetails:{startedAt:at,completedAt:at,durationMs:2000,status:'idle',loadedExtensions:[{id:'jira',kind:'skill',name:'jira'}],statuses:[{id:'s',at,message:'已检查可用 Jira 后端'}],events:[]}}}));assert.match(html,/已完成/);assert.match(html,/已检查可用 Jira 后端/);assert.match(html,/加载技能 · jira/);assert.doesNotMatch(html,/<details[^>]*open/);});
+test('WorkBuddy-style live response uses one identity, streams Markdown with real operations and keeps diagnostics opt-in',async()=>{
+ const {React,render,TaskActivity}=await components();
+ const activity={events:[{id:'file',type:'read_file',at,detail:{path:'.config.yml',purpose:'查看本地认证配置'}}],loadedExtensions:[{id:'jira',name:'jira',kind:'skill'}],statuses:[{id:'status',at,message:'正在决定下一步 · 已等待 10 秒'}],usage:{inputTokens:100,outputTokens:20,totalTokens:120,reportedRequests:1,requestCount:1,models:[{name:'测试模型',lane:'primary'}]}};
+ const html=render(React.createElement(TaskActivity,{task:{id:'t',messages:[]},status:'正在回复',session:{id:'s',phase:'running',startedAt:at,status:'正在分析',content:'查询结果：\n\n|编号|状态|\n|---|---|\n|TEST-1|Open|',activity}}));
+ assert.equal((html.match(/class="byline"/g)||[]).length,1);assert.match(html,/<table>/);
+ assert.match(html,/查看本地认证配置/);assert.match(html,/已报告 120 Tokens/);assert.match(html,/正在生成回复/);
+ assert.doesNotMatch(html,/<details class="story-operation"[^>]*open/);assert.doesNotMatch(html,/<details class="process-diagnostics"[^>]*open/);
+ assert.ok(html.indexOf('execution-story')<html.indexOf('live-reply-text'));assert.ok(html.indexOf('live-reply-text')<html.indexOf('live-reply-status'));
+ const missing=render(React.createElement(TaskActivity,{task:{id:'t'},status:'正在连接公司模型',session:{id:'s',phase:'preparing',startedAt:at,status:'正在连接公司模型',content:''}}));
+ assert.doesNotMatch(missing,/0 Tokens|已报告|尚无执行记录/);assert.match(missing,/正在连接公司模型/);
+});
+test('story reconciles a settled operation with the same in-flight ID and never labels timeout as success',async()=>{
+ const {React,render,TaskActivity}=await components();
+ const event={id:'receipt',type:'run_command',at,detail:{actionId:'cmd',purpose:'查询项目详情',timedOut:true,exitCode:0,output:'partial'}};
+ const html=render(React.createElement(TaskActivity,{task:{id:'t'},status:'正在核对',session:{id:'s',phase:'running',startedAt:at,status:'正在核对',content:'',activity:{events:[event],inFlight:{actionId:'cmd',action:'run_command',at,purpose:'查询项目详情'}}}}));
+ assert.equal((html.match(/class="story-step /g)||[]).length,1);
+ assert.match(html,/story-step-unknown/);assert.doesNotMatch(html,/story-step-done|story-step-running/);
+ assert.match(html,/结果待确认/);
+});
+test('search progress identifies each query and receipt, then collapses only settled process when body starts',async()=>{
+ const {React,render,TaskActivity}=await components();
+ const events=['北京就业统计','北京产业就业','北京青年就业'].map((query,i)=>({id:String(i),at,type:'web_search',detail:{query,sourceCount:i===2?0:5,sources:i===2?[]:[{title:'统计公报',domain:'stats.example.cn'}]}}));
+ const session={id:'s',phase:'running',startedAt:at,status:'正在决定下一步',content:'',activity:{events,usage:{totalTokens:61393,reportedRequests:3,requestCount:4,models:[]}}};
+ const view=s=>render(React.createElement(TaskActivity,{task:{id:'t'},status:s.status,session:s}));
+ const html=view(session);for(const e of events)assert.match(html,new RegExp('搜索网页：'+e.detail.query));assert.match(html,/返回 5 条来源/);assert.match(html,/本次搜索未返回来源/);assert.match(html,/stats.example.cn/);assert.doesNotMatch(html,/处理任务/);assert.match(html,/用量 6.1 万 Tokens/);assert.match(html,/已报告 61,393 Tokens（部分）/);
+ const tag=h=>h.match(/<details[^>]*class="task-activity-details[^>]*>/)[0];assert.match(tag(html),/open/);
+ assert.doesNotMatch(tag(view({...session,content:'已查到如下结果'})),/open/);
+ const live=view({...session,content:'初步结果',activity:{...session.activity,inFlight:{actionId:'new',action:'web_search',at,query:'补充资料'}}});assert.match(tag(live),/open/);assert.match(live,/搜索网页：补充资料/);assert.doesNotMatch(live,/正在生成回复/);
+ const uncertain=view({...session,activity:{events:[{...events[0],detail:{...events[0].detail,timedOut:true}}]}});assert.match(uncertain,/结果待确认/);assert.doesNotMatch(uncertain,/返回 5 条来源/);
+});
+test('command feedback exposes auth failure even with shell exit zero and labels recovered format errors truthfully',async()=>{
+ const {React,render,TaskActivity}=await components();
+ const events=[{id:'bad',type:'protocol_error',at,detail:{reason:'invalid_parameter',field:'progress'}},{id:'plan',type:'plan',at,detail:{}},{id:'cmd',type:'run_command',at,detail:{purpose:'检查仓库访问权限',exitCode:0,feedback:['输出提示需要认证或认证失败','HTTP 401'],command:'secret command',output:'SECRET'}}];
+ const html=render(React.createElement(TaskActivity,{task:{id:'t'},status:'正在决定下一步',session:{id:'s',phase:'running',startedAt:at,status:'正在决定下一步',content:'',activity:{events}}}));
+ assert.match(html,/修正工具参数 · 已继续/);assert.match(html,/输出提示需要认证或认证失败/);assert.match(html,/HTTP 401/);assert.match(html,/检查仓库访问权限/);assert.doesNotMatch(html,/运行项目命令/);
 });

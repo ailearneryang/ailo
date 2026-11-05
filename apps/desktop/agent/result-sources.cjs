@@ -11,7 +11,7 @@ async function records(workspace,actions){
   if(!actions.has(receipt.action))continue;
   try{const record=await workspace.observationRecord(receipt.id,{archiveOnly:true});if(record.executionId&&record.executionId!==workspace.run.executionId)continue;rows.push(record);seen.add(record.response?.eventId);}catch{}
  }
- for(const event of workspace.run.events||[])if(actions.has(event.type)&&!seen.has(event.id))rows.push({id:event.id,action:{action:event.type,...event.detail},response:{result:event.detail?.result}});
+ for(const event of workspace.run.events||[])if(actions.has(event.type)&&!seen.has(event.id))rows.push({id:event.id,at:event.at,action:{action:event.type,...event.detail},response:{result:event.detail?.result}});
  return rows;
 }
 async function files(workspace,{signal}={}){
@@ -46,8 +46,11 @@ async function files(workspace,{signal}={}){
 }
 async function findings(workspace,{signal}={}){
  const sources=[];let used=0;
+ const turn=workspace.run.inputTurn,prior=new Set([...(turn?.observationIds||[]),...(turn?.eventIds||[])]);
  for(const record of (await records(workspace,readable)).reverse()){
-  signal?.throwIfAborted();const result=record.response?.result;
+  signal?.throwIfAborted();
+  if(turn?.followup&&(prior.has(record.id)||prior.has(record.response?.eventId)))continue;
+  const result=record.response?.result;
   if(record.response?.error||record.response?.notExecuted||!result||result.notExecuted||result.timedOut||result.exitCode!==undefined&&result.exitCode!==0)continue;
   if(result.path&&result.sha256)try{const hash=await require('./evidence.cjs').hashFile(await resolveFile(workspace.files,result.path));if(hash!==result.sha256)continue;}catch{continue;}
   const value=result.text||result.output||result.content||(result.results?JSON.stringify(result.results):'');

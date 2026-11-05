@@ -30,6 +30,7 @@ function covers(observed,required){
  return true;
 }
 async function assertFresh(workspace,record){
+ if(record.kind==='operation')await require('./native-operation.cjs').assertFresh(workspace,record);
  if(record.parts){for(const part of record.parts)await assertFresh(workspace,part);return;}
  if(record.buildInputsChanged)throw Error('构建期间输入文件变化，须重新构建后验收');
  if(record.buildRevisionRequired&&record.revision!==workspace.run.revision)throw Error('构建输入覆盖不完整且项目版本已变化，请重新构建');
@@ -41,7 +42,7 @@ async function assertFresh(workspace,record){
  if(!Array.isArray(record.sources)||!record.sources.length){if(record.revision!==workspace.run.revision)throw Error('旧证据版本已过期，请重新检查');return;}
  for(const source of record.sources){
   const file=await resolveFile(workspace.files,source.path);let actual=null;
-  try{const stat=await fs.stat(file);const maxMB=/\.apk$/i.test(source.path)||record.kind==='file_exists'&&record.path===source.path?150:20;if(!stat.isFile()||stat.size>maxMB*1024*1024)throw Error('证据依赖超出文件限制');actual=await hashFile(file);}catch(e){if(e.code!=='ENOENT')throw e;}
+  try{const stat=await fs.stat(file);const imported=workspace.catalog?.some(m=>m.sourcePath===source.path&&m.sourceHash===source.sha256);const maxMB=/\.apk$/i.test(source.path)||record.kind==='file_exists'&&record.path===source.path||imported?150:20;if(!stat.isFile()||stat.size>maxMB*1024*1024)throw Object.assign(Error('证据依赖超出文件限制：'+source.path),{code:'EVIDENCE_SOURCE_SIZE'});actual=await hashFile(file);}catch(e){if(e.code!=='ENOENT')throw e;}
   if(actual!==source.sha256)throw Object.assign(Error('证据依赖文件已变化，请重新观察或检查：'+source.path),{code:'EVIDENCE_SOURCE_CHANGED',evidenceChange:{path:source.path,status:actual===null?'missing':'modified'}});
  }
 }

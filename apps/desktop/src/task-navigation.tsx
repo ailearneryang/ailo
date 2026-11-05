@@ -1,3 +1,4 @@
+import {replyProcessStatus} from './execution-process';
 import {taskPresentation,type LiveSession} from './task-presentation';
 import {ConversationActions} from './conversation-management';
 import {useRef,useState,useContext,useEffect,type ReactNode} from 'react';
@@ -5,12 +6,13 @@ import {createPortal} from 'react-dom';
 import type {Task} from './types';
 import {ActivityIndicator} from './activity-indicator';
 import {Icon} from './icon';
-import {petResultToken} from './pet-state';
+import {petNotificationToken} from './pet-state';
 
 export function TaskNavigation({task,selected,busy,running=false,session,onSelect,onPin,children}:{task:Task;selected:boolean;busy:boolean;running?:boolean;session?:LiveSession;onSelect:()=>void;onPin:()=>Promise<void>;children?:ReactNode}) {
  const current=taskPresentation(task,session);
+ const executionLabel=current.animating?current.label:replyProcessStatus(current.state);
  const onAction=useContext(ConversationActions);
- const resultToken=!running && !['running','understanding'].includes(task.agentRun?.status||'') ? petResultToken(task) : undefined;
+ const resultToken=!running && !['running','understanding'].includes(task.agentRun?.status||'') ? petNotificationToken(task) : undefined;
  const unread=!!resultToken && resultToken!==task.petReadToken;
  const menu=useRef<HTMLDialogElement>(null);
  const titleViewport=useRef<HTMLSpanElement>(null);
@@ -34,7 +36,7 @@ export function TaskNavigation({task,selected,busy,running=false,session,onSelec
  useEffect(()=>{stopTitle();return ()=>titleAnimation.current?.cancel();},[task.title]);
  const [position,setPosition]=useState({top:0,left:0});
  return <div className={'task-nav-row'+(selected?' selected':'')} onMouseEnter={revealTitle} onMouseLeave={stopTitle} onFocusCapture={revealTitle} onBlurCapture={e=>{if(!e.currentTarget.contains(e.relatedTarget))stopTitle();}}>
-  <button className={'task-nav-name'+(task.scheduledTaskId?' scheduled-recent':'')} aria-current={selected?'page':undefined} disabled={busy} title={task.title} onClick={onSelect}><span ref={titleViewport} className={'task-nav-title'+(revealing?' revealing':'')}><span ref={titleText}>{task.title}</span></span>{!['idle','completed','archived'].includes(current.state)&&<small className={"session-status"+(current.animating?" session-status-icon":"")} data-task-state={current.state} title={current.label}>{current.animating?<><ActivityIndicator/><span className="sr-only">{current.label}</span></>:<span>{current.label}</span>}</small>}{children}</button>
+  <button className={'task-nav-name'+(task.scheduledTaskId?' scheduled-recent':'')} aria-current={selected?'page':undefined} disabled={busy} title={task.title} onClick={onSelect}><span ref={titleViewport} className={'task-nav-title'+(revealing?' revealing':'')}><span ref={titleText}>{task.title}</span></span>{(current.animating||['waiting_permission','waiting_user'].includes(current.state))&&<small className={"session-status"+(current.animating?" session-status-icon":"")} data-task-state={current.state} title={executionLabel}>{current.animating?<><ActivityIndicator/><span className="sr-only">{current.label}</span></>:<span>{executionLabel}</span>}</small>}{children}</button>
   {unread&&<span className="task-unread-dot" role="img" aria-label="有未查看的结果" title="有未查看的结果"/>}
   <button className="task-nav-menu" disabled={busy} aria-label={`${task.title} 对话操作`} aria-haspopup="dialog" onClick={e=>{const b=e.currentTarget.getBoundingClientRect();setPosition({left:Math.max(8,Math.min(b.right+8,window.innerWidth-260)),top:Math.max(8,Math.min(b.top,window.innerHeight-350))});menu.current?.showModal();}}><Icon name="more"/></button>
   {createPortal(<dialog ref={menu} className="project-menu-dialog" style={position} aria-label={`${task.title} 对话操作`} onClick={e=>{if(e.target===e.currentTarget){const b=e.currentTarget.getBoundingClientRect();if(e.clientX<b.left||e.clientX>b.right||e.clientY<b.top||e.clientY>b.bottom)e.currentTarget.close();}}}>

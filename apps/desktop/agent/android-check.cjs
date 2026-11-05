@@ -37,6 +37,7 @@ async function execute(workspace,action,signal,options){
   const result=await journal.executeWithRecovery(workspace,entry,child,signal,()=>options.android.execute(workspace.files,child,signal,options.onStatus));
   await workspace.event('android_device',{actionId:entry.id,operation,revision:run.revision,result});
   const eventId=run.events.at(-1).id;
+  if(operation==='screenshot')await require('./result-preview.cjs').register(workspace,run.events.at(-1),{current:true});
   if(operation!=='start'&&result.apkSha256!==apkSha256)throw Error('设备上的 APK 版本不匹配，停止检查，不采纳其他任务的运行证据');
   if(operation!=='start')await proof.event(workspace,eventId);
   if(operation==='start'){if(!result.running||typeof result.sessionId!=='string'||!result.sessionId)throw Error('未取得有效模拟器会话，不能复用设备检查');state.sessionId=result.sessionId;}

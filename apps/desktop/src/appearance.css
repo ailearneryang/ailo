@@ -93,3 +93,27 @@ input,textarea,select{color:inherit;background-color:var(--surface);color-scheme
 .task-progress .progress-design-issues li { color:var(--muted); }
 .task-progress .progress-design-issues li::marker { color:var(--danger); }
 .task-progress > .artifact-shortcut { color:var(--accent); }
+
+.task-progress details.task-problems,.task-problems { margin:10px 0; padding:8px 12px; border:1px solid var(--border); border-radius:8px; color:var(--text); }
+.task-problems > .task-problems-heading { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 10px; font-size:13px; cursor:pointer; list-style:none; }
+.task-problems-heading::-webkit-details-marker { display:none; }
+.task-problems-heading:focus-visible { outline:2px solid var(--accent); outline-offset:4px; border-radius:3px; }
+.task-problems-toggle { margin-left:auto; white-space:nowrap; }
+.task-problems-hide,.task-problems[open] > summary .task-problems-show { display:none; }
+.task-problems[open] > summary .task-problems-hide { display:inline; }
+.task-problems-body { margin-top:10px; }
+.task-problems-heading > span,.task-problems-counts { color:var(--muted); font-size:12px; }
+.task-problems-counts { display:flex; flex-wrap:wrap; gap:6px 14px; margin:7px 0; }
+.task-progress ul.task-problem-list { list-style:none; padding:0; margin:8px 0; }
+.task-problem { padding:7px 0; }
+.task-problem + .task-problem { border-top:1px solid var(--border); }
+.task-problem-line { display:flex; align-items:baseline; gap:10px; font-size:13px; line-height:1.6; }
+.task-problem-status { flex-shrink:0; color:var(--muted); font-size:11px; }
+.task-problem-regressed .task-problem-status { color:var(--danger); }
+.task-problem-resolved .task-problem-line { color:var(--muted); }
+.task-progress details.task-problem-evidence { margin:3px 0 0; font-size:11px; color:var(--muted); }
+.task-problem-evidence summary,.task-problems-more summary,.task-problems-resolved summary { cursor:pointer; color:var(--muted); }
+.task-problem-evidence p { margin:4px 0; }
+.task-problem-reference { overflow-wrap:anywhere; }
+.task-progress details.task-problems-resolved { border-top:1px solid var(--border); padding-top:9px; margin-top:9px; }
+.task-problems-notice { margin:6px 0; color:var(--muted); font-size:12px; line-height:1.5; }

@@ -48,7 +48,9 @@ function describe(board,masters){
  return baseline;
 }
 async function inspect(root){
- const graph=await require('./sketch-fidelity.cjs').readSource(root);
+ let config,configSource;
+ try{const file=await resolveFile(root,configPath);if((await fs.stat(file)).size>16000)throw Error('android-design.json 不能超过16KB');const data=await fs.readFile(file);config=JSON.parse(data);configSource={path:configPath,sha256:hash(data)};}catch(e){if(e.code!=='ENOENT')throw e;}
+ const graph=await require('./sketch-fidelity.cjs').readSource(root,config?.sourceRoots);
  if(!graph.pages.length)return {status:'unavailable',sources:[],issues:[]};
  const boards=new Map(),masters=new Map();
  function index(l){if(l._class==='symbolMaster'&&l.symbolID)masters.set(l.symbolID,l);for(const c of l.layers||[])index(c);}
@@ -57,8 +59,11 @@ async function inspect(root){
  if(!boards.size)return {status:'unavailable',sources:graph.sources,issues:[]};
  const candidates=[...boards.values()].map(b=>({id:b.do_objectID,name:b.name,width:b.frame.width,height:b.frame.height}));
  const sources=[...graph.sources],issues=graph.truncated?['原稿扫描不完整，请缩小提取目录后重新检查']:[];
- let config;
- try{const file=await resolveFile(root,configPath);if((await fs.stat(file)).size>16000)throw Error('android-design.json 不能超过16KB');const data=await fs.readFile(file);config=JSON.parse(data);sources.push({path:configPath,sha256:hash(data)});}catch(e){if(e.code!=='ENOENT')throw e;}
+ if(configSource)sources.push(configSource);
+ if(config?.materialSources!==undefined){
+  if(!Array.isArray(config.materialSources)||config.materialSources.length>10)throw bindingError('materialSources','须为至多10项来源数组');
+  for(const item of config.materialSources){if(!item||typeof item.path!=='string'||!/^[a-f0-9]{64}$/.test(item.sha256))throw bindingError('materialSources','须提供真实path与sha256');const file=await bindingFile(root,item.path,'materialSources');if(await require('./evidence.cjs').hashFile(file)!==item.sha256)throw bindingError('materialSources','附件原文件已变化');sources.push({path:item.path,sha256:item.sha256});}
+ }
  if(!config)return {status:'binding_required',candidates:candidates.slice(0,60),sources,sourceBaseline:graph.sources,issues:['尚未绑定原稿画板与 Android 界面，不能确认实现了哪一版设计',...issues],instruction};
  if(!Array.isArray(config.screens)||!config.screens.length||config.screens.length>12)throw Error('android-design.json screens 需要1–12个界面');
  const screens=[],seen=new Set();
@@ -88,12 +93,17 @@ async function inspect(root){
   }else delete screen.screenshot;
   if(baseline.unresolvedSymbols.length)issues.push(`${board.name} 有 ${baseline.unresolvedSymbols.length} 个组件定义未解析，不能静默略过`);
   if(baseline.truncated)issues.push(`${board.name} 图层展开超出限制，请缩小原稿后检查`);
+  if(sources.some(s=>s.path===entry.layout&&s.sha256)){
+   screen.backgroundAssets=await require('./background-assets.cjs').audit(root,screen);
+   issues.push(...screen.backgroundAssets.issues);sources.push(...screen.backgroundAssets.sources);
+  }
   screens.push(screen);
  }
  return {status:'bound',screens,sources,sourceBaseline:graph.sources,issues,instruction};
 }
 function failure(message){return Object.assign(Error('Android 设计实现尚未完成：'+message+'。请修复实现、重建 APK 并重新截图；视觉能力限制只适用于尚未确认的细节，不能跳过已知差异。'),{code:'ANDROID_DESIGN_MISMATCH'});}
 async function assertDelivery(workspace,images){
+ await require('./material-input.cjs').assertDesign(workspace);
  const criteria=require('./requirements.cjs').current(workspace.run);
  if(!criteria.some(c=>c.type==='visual'))return;
  require('./design-regions.cjs').assertNoIssues(workspace.run);
@@ -148,6 +158,8 @@ function recordComparison(workspace,observation){
 }
 function context(design,target,options){return require('./context-projections.cjs').designContext(design,target,options);}
 function rememberSource(run,design){
+ if(require('./material-input.cjs').pending(run))return;
+ for(const m of require('./material-input.cjs').selectedDesign(run))if(!design.sources?.some(s=>s.path===m.sourcePath&&s.sha256===m.sourceHash))return;
  if(design.sourceBaseline?.length&&(!run.androidDesignSourceBaseline||run.androidDesignSourceBaseline.inputKey!==run.inputKey))run.androidDesignSourceBaseline={inputKey:run.inputKey,sources:design.sourceBaseline};
 }
 module.exports={inspect,context,describe,assertDelivery,rememberFailure,rememberSource,recordComparison,configPath,color,androidColor};

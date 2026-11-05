@@ -107,7 +107,7 @@ test('company gateway receives current ID choices and exact correction hints in 
  const chat=createChat(storage,async(_url,options)=>{
   const body=JSON.parse(options.body),s=JSON.parse(body.messages.at(-1).content);assert.ok(++calls<10);
   if(s.phase==='route')return native({action:'route',kind:'task'});
-  if(calls===2){assert.deepEqual(body.tools[0].function.parameters.properties.checks.items.properties.criterionId.enum,['report']);return native({action:'artifact',path:'report.txt',label:'报告'});}
+  if(calls===2){assert.deepEqual(body.tools.find(t=>t.function.name==='verify').function.parameters.properties.checks.items.properties.criterionId.enum,['report']);return native({action:'artifact',path:'report.txt',label:'报告'});}
   if(calls===3)return native({action:'verify',checks:[{...check,criterionId:'s1'}]});
   if(calls===4){assert.equal(s.responseContract.mode,'named_tools');assert.match(s.protocolRecovery.instruction,/当前可用 ID：report/);assert.deepEqual(body.tools.find(t=>t.function.name==='verify').function.parameters.properties.checks.items.properties.criterionId.enum,['report']);return native({action:'verify',checks:[check,check]});}
   if(calls===5){assert.equal(s.responseContract.mode,'json');assert.equal(body.tools,undefined);assert.match(s.protocolRecovery.instruction,/第2条与第1条重复/);return Response.json({choices:[{message:{content:JSON.stringify({action:'verify',checks:[check],progress:{steps:[{id:'make',status:'done'}]}})},finish_reason:'stop'}]});}

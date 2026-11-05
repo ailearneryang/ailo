@@ -83,13 +83,19 @@ function createBrowserObserver({BrowserWindow,session}){
      scope={kind:'region',path:state.path,rect:{...rect,x:rect.x+dom.scroll.x,y:rect.y+dom.scroll.y}};
     }
     if(targetSelector&&action.crop)throw Error('selector 与 crop 请选择一种观察目标');
-    const sourceAudit=await require('./sketch-fidelity.cjs').audit(workspace.files,state.path,dom,{reproduce:/sketch|设计稿|效果图|还原|复刻/i.test(workspace.run.currentRequest||workspace.run.goal||'')});
+    const visualRequired=require('./request-contract.cjs').requiresVisual(workspace.run,state.path);
+    const sourceRequired=visualRequired||workspace.run.issues?.some(i=>i.scope?.path===state.path&&i.requiresSourceAudit);
+    const sourceAudit=sourceRequired?await require('./sketch-fidelity.cjs').audit(workspace.files,state.path,dom,{reproduce:workspace.run.requestContract?.kind==='design'||/sketch|设计稿|效果图|还原|复刻/i.test(workspace.run.currentRequest||workspace.run.goal||'')}):{status:'not_required',sources:[],issues:[],notice:'本轮未要求设计还原；保留DOM与交互检查，不混入历史原稿'};
     for(const source of sourceAudit.sources)state.sources.set(source.path,source);
-    const bytes=(await web.capturePage(rect)).toPNG(),relative='.ailo-observations/'+randomUUID()+'.png';
-    await fs.writeFile(await resolveFile(workspace.files,relative,true),bytes,{mode:0o600});
+    let capture={};
+    if(visualRequired){
+     const bytes=(await web.capturePage(rect)).toPNG(),relative='.ailo-observations/'+randomUUID()+'.png';
+     await fs.writeFile(await resolveFile(workspace.files,relative,true),bytes,{mode:0o600});
+     capture={screenshot:relative,sha256:hash(bytes),pixelSize:{width:bytes.readUInt32BE(16),height:bytes.readUInt32BE(20)}};
+    }
     const rendererState={id:key,version:(workspace.run.observationStates?.[key]||0)+1};
     workspace.run.observationStates||={};workspace.run.observationStates[key]=rendererState.version;
-    return {path:state.path,screenshot:relative,sha256:hash(bytes),pixelSize:{width:bytes.readUInt32BE(16),height:bytes.readUInt32BE(20)},revision:workspace.run.revision,sources:[...state.sources.values()],scope,rendererState,dom,sourceAudit,errors:state.errors.slice(),notice:'本地隔离网页观察；远程资源被阻止。visibleText 为当前视口文本近似，不代表遮挡与视觉质量已验证；fullText 为文档内容。四向越界、裁剪与资源诊断仅供调查，长页面下方内容不自动属于缺陷。'};
+    return {path:state.path,...capture,revision:workspace.run.revision,sources:[...state.sources.values()],scope,rendererState,dom,sourceAudit,errors:state.errors.slice(),notice:'本地隔离网页观察；远程资源被阻止。visibleText 为当前视口文本近似，不代表遮挡与视觉质量已验证；fullText 为文档内容。四向越界、裁剪与资源诊断仅供调查，长页面下方内容不自动属于缺陷。'};
    };
    return await Promise.race([work(),new Promise((_,reject)=>{timer=setTimeout(()=>{close(key);reject(Error('网页观察超过20秒，已关闭页面'));},20000);})]);
   }catch(error){close(key);throw error;}finally{clearTimeout(timer);signal.removeEventListener('abort',abort);}

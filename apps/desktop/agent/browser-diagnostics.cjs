@@ -4,7 +4,7 @@ const idFor=(path,description)=>'diagnostic_'+createHash('sha256').update(JSON.s
 function record(workspace,event,requirements){
  const run=workspace.run,result=event.detail.result;
  if(event.type!=='browser'||!result?.path)return;
- run.issues ||= [];
+ require('./problem-state.cjs').ensure(run);
  const health=result.dom?.imageHealth;
  const items=health?.items||[];
  // Complete inventories prevent a duplicate URL outside the scan from hiding
@@ -18,6 +18,7 @@ function record(workspace,event,requirements){
   issue.status='resolved';issue.evidenceId=event.id;
   issue.reason=matches.length?'最新浏览器观察确认此图片已成功加载':'最新完整图片清单已全部加载，旧图片引用已移除或替换';
   issue.history=[...(issue.history||[]),{status:'resolved',evidenceId:event.id,reason:issue.reason,at:event.at}];
+  require('./problem-state.cjs').upsert(run,'issue',issue);
  }
  run.browserDiagnostics={path:result.path,eventId:event.id,imageInventoryComplete:!!complete,loaded:items.filter(i=>i.status==='loaded').length,pending:items.filter(i=>i.status==='pending').length,failed:items.filter(i=>i.status==='failed').length,
   instruction:'以最新浏览器检查与 issues 当前状态为准，旧摘要中的失败数量不代表当前错误。pending 表示尚未加载，不能据此认定路径错误；只针对当前仍失败的资源诊断，不凭文件名含中文推断编码问题。'};
@@ -27,7 +28,7 @@ function record(workspace,event,requirements){
  for(const description of descriptions){
   const id=idFor(result.path,description),old=run.issues.find(i=>i.id===id);
   const issue={id,status:'open',description,requirementIds:ids.length?ids:requirements.map(r=>r.id),scope:result.scope,detectedBy:event.id};
-  if(old){Object.assign(old,issue);delete old.evidenceId;delete old.reason;}else run.issues.push(issue);
+  const value={...old,...issue};delete value.evidenceId;delete value.reason;require('./problem-state.cjs').upsert(run,'issue',value);
  }
 }
 module.exports={record,idFor};

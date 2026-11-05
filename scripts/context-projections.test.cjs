@@ -42,3 +42,8 @@ test('legacy failure references only match actual same-target errors, never fabr
  legacy.records[0].target.command='other';assert.equal(episodes.context(run)[0].details.available,false);legacy.records[0].target.command='right';legacy.records[0].message='different error';assert.equal(episodes.context(run)[0].details.available,false);
  legacy.records[0].message='same error';legacy.records[0].lastAt='2026-10-25T09:59:59.000Z';assert.equal(episodes.context(run)[0].details.available,false);
 });
+
+test('fine component navigation stays globally bounded and focused source IDs survive projection without replacing full details',()=>{
+ const source=spec(),targetId='region-0-7/cell-0-7-5/text-7-5',reference=randomUUID(),projection=design.context(source,{width:1280,height:720,widthDp:1280,heightDp:720},{detailsObservationId:reference,focusTargetIds:[targetId]});
+ const targets=projection.screens.flatMap(s=>s.baseline.designManifest.targets);assert.equal(targets.length,16);assert.ok(targets.some(t=>t.id===targetId));assert.ok(projection.screens.every(s=>s.baseline.designManifest.targetCoverage.truncated));assert.equal(projection.screens[0].baseline.designManifest.targetCoverage.total,source.screens[0].baseline.designManifest.targetCoverage.total);assert.equal(projection.details.observationId,reference);assert.ok(JSON.stringify(projection).length<14000);assert.ok(!JSON.stringify(projection).includes('Exact original font'));
+});

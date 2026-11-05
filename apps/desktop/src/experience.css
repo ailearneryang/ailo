@@ -24,3 +24,15 @@
 .dictation-transcript button{margin-top:6px;font-size:11px;color:var(--muted)}
 @media(prefers-reduced-motion:reduce){.dictation-wave i{animation:none}}
 .composerbar .composer-actions:has(.dictation-control.is-recording){max-width:min(100%,420px)}
+
+.task-notification-toast { position:fixed; top:64px; right:24px; z-index:160; width:min(480px,calc(100vw - 32px)); display:flex; align-items:center; gap:10px; padding:14px 12px 14px 16px; background:var(--surface,#fff); color:var(--text); border:1px solid var(--border,#dfe5eb); border-radius:12px; box-shadow:0 8px 28px #12223224; }
+.task-notification-toast > div { display:flex; align-items:center; gap:10px; flex:1; min-width:0; }
+.task-notification-toast .ui-icon { flex:none; width:18px; height:18px; color:var(--accent); }
+.task-notification-toast span { min-width:0; }
+.task-notification-toast strong { display:block; font-size:13px; line-height:1.5; font-weight:500; }
+.task-notification-toast small { display:block; color:var(--muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:3px; }
+.task-notification-open { flex:none; color:var(--accent); font-size:12px; padding:6px; }
+.task-notification-dismiss { display:flex; padding:6px; border-radius:6px; }
+.task-notification-dismiss .ui-icon { color:var(--muted); width:15px; height:15px; }
+.task-notification-toast button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+@media(max-width:600px) { .task-notification-toast { right:16px; top:56px; } }

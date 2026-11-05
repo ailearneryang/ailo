@@ -1,5 +1,5 @@
 import type {AgentRun} from './types';
-const actions:Record<string,string>={mcp:'正在使用应用工具',feishu:'正在处理飞书内容',build_android:'正在构建并验证应用',android_device:'正在验证应用',write_file:'正在更新文件',edit_file:'正在修改文件',read_file:'正在读取文件',list_files:'正在检查项目文件',read_material:'正在读取材料',read_source:'正在读取原始材料',inspect_source:'正在分析材料',search_materials:'正在搜索材料',read_history:'正在回查对话',read_execution:'正在核对执行记录',run_command:'正在执行命令',request_directory:'正在申请目录授权',request_network:'正在申请联网授权',batch_read:'正在批量读取资料',browser:'正在检查网页',view_image:'正在查看图片',verify:'正在检查验收结果'};
+const actions:Record<string,string>={web_search:'正在搜索网页',knowledge:'正在查询知识库',amap:'正在查询地图',assistant:'正在处理个人事务',edit_spreadsheet:'正在编辑表格',mcp:'正在使用应用工具',feishu:'正在处理飞书内容',build_android:'正在构建并验证应用',android_device:'正在验证应用',write_file:'正在更新文件',edit_file:'正在修改文件',read_file:'正在读取文件',list_files:'正在检查项目文件',read_material:'正在读取材料',read_source:'正在读取原始材料',inspect_source:'正在分析材料',search_materials:'正在搜索材料',read_history:'正在回查对话',read_execution:'正在核对执行记录',run_command:'正在执行命令',request_directory:'正在申请目录授权',request_network:'正在申请联网授权',batch_read:'正在批量读取资料',browser:'正在检查网页',view_image:'正在查看图片',verify:'正在检查验收结果'};
 const recovery:Record<string,string>={output_limit:'本次处理遇到输出长度限制，系统将自动重试，无需操作。',tool_argument_limit:'本次处理内容过多，系统正在拆分后重试，无需操作。',protocol_error:'本次执行指令未能正确生成，系统正在自动重试，无需操作。',empty_response:'本次未收到有效响应，系统正在自动重试，无需操作。',no_action_recovery:'本次尚未生成可执行操作，系统正在自动重试。',loop_recovery:'系统正在调整执行方式，避免重复无效操作。',tool_recovery:'系统正在分析操作失败的原因并调整执行方式。'};
 const progressTypes=new Set(['plan','write_file','edit_file','run_command','read_file','read_material','read_source','artifact','acceptance_check','build_android','android_device']);
 // Bookkeeping must not displace the latest concrete action, blocker or recovery.
@@ -99,7 +99,7 @@ const operationNames:Record<string,string>={run_command:'运行项目命令',wri
 export function userOperationTitle(event:AgentRun['events'][number]):string {
  const d=event.detail;
  const device=event.type==='android_device'?({start:'准备项目模拟器',install:'安装当前 APK',launch:'启动应用',logs:'读取运行日志',screenshot:'获取运行截图',check:'核对应用运行结果',status:'检查模拟器状态',stop:'停止项目模拟器'} as Record<string,string>)[d.operation||'']:undefined;
- return userActivityText(d.purpose)||device||[operationNames[event.type]||actions[event.type]?.replace(/^正在/, '')||'处理任务',pathName(d.path)||userActivityText(d.name)].filter(Boolean).join('：');
+ return (event.type==='web_search'?['搜索网页',userActivityText(d.query,120)].filter(Boolean).join('：'):'')||userActivityText(d.purpose)||device||[operationNames[event.type]||actions[event.type]?.replace(/^正在/, '')||'处理任务',pathName(d.path)||userActivityText(d.name)].filter(Boolean).join('：');
 }
 export function userActivityPresentation(run:AgentRun|undefined,status:string,now=Date.now()) {
  const operations=run?.events?.filter(isActivityOperation)||[];
@@ -117,11 +117,13 @@ export function userActivityPresentation(run:AgentRun|undefined,status:string,no
  if(run?.status==='paused')return result('任务已暂停',taskContext||'需要时可以继续这项任务。','waiting');
  const live=run?.inFlight;
  if(live){
-  const title=userActivityText(live.purpose)||[operationNames[live.action]||actions[live.action]?.replace(/^正在/, '')||context||'处理任务',pathName(live.path)||userActivityText(live.name)].filter(Boolean).join('：');
+  const title=(live.action==='web_search'?userOperationTitle({id:'live',type:live.action,at:live.at,detail:live}):'')||userActivityText(live.purpose)||[operationNames[live.action]||actions[live.action]?.replace(/^正在/, '')||context||'处理任务',pathName(live.path)||userActivityText(live.name)].filter(Boolean).join('：');
   return result(title.startsWith('正在')?title:`正在${title}`,['run_command','build_android'].includes(live.action)?'展开可查看命令的实时输出。':taskContext&& !title.includes(context)?taskContext:'有新结果时会更新到这里。');
  }
  const event=run?.events?.filter(e=>!internalTypes.has(e.type)).at(-1);
- const retry=event&&!!recovery[event.type]||base.label.includes('正在恢复执行');
+ const latest=run?.events?.at(-1);
+ const phaseAdvanced=event?.type==='protocol_error'&&latest&&['intent','plan','plan_update'].includes(latest.type)&&(!event||Date.parse(latest.at)>=Date.parse(event.at));
+ const retry=!phaseAdvanced&&(event&&!!recovery[event.type]||base.label.includes('正在恢复执行'));
  if(retry){
   const exhausted=/已用尽|重试失败/.test(event?.detail.message||'');
   if(exhausted)return result('这一步还没能完成','自动重试没有成功。请查看详情后继续。','attention');

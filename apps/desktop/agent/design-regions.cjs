@@ -17,16 +17,19 @@ function manifest(baseline,elements){
   const repeats=[...groups.entries()].filter(([,items])=>items.length>=2&&new Set(items.map(e=>JSON.stringify([Math.round((e.frame.x+e.frame.width/2)/Math.max(2,e.frame.width*.15)),Math.round((e.frame.y+e.frame.height/2)/Math.max(2,e.frame.height*.15))]))).size===items.length).map(([key,items])=>({id:'repeat_'+hash(key).slice(0,16),basis:'equal_size_sibling_geometry',count:items.length,...grid(items.map(e=>e.frame)),frames:items.map(e=>e.frame),sourceIds:items.map(e=>e.instanceId)}));
   return {id:region.id,name:region.name,frame:region.frame,repeats,textCount:children.filter(e=>e.type==='text').length,imageCount:children.filter(e=>e.image).length};
  });
- return {version:1,id:hash(JSON.stringify([baseline.id,regions,elements])),width:baseline.width,height:baseline.height,regions,notice:'清单来自原稿；重复组数量与排列不可省略。动态值可变化，加载/空/失败状态仍须保留组件。核对后在 verify 的 regions 逐区提交状态与差异；色差不是验收。'};
+ const componentTargets=elements.filter(e=>e.instanceId&&e.instanceId!==e.regionId).map(e=>({id:e.instanceId,regionId:e.regionId,type:e.type,frame:e.frame}));
+ const targets=componentTargets.slice(0,256);
+ return {version:1,id:hash(JSON.stringify([baseline.id,regions,elements])),width:baseline.width,height:baseline.height,regions,targets,targetCoverage:{total:componentTargets.length,provided:targets.length,truncated:componentTargets.length>targets.length},notice:'清单来自原稿；重复组数量与排列不可省略。动态值可变化，加载/空/失败状态仍须保留组件。核对后在 verify 的 regions 逐区提交状态与差异；色差不是验收。'};
 }
 const text={type:'string',minLength:1,maxLength:800};
 const schema={type:'array',minItems:1,maxItems:32,items:{type:'object',additionalProperties:false,required:['id','status','reason'],properties:{id:text,status:{type:'string',enum:['matched','mismatch','unverified']},reason:text,nodeIds:{type:'array',maxItems:128,items:{type:'string'}},repeats:{type:'array',maxItems:64,items:{type:'object',additionalProperties:false,required:['id','observedCount','rows','columns','basis'],properties:{id:text,observedCount:{type:'integer',minimum:0,maximum:1000},rows:{type:'integer',minimum:0,maximum:1000},columns:{type:'integer',minimum:0,maximum:1000},basis:{type:'string',enum:['hierarchy','image']},nodeIds:{type:'array',maxItems:128,items:{type:'string'}},reason:text}}}}}};
-function issues(run){return Object.values(run.designRegionIssues||{}).filter(i=>i.status==='open');}
+function issues(run){require('./problem-state.cjs').ensure(run);return Object.values(run.designRegionIssues||{}).filter(i=>i.status==='open'&&!require('./problem-state.cjs').rows(run).find(p=>p.id==='region_'+(i.key||i.regionId))?.optional);}
 function issueKey(binding,id){return hash(JSON.stringify([binding.boardId,binding.layout,binding.reference,id]));}
 function error(message){return Object.assign(Error('设计区域尚未核验：'+message+'。依据 designManifest 修复或补齐逐区证据，低色差不能替代验收。'),{code:'DESIGN_REGION_MISMATCH'});}
 function pending(message){return Object.assign(Error('设计区域待补充核验：'+message+'。保留当前成果与原要求，补齐当前版本的核对证据；待核验不等于已确认的产品差异。'),{code:'VISUAL_REVIEW_PENDING'});}
 function requestError(message){return Object.assign(Error('区域核对请求无效：'+message+'；仅纠正核对参数，保留原要求和成果。'),{code:'VERIFY_REQUEST_INVALID',diagnostics:{field:'checks',expected:'verification_checks',issue:'invalid_regions'}});}
 async function assess(workspace,image,reports){
+ require('./problem-state.cjs').ensure(workspace.run);
  const m=image.designManifest;if(!m?.regions.length)return;
  if(image.transform?.crop||image.scope?.kind!=='viewport'||!image.reference)throw pending('逐区域验收需要完整运行截图与成对原稿，局部裁剪不能替代');
  const cached=workspace.run.designRegionReviews?.[issueKey(image.designBinding,'review')];
@@ -48,6 +51,13 @@ async function assess(workspace,image,reports){
   const repeats=report.repeats||[];
   if(!Array.isArray(repeats)||repeats.length>64||new Set(repeats.map(r=>r?.id)).size!==repeats.length||repeats.some(r=>!r||!region.repeats.some(t=>t.id===r.id)||!['image','hierarchy'].includes(r.basis)||!['observedCount','rows','columns'].every(k=>Number.isInteger(r[k])&&r[k]>=0&&r[k]<=1000)))throw requestError('重复组件组 ID、计数或核对方式无效');
   for(const selection of [report.nodeIds,...repeats.map(r=>r.nodeIds)])if(selection!==undefined&&(!Array.isArray(selection)||selection.length>128||new Set(selection).size!==selection.length||selection.some(id=>typeof id!=='string'||!id||nodes&&!nodes.some(n=>n.id===id))))throw requestError('控件树未证明核对对象：nodeIds 含无效或不存在的控件 ID');
+ }
+ try{await require('./evidence.cjs').assertFresh(workspace,{...image,sources:require('./evidence-version.cjs').sources(image)});}catch(stale){
+  // A stale or relabelled picture cannot erase an already confirmed finding.
+  // Report that preserved blocker without committing any new observations.
+  const locked=reports.map(report=>({report,prior:workspace.run.designRegionIssues?.[issueKey(image.designBinding,report.id)]})).find(({report,prior})=>prior?.status==='open'&&prior.finding!=='unverified'&&(report.status==='unverified'||report.status==='matched'&&prior.sha256===image.sha256));
+  if(locked)throw error(locked.report.status==='matched'?'同一张结果图不能关闭已确认的区域差异':locked.prior.reason);
+  throw stale;
  }
  for(const report of reports){
   const region=m.regions.find(r=>r.id===report?.id);
@@ -71,16 +81,20 @@ async function assess(workspace,image,reports){
   const preserveConfirmed=problem&&confirmed&&finding==='unverified';
   if(preserveConfirmed){problem=prior.reason;finding='mismatch';}
   checked.push({id:region.id,status:problem?finding:'matched',reason:problem||report.reason,repeats});
-  if(problem)failures.push({key,boardId:image.designBinding.boardId,layout:image.designBinding.layout,reference:image.reference.path,regionId:region.id,region:region.name,status:'open',finding,reason:problem,eventId:preserveConfirmed?prior.eventId:image.eventId,sha256:preserveConfirmed?prior.sha256:image.sha256,sources:preserveConfirmed?prior.sources:image.sources});
+  if(problem)failures.push({key,boardId:image.designBinding.boardId,layout:image.designBinding.layout,reference:image.reference.path,regionId:region.id,region:region.name,status:'open',finding,reason:problem,revision:preserveConfirmed?prior.revision:image.revision,at:new Date().toISOString(),firstSeenAt:prior?.firstSeenAt||prior?.at||new Date().toISOString(),findingVersion:preserveConfirmed?prior.findingVersion:require('./evidence-version.cjs').capture(image,new Date().toISOString()),regressions:(prior?.regressions||0)+(prior?.status==='verified'&&finding==='mismatch'?1:0),eventId:preserveConfirmed?prior.eventId:image.eventId,sha256:preserveConfirmed?prior.sha256:image.sha256,sources:preserveConfirmed?prior.sources:image.sources});
  }
+ // A valid region-level assessment can establish a local repair even while
+ // another mandatory region remains failed. Never publish whole-task approval.
+ const review={manifestId:m.id,boardId:image.designBinding.boardId,evidenceId:image.eventId,regions:checked,basis:'model_assessment_with_optional_hierarchy',sources:image.sources};
  if(failures.length){
-  workspace.run.designRegionIssues||={};for(const item of failures)workspace.run.designRegionIssues[item.key]=item;
+  commit(workspace.run,{...review,regions:checked.filter(r=>r.status==='matched')},image,{partial:true});
+  for(const item of failures){item.requirementIds=require('./requirements.cjs').current(workspace.run).filter(r=>r.type==='visual'&&(!r.scope&&!r.scopes||r.scope?.path===image.designBinding.layout||r.scopes?.some(s=>s.path===image.designBinding.layout))).map(r=>r.id);require('./problem-state.cjs').upsert(workspace.run,'region',item);}
   const visualIds=require('./requirements.cjs').current(workspace.run).filter(r=>r.type==='visual').map(r=>r.id);for(const id of visualIds)if(workspace.run.acceptanceResults)delete workspace.run.acceptanceResults[id];
   const confirmed=failures.some(f=>f.finding==='mismatch');
   await workspace.event(confirmed?'design_region_mismatch':'design_region_pending',{message:'设计区域核对未通过：'+failures.map(f=>f.region+'：'+f.reason).join('；').slice(0,1000),regions:failures.map(({regionId,region,reason,finding})=>({regionId,region,reason,finding})),evidenceId:image.eventId});
-  const e=(confirmed?error:pending)(failures.map(f=>f.region+'：'+f.reason).join('；'));if(confirmed)require('./android-design.cjs').rememberFailure(workspace,e);await workspace.save();throw e;
+  const e=(confirmed?error:pending)(failures.map(f=>f.region+'：'+f.reason).join('；'));if(confirmed)require('./android-design.cjs').rememberFailure(workspace,e);await require('./problem-state.cjs').refresh(workspace);await workspace.save();throw e;
  }
- return {manifestId:m.id,boardId:image.designBinding.boardId,evidenceId:image.eventId,regions:checked,basis:'model_assessment_with_optional_hierarchy',sources:image.sources};
+ return review;
 }
 function selectNodes(nodes,ids){if(!nodes||!Array.isArray(ids)||!ids.length||new Set(ids).size!==ids.length)return;const selected=ids.map(id=>nodes.find(n=>n.id===id));return selected.every(n=>n&&n.bounds.width>0&&n.bounds.height>0)?selected:undefined;}
 function normalized(frame,size){return {x:frame.x/size.width,y:frame.y/size.height,width:frame.width/size.width,height:frame.height/size.height};}
@@ -95,10 +109,19 @@ function aligned(actual,expected,size,m){
   return Math.abs(n.x+n.width/2-b.x-b.width/2)<=Math.max(.025,b.width*.15)&&Math.abs(n.y+n.height/2-b.y-b.height/2)<=Math.max(.025,b.height*.15)&&n.width>=b.width*.65&&n.width<=b.width*1.5&&n.height>=b.height*.65&&n.height<=b.height*1.5;
  });if(i<0)return false;used.add(i);return true;});
 }
-function commit(run,review,image){
+function commit(run,review,image,{partial=false}={}){
  if(!review)return;
- for(const region of review.regions){const old=run.designRegionIssues?.[issueKey(image.designBinding,region.id)];if(old)Object.assign(old,{status:'verified',verifiedEventId:image.eventId});}
- run.designRegionReviews||={};run.designRegionReviews[issueKey(image.designBinding,'review')]={...review,sha256:image.sha256};
+ require('./problem-state.cjs').ensure(run);
+ run.designRegionChecks||={};
+ for(const region of review.regions.filter(r=>r.status==='matched')){
+  const key=issueKey(image.designBinding,region.id),at=new Date().toISOString(),old=run.designRegionIssues?.[key];
+  const proof={...region,manifestId:review.manifestId,evidenceId:image.eventId,revision:image.revision,sha256:image.sha256,sources:image.sources,at};
+  run.designRegionChecks[key]=proof;
+  if(old)require('./problem-state.cjs').transition(run,'region_'+key,{status:'verified',verifiedEventId:image.eventId,verifiedRevision:image.revision,verifiedSources:image.sources,verifiedVersion:require('./evidence-version.cjs').capture(image,at),verifiedAt:at});
+ }
+ // Only the complete all-matched review may satisfy the final region gate.
+ if(!partial){run.designRegionReviews||={};run.designRegionReviews[issueKey(image.designBinding,'review')]={...review,sha256:image.sha256};}
 }
+
 function assertNoIssues(run){const open=issues(run);if(open.length)throw (open.some(i=>i.finding!=='unverified')?error:pending)(open.map(i=>i.region+'：'+i.reason).join('；'));}
 module.exports={manifest,grid,schema,assess,commit,issues,assertNoIssues,error,pending};

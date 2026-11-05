@@ -14,6 +14,8 @@ function createStorage(directory, safeStorage) {
   const skillPackages = require('./skill-packages.cjs').createSkillPackages(path.join(directory, 'skill-packages'));
   let writes = Promise.resolve();
   const attempts = new Map();
+  // Main-process only, never persisted or exposed through readWorkspace.
+  const modelSecrets = new Map();
   const file = (name) => path.join(directory, name + ".json");
   async function read(name, fallback) {
     try {
@@ -22,6 +24,15 @@ function createStorage(directory, safeStorage) {
       if (error.code === "ENOENT") return fallback;
       throw error;
     }
+  }
+  async function configuredModel(id) {
+    const state = await read('workspace', {models:[]});
+    if(id==='auto')id=require('./model-routing.cjs').validateRouting(state.autoModel,state.models||[])?.primaryModelId;
+    const model=(state.models||[]).find(m=>m.id===id);
+    if(!model)throw Error('请先选择或配置一个可用模型。');
+    const cached=modelSecrets.get(model.id);
+    if(cached&&cached.encryptedKey!==model.encryptedKey)modelSecrets.delete(model.id);
+    return model;
   }
   // Local conversation history grows over time; do not cap the entire workspace.
   // Keep field validation at the entry points and preserve atomic, serialized writes.
@@ -75,7 +86,8 @@ function createStorage(directory, safeStorage) {
       fields.push('noActionTimeoutMs','reasoningEffort','toolStreaming','recoveryMode','recoveryStage','networkCode','action','firstActionMs','contentChars','toolCalls','toolArgumentChars','reasoningChars','reasoningTokens');
       fields.push('capabilitySource','reasoningControlSent','enableThinking','toolStreamingControlSent','inputEstimate','contextWindow','guardTokens','budgetAdjusted','toolMenuStage','toolDiscoveryCount','actionCompletionTimeoutMs','runtimeFingerprint','promptSchemaVersion','toolSchemaVersion','appVersion');
       fields.push('protocolErrorReason','jsonErrorOffset','jsonCleanedChars','jsonErrorCharacterClass','toolArgumentDeltas');
-      fields.push('imageInputs','providerCategory','routingLane','selectedModelId');
+      fields.push('systemBytes','stateBytes','toolSchemaBytes','toolResultBytes','deduplicatedBytes');
+      fields.push('imageInputs','providerCategory','routingLane','selectedModelId','metricsVersion','firstReplyMs');
       const safe=Object.fromEntries(fields.filter(k=>['string','number','boolean'].includes(typeof record[k])).map(k=>[k,typeof record[k]==='string'?record[k].slice(0,128):record[k]]));
       for(const [field,key] of [['inputTokens','inputTokens'],['outputTokens','outputTokens'],['reasoningTokens','reasoningTokens']])if(Number.isSafeInteger(record.providerUsage?.[key]))safe[field]=record.providerUsage[key];
       const records=await read('model-requests',[]);await write('model-requests',[...records.slice(-199),safe]);
@@ -90,20 +102,26 @@ function createStorage(directory, safeStorage) {
         await write('model-request-history/index',keys.slice(-50));
       }
     });},
-    async modelCredentials(id) {
+    async modelCredentialsAvailable(id) {
+      await writes.catch(()=>{});
+      const model=await configuredModel(id);
+      return !model.encryptedKey||modelSecrets.get(model.id)?.encryptedKey===model.encryptedKey;
+    },
+    async modelCredentials(id, {background=false} = {}) {
       await writes.catch(() => {});
-      const state = await read("workspace", { models: [] });
-      if(id==='auto')id=require('./model-routing.cjs').validateRouting(state.autoModel,state.models||[])?.primaryModelId;
-      const model = (state.models || []).find((m) => m.id === id);
-      if (!model) throw Error("请先选择或配置一个可用模型。");
+      const model = await configuredModel(id);
       let apiKey;
       if (model.encryptedKey) {
-        try {
-          apiKey = safeStorage.decryptString(
-            Buffer.from(model.encryptedKey, "base64"),
-          );
-        } catch {
-          throw Error("无法解密模型密钥，请在模型设置中重新填写。");
+        const cached=modelSecrets.get(model.id);
+        if(cached?.encryptedKey===model.encryptedKey)apiKey=cached.apiKey;
+        else {
+          if(background)throw Object.assign(Error('后台整理等待本次会话正常使用模型后再继续，不主动请求钥匙串授权。'),{code:'KEYCHAIN_USER_ACTION_REQUIRED'});
+          try {
+            apiKey=safeStorage.decryptString(Buffer.from(model.encryptedKey,'base64'));
+            modelSecrets.set(model.id,{encryptedKey:model.encryptedKey,apiKey});
+          } catch {
+            throw Error('无法解密模型密钥，请在模型设置中重新填写。');
+          }
         }
       }
       return {
@@ -160,6 +178,7 @@ function createStorage(directory, safeStorage) {
         await write('workspace',state);return task;
       });
     },
+    messageFeedback(input){return queue(async()=>{const state=await read('workspace',{tasks:[],projects:[],models:[]});const result=require('./message-feedback.cjs').applyMessageFeedback(state.tasks.find(t=>t.id===input?.taskId),input);await write('workspace',state);return result;});},
     patchTask(id, patch, append=[]) {
       return queue(async()=>{
         if(typeof id!=='string'||!patch||!Array.isArray(append))throw Error('会话更新无效');
@@ -317,6 +336,8 @@ function createStorage(directory, safeStorage) {
             ? state.defaultModelId
             : "demo",
         });
+        for(const old of previous.models||[])if(old.encryptedKey&&!models.some(m=>m.encryptedKey===old.encryptedKey))safeStorage.forgetCiphertext?.(Buffer.from(old.encryptedKey,'base64'));
+        for(const [id,cached] of modelSecrets)if(!models.some(m=>m.id===id&&m.encryptedKey===cached.encryptedKey))modelSecrets.delete(id);
       });
     },
     saveContextCheckpoint(taskId, contextCheckpoint) {
@@ -358,6 +379,7 @@ function createStorage(directory, safeStorage) {
           hash,
         };
         accounts.users.push(user);
+        modelSecrets.clear();safeStorage.clearSession?.();
         accounts.currentUserId = user.id;
         await write("accounts", accounts);
         return publicUser(user);
@@ -387,6 +409,7 @@ function createStorage(directory, safeStorage) {
           throw Error("邮箱或密码不正确。请确认已在这台电脑注册。");
         }
         attempts.delete(email);
+        modelSecrets.clear();safeStorage.clearSession?.();
         accounts.currentUserId = user.id;
         await write("accounts", accounts);
         return publicUser(user);
@@ -395,6 +418,7 @@ function createStorage(directory, safeStorage) {
     logout() {
       return queue(async () => {
         const accounts = await read("accounts", { users: [] });
+        modelSecrets.clear();safeStorage.clearSession?.();
         delete accounts.currentUserId;
         await write("accounts", accounts);
       });

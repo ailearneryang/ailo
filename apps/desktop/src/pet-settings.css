@@ -11,14 +11,12 @@
 .pet-option small { display: block; margin-top: 7px; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); line-height: 1.8; }
 .pet-option input { width: 18px; height: 18px; flex-shrink: 0; accent-color: var(--text); }
 .pet-preview { min-height: 130px; display: flex; align-items: center; justify-content: center; gap: 24px; color: var(--muted); font-size: calc(13px * var(--font-scale, 1)); }
-.ailo-pet.is-quiet * { animation: none !important; }
-.ailo-pet.is-quiet.is-happy .pet-heart { opacity: 1; }
 .ailo-pet.pet-fallback .ui-icon { width: 65%; height: 65%; color: var(--muted); }
 .assistant-pet-settings { display: flex; align-items: center; gap: 6px; }
 /* Navigation labels share one icon column, including the optional pet. */
 .sidebar nav button > .ui-icon,
 .sidebar nav button > .ailo-pet { width: 24px; height: 24px; flex: 0 0 24px; margin: 0; }
-.sidebar nav button > .ailo-pet > .pet-art { width: 32px; height: 30px; max-width: none; flex-shrink: 0; }
+.sidebar nav button > .ailo-pet > .pet-art { width: 24px; height: 24px; max-width: 100%; flex-shrink: 0; }
 .sidebar nav button > .pet-fallback > .ui-icon { width: 24px; height: 24px; }
 
 

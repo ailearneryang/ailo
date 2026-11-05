@@ -3,7 +3,7 @@ const EXTRACTION_PROMPT=`你是 Ailo 个人记忆整理器。输入是用户消�
 function createMemoryWorker({store,storage,fetchImpl=fetch,sessions=()=>[],now=Date.now,idleMs=45000}){
  let running=false,timer,controller,stopped=false,nextAttempt=0;
  async function extract(batch,signal){
-  const work=await storage.readWorkspace(),model=await storage.modelCredentials(batch.modelId||work.defaultModelId);
+  const work=await storage.readWorkspace(),model=await storage.modelCredentials(batch.modelId||work.defaultModelId,{background:true});
   const url=new URL(model.baseUrl);if(url.username||url.password||url.search||url.hash||(url.protocol!=='https:'&&!(url.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(url.hostname))))throw Error('记忆整理的模型地址无效');
   if(!url.pathname.replace(/\/$/,'').endsWith('/chat/completions'))url.pathname=url.pathname.replace(/\/$/,'')+'/chat/completions';
   const messages=[{role:'system',content:EXTRACTION_PROMPT},{role:'user',content:JSON.stringify({project:!!batch.projectId,messages:batch.messages})}];
@@ -35,6 +35,9 @@ function createMemoryWorker({store,storage,fetchImpl=fetch,sessions=()=>[],now=D
    const work=await storage.readWorkspace(),task=work.tasks.find(t=>t.id===batch.taskId),last=task?.messages?.at(-1);
    if(!last||now()-Date.parse(last.createdAt)<idleMs)return;
    if(await store.owner()!==owner)return;
+   // Reading old chats must not cause an OS credential prompt on startup.
+   // No attempt/cursor/budget is consumed while credentials await normal use.
+   if(storage.modelCredentialsAvailable&&!await storage.modelCredentialsAvailable(batch.modelId||work.defaultModelId))return;
    const revision=await store.recordAttempt(batch);if(revision===null)return;batch.revision=revision;
    controller=new AbortController();const timeout=setTimeout(()=>controller?.abort(),60000);
    try{const result=await extract(batch,controller.signal);if(!stopped)await store.commitBatch(batch,result.items,result.usage);}

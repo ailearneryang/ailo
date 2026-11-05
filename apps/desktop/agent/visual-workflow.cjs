@@ -21,6 +21,36 @@ async function enqueueOperation(workspace,action,result,event){
  if(!['check','screenshot'].includes(action.operation))return false;
  return enqueue(workspace.run,source);
 }
+// Read-only pairing is allowed only for one unambiguous, source-bound board.
+// A separate view_image receipt preserves the original device event and cannot
+// pretend a device operation or an acceptance check has happened.
+async function pairScreenshot(workspace,event,images){
+ if(!images||!screenshotObservation(event)||require('./recovery-control.cjs').unknown(workspace.run))return false;
+ const run=workspace.run,shot=event.detail.result;
+ if(run.visualObservations?.some(o=>o.path===shot.path&&o.reference&&o.sources?.some(s=>s.path===shot.apkPath&&s.sha256===shot.apkSha256)))return false;
+ try{
+ const design=await require('./android-design.cjs').inspect(workspace.files);
+ if(design.status!=='bound')return false;
+ const reference=shot.display?.reference||shot.reference?.path||shot.reference;
+ const screens=(design.screens||[]).filter(s=>reference?s.reference===reference:true);
+ if(screens.length!==1||!screens[0].reference)return false;
+  const action={action:'view_image',path:shot.path,reference:screens[0].reference};
+  const result=await require('./visual-observation.cjs').imageObservation(workspace,action,images);
+  if(!result.designBinding||result.designBinding.apkSha256!==shot.apkSha256||result.previewOnly)return false;
+  delete result.image;
+  await workspace.event('view_image',{origin:'runtime_pairing',screenshotEventId:event.id,path:shot.path,purpose:'按唯一已绑定画板将原稿与当前运行图成对送审',revision:run.revision,result});
+  const paired={...result,eventId:run.events.at(-1).id,transform:{},delivered:false,automaticPair:true};
+  run.visualObservations.push(paired);run.visualObservations=run.visualObservations.slice(-64);
+  require('./android-design.cjs').recordComparison(workspace,paired);
+  // Deliver the stronger pair rather than separately analysing the same preview.
+  const preview=run.visualObservations.find(o=>o.eventId===event.id);if(preview)preview.supersededBy=paired.eventId;
+  return true;
+ }catch(error){
+  const preview=run.visualObservations?.find(o=>o.eventId===event.id);if(preview)preview.pairingError=String(error.message).slice(0,500);
+  if(error instanceof TypeError||error instanceof ReferenceError)throw error;
+  return false;
+ }
+}
 async function replay(workspace,{userContinuationEvent,allowAssisted=true}={}){
  const run=workspace.run;
  const userBoundary=userContinuationEvent&&run.events?.find(e=>e.id===userContinuationEvent.id&&e.type==='user_continuation'&&e.detail?.origin==='user'&&e.detail.executionId===run.executionId&&['blocked','paused','failed'].includes(e.detail.previousStatus));
@@ -97,4 +127,4 @@ async function reconcilePending(workspace,navigation){
  }
  return changed;
 }
-module.exports={enqueue,enqueueOperation,replay,context,screenshotObservation,reconcilePending,pendingNavigation};
+module.exports={enqueue,enqueueOperation,replay,context,screenshotObservation,reconcilePending,pendingNavigation,pairScreenshot};

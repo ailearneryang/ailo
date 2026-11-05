@@ -5,6 +5,7 @@ import type {Task,ArtifactPreview,Material} from './types';
 import {Icon} from './icon';
 import {useResourcePanelSize} from './resource-panel-size';
 import './task-sidebar.css';
+import {groupArtifacts} from '../artifact-presentation.cjs';
 
 type FileEntry={path:string;label:string;size:number;sha256:string};
 type Scope='delivery'|'project';
@@ -18,8 +19,8 @@ function FileBadge({name}:{name:string}) {
   const type=types[ext];
   return <span className={'resource-file-icon '+(type?'resource-'+type[1]:'')} aria-hidden="true">{type?<span>{type[0]}</span>:<Icon name="file"/>}</span>;
 }
-function ResourceGroup({title,count,empty,children}:{title:string;count:number;empty:string;children:React.ReactNode}) {
-  const [open,setOpen]=useState(true);
+function ResourceGroup({title,count,empty,children,initialOpen=true}:{title:string;count:number;empty:string;children:React.ReactNode;initialOpen?:boolean}) {
+  const [open,setOpen]=useState(initialOpen);
   return <section className="resource-group"><button className="resource-group-heading" aria-expanded={open} onClick={()=>setOpen(v=>!v)}><span>{title}</span><small>{count}</small><Icon name="chevron-right"/></button>{open&&(count?children:<p className="resource-empty">{empty}</p>)}</section>;
 }
 function ResourceList<T>({items,render}:{items:T[];render:(item:T,index:number)=>React.ReactNode}) {
@@ -33,6 +34,7 @@ export function ArtifactPanel({task,selectionRequest,temporary=false,onDismiss,m
   const [files,setFiles]=useState<FileEntry[]>([]),[filesLoading,setFilesLoading]=useState(true),[filesError,setFilesError]=useState('');
   const [truncated,setTruncated]=useState(false),[refresh,setRefresh]=useState(0),[materialOffset,setMaterialOffset]=useState(0);
   const deliveries=task.agentRun?.delivery?.availableArtifacts||task.agentRun?.artifacts||[];
+  const deliveryGroups=groupArtifacts(deliveries,{request:task.messages?.filter(m=>m.role==='user').at(-1)?.content||task.agentRun?.goal||task.request});
   useEffect(()=>{if(selectionRequest){setView('delivery');setSelected({scope:'delivery',path:selectionRequest.path});}},[selectionRequest]);
   const projectFiles=view==='overview'?files.filter(f=>!deliveries.some(a=>a.path===f.path)):files;
   const scope=selected?.scope==='project'?'project':'delivery';
@@ -101,8 +103,9 @@ export function ArtifactPanel({task,selectionRequest,temporary=false,onDismiss,m
       {material.text!==null&&<><pre>{material.text.slice(materialOffset,materialOffset+12000)}</pre>{material.text.length>12000&&<div className="resource-material-pages"><button disabled={!materialOffset} onClick={()=>setMaterialOffset(v=>Math.max(0,v-12000))}>上一段</button><span>{Math.floor(materialOffset/12000)+1} / {Math.ceil(material.text.length/12000)}</span><button disabled={materialOffset+12000>=material.text.length} onClick={()=>setMaterialOffset(v=>v+12000)}>下一段</button></div>}</>}
     </div>:null}
     <div className="artifact-panel-body resource-overview" hidden={previewing}>
-      {(view==='overview'||view==='delivery')&&<ResourceGroup title="产物" count={deliveries.length} empty="已登记的交付成果会显示在这里。"><ResourceList items={deliveries} render={file=>fileRow(file,'delivery')}/></ResourceGroup>}
-      {(view==='overview'||view==='project')&&<ResourceGroup title="项目文件" count={projectFiles.length} empty={filesLoading?'正在读取项目文件…':'生成的代码和文档会显示在这里。'}><ResourceList items={projectFiles} render={file=>fileRow(file,'project')}/></ResourceGroup>}
+      {(view==='overview'||view==='delivery')&&<ResourceGroup title="成果" count={deliveryGroups.primary.length} empty="可预览和使用的成果会显示在这里。"><ResourceList items={deliveryGroups.primary} render={file=>fileRow(file,'delivery')}/></ResourceGroup>}
+      {(view==='overview'||view==='delivery')&&!!deliveryGroups.development.length&&<ResourceGroup title="开发文件" count={deliveryGroups.development.length} initialOpen={false} empty=""><ResourceList items={deliveryGroups.development} render={file=>fileRow(file,'delivery')}/></ResourceGroup>}
+      {(view==='overview'||view==='project')&&<ResourceGroup key={view+'-project'} initialOpen={view==='project'} title="项目文件" count={projectFiles.length} empty={filesLoading?'正在读取项目文件…':'生成的代码和文档会显示在这里。'}><ResourceList items={projectFiles} render={file=>fileRow(file,'project')}/></ResourceGroup>}
       {(view==='overview'||view==='materials')&&<ResourceGroup title="材料" count={materials.length} empty="尚未添加材料，可点击上方 ＋ 添加。"><ResourceList items={materials} render={materialRow}/></ResourceGroup>}
       {(view==='overview'||view==='project')&&<><div className="resource-folder-actions"><button onClick={()=>void reveal()}><Icon name="folder"/>打开项目文件夹</button><button aria-label="刷新项目文件" title="刷新项目文件" disabled={filesLoading} onClick={()=>setRefresh(v=>v+1)}><Icon name="refresh"/></button></div>{filesError&&<p className="error" role="alert">{filesError}</p>}{truncated&&<p className="muted">仅显示前 500 个项目文件，完整内容可在文件夹中查看。</p>}</>}
       {error&&<p className="error" role="alert">{error}</p>}

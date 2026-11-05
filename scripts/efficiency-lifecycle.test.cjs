@@ -19,7 +19,7 @@ test('screenshots and viewing identical pixels are one observation across recove
  recovery.progress(run,{action:'android_device',operation:'screenshot'},shot);
  recovery.progress(run,{action:'view_image',path:'a.png'},{sha256:'pixels'});
  assert.equal(run.decisionRecovery.noActionFailures,3);assert.equal(run.decisionRecovery.progressKeys.length,1);
- run=JSON.parse(JSON.stringify(run));delete run.decisionRecovery;recovery.begin(run,'MODEL_NO_ACTION_TIMEOUT');
+ run=JSON.parse(JSON.stringify(run));require('../apps/desktop/agent/recovery-state.cjs').clear(run,'decisionRecovery');recovery.begin(run,'MODEL_NO_ACTION_TIMEOUT');
  recovery.progress(run,{action:'android_device',operation:'screenshot'},shot);
  recovery.progress(run,{action:'view_image',path:'renamed.png'},{sha256:'pixels'});
  assert.equal(run.decisionRecovery.progressKeys.length,0);

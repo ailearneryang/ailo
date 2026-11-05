@@ -33,8 +33,11 @@ test('native streaming tool arguments are assembled without leaking into chat te
 });
 test('native-only provider completes agent request with content:null',async t=>{
  const storage=await fixture(t);let calls=0;
- const chat=createChat(storage,async(url,options)=>{const body=JSON.parse(options.body);assert.equal(body.tools[0].function.name,'ailo_action');assert.equal(body.tool_choice.function.name,'ailo_action');return native(calls++?{action:'reply',text:'你好'}:{action:'route',kind:'chat'});});
- assert.equal((await chat.complete({...input,onText:()=>assert.fail('no protocol in UI')})).content,'你好');assert.equal(calls,2);
+ const chat=createChat(storage,async(url,options)=>{const body=JSON.parse(options.body);assert.ok(body.tools.every(t=>t.function.name!=='ailo_action'));assert.equal(body.tool_choice,'required');return native(calls++?{action:'reply',text:'你好'}:{action:'route',kind:'chat'});});
+ const shown=[];
+ assert.equal((await chat.complete({...input,onText:text=>shown.push(text)})).content,'你好');assert.equal(calls,2);
+ // Only the reply text reaches the UI, never the action protocol itself.
+ assert.deepEqual(shown,['你好']);
 });
 test('explicit tool incompatibility falls back to JSON mode and retains it for the run',async t=>{
  const storage=await fixture(t);let calls=0;
@@ -65,7 +68,7 @@ test('native calls disable parallel actions and unsupported switch falls back wi
  const chat=createChat(storage,async(url,options)=>{
   const body=JSON.parse(options.body);calls++;
   if(calls===1){assert.equal(body.parallel_tool_calls,false);return new Response('{"error":"parallel_tool_calls not supported"}',{status:400});}
-  assert.equal(body.parallel_tool_calls,undefined);assert.equal(body.tools[0].function.name,'ailo_action');
+  assert.equal(body.parallel_tool_calls,undefined);assert.ok(body.tools.every(t=>t.function.name!=='ailo_action'));
   return native(calls===2?{action:'route',kind:'chat'}:{action:'reply',text:'已适配'});
  });assert.equal((await chat.complete(input)).content,'已适配');assert.equal(calls,3);
 });
@@ -76,7 +79,7 @@ test('native length response preserves phase, increases budget and never execute
   const body=JSON.parse(options.body);budgets.push(body.max_tokens);calls++;
   if(calls===1)return native({action:'route',kind:'chat'});
   if(calls===2)return new Response(JSON.stringify({usage:{prompt_tokens:100,completion_tokens:8192,completion_tokens_details:{reasoning_tokens:8000}},choices:[{message:{content:null,tool_calls:[{id:'bad',type:'function',function:{name:'ailo_action',arguments:'{"action":"write_file",'}}]},finish_reason:'length'}]}));
-  const state=JSON.parse(body.messages.at(-1).content);assert.equal(state.phase,'chat');assert.match(state.recovery,/截断/);assert.ok(!body.tools[0].function.parameters.properties.action.enum.includes('write_file'));
+  const state=JSON.parse(body.messages.at(-1).content);assert.equal(state.phase,'chat');assert.match(state.recovery,/截断/);assert.ok(!body.tools.some(t=>t.function.name==='write_file'));
   return native({action:'reply',text:'恢复成功'});
  });assert.equal((await chat.complete(input)).content,'恢复成功');assert.deepEqual(budgets,[4096,8192,16384]);
  const {createWorkspace}=require('../apps/desktop/agent/workspace.cjs');const w=await createWorkspace(storage.agentDirectory,(await storage.readWorkspace()).tasks[0]);
@@ -198,9 +201,12 @@ test('idle decision retries only the interrupted step and discards unfinished to
 });
 
 test('user cancellation during an idle decision never retries',async t=>{
- const storage=await fixture(t);let calls=0;
- const chat=createChat(storage,async()=>{calls++;return slowDecision({action:'route',kind:'chat'},{reasoning:0,end:false});},{first:200,idle:1000,decision:2000,total:3000});
- const result=chat.complete(input);const timer=setTimeout(()=>chat.cancel(input.id),30);
+ const storage=await fixture(t);let calls=0,timer;
+ // Start the cancellation clock after transport begins, not during fixture / disk
+ // preparation. Under a busy host, cancelling before the first request is valid
+ // but would not exercise this test's idle-decision scenario.
+ const chat=createChat(storage,async()=>{calls++;timer=setTimeout(()=>chat.cancel(input.id),30);return slowDecision({action:'route',kind:'chat'},{reasoning:0,end:false});},{first:200,idle:1000,decision:2000,total:3000});
+ const result=chat.complete(input);
  t.after(()=>clearTimeout(timer));
  await assert.rejects(result,/已停止/);assert.equal(calls,1);assert.deepEqual(chat.sessions(),[]);
 });
@@ -221,13 +227,13 @@ test('persistent empty responses exhaust staged recovery while filtering is neve
  const waiting=await filtered.complete(input);assert.equal(waiting.agentRun.taskContinuation.code,'MODEL_CONTENT_FILTER');assert.equal(waiting.agentRun.taskContinuation.taskOpen,true);assert.equal(calls,1);
 });
 
-test('missing discriminator switches to named tools and recovers without guessing command action',async t=>{
+test('missing discriminator on legacy alias recovers with default named tools without guessing command action',async t=>{
  const storage=await fixture(t);let calls=0;
  const chat=createChat(storage,async(url,options)=>{
   const body=JSON.parse(options.body);calls++;
   if(calls===1)return native({kind:'chat'});
   assert.equal(body.tool_choice,'required');assert.ok(body.tools.every(t=>t.function.name!=='ailo_action'));
-  if(calls===2){assert.deepEqual(body.tools.map(t=>t.function.name),['route']);assert.equal(body.tools[0].function.parameters.properties.action,undefined);}
+  if(calls===2){assert.deepEqual(body.tools.map(t=>t.function.name),['route','reply']);assert.equal(body.tools[0].function.parameters.properties.action,undefined);}
   else {assert.ok(!body.tools.some(t=>t.function.name==='run_command'));}
   return new Response(JSON.stringify({choices:[{message:{tool_calls:[{function:{name:calls===2?'route':'reply',arguments:JSON.stringify(calls===2?{kind:'chat'}:{text:'恢复成功'})}}]},finish_reason:'tool_calls'}]}));
  });
@@ -243,7 +249,7 @@ test('invalid JSON diagnostics identify response channel without retaining model
  assert.throws(()=>decodeAction({toolCalls:[{function:{name:'ailo_action',arguments:'{"action":"reply"'}}],finishReason:'tool_calls'}),e=>e.reason==='invalid_json'&&e.diagnostics.jsonIssue==='incomplete'&&e.diagnostics.responseChannel==='tool_arguments');
 });
 
-test('accepted tools with prose responses switch to named tools then JSON, with consistent recovery instructions',async t=>{
+test('prose responses receive one named-tool correction then JSON, with consistent recovery instructions',async t=>{
  const storage=await fixture(t);let calls=0;
  const chat=createChat(storage,async(url,options)=>{
   const body=JSON.parse(options.body);calls++;
@@ -290,7 +296,7 @@ test('GLM routes with low effort, honors selected effort for execution, and reco
  let n=0;const chat=createChat(storage,async(_url,options)=>{const body=JSON.parse(options.body);bodies.push(body);n++;if(n===2)return new Response(JSON.stringify({choices:[{message:{content:null,reasoning_content:'r'},finish_reason:'stop'}]}));return native(n===1?{action:'route',kind:'task'}:{action:'pause',text:'缩小后恢复'});});
  const result=await chat.complete({...input,reasoningEffort:'high'});
  assert.equal(result.content,'缩小后恢复');assert.deepEqual(bodies.map(b=>b.reasoning_effort),['low','max','low']);assert.ok(bodies.every(b=>b.tool_stream===true));assert.equal(records.at(-1).noActionTimeoutMs,180000);assert.equal(records.at(-1).recoveryMode,true);
- const state=JSON.parse(bodies.at(-1).messages.at(-1).content);assert.equal(state.decisionRecovery.maxWriteChars,8000);assert.equal(bodies.at(-1).tools[0].function.parameters.properties.content.maxLength,8000);
+ const state=JSON.parse(bodies.at(-1).messages.at(-1).content);assert.equal(state.decisionRecovery.maxWriteChars,8000);assert.ok(!bodies.at(-1).tools.some(t=>t.function.name==='write_file'),'未制定计划时不提前展示写入工具');assert.equal(require('../apps/desktop/agent/protocol.cjs').actionTools(state,['write_file'])[0].function.parameters.properties.content.maxLength,8000);
 });
 
 test('streamed GLM arguments cancel the no-action timer but execute only after complete JSON arrives',async t=>{

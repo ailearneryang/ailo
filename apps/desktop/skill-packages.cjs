@@ -15,8 +15,8 @@ function safePath(value, directory = false) {
   if (typeof name !== 'string' || !name || name.length > 500 || /^[A-Za-z]:/.test(name) || /[\\\x00-\x1f\x7f]/.test(name) || name.split('/').some(p => !p || p === '.' || p === '..')) throw Error('技能 ZIP 包含不安全的文件路径。');
   return name;
 }
-function parseMarkdown(buffer, fallback) {
-  if (buffer.length > LIMITS.markdown) throw Error('SKILL.md 不能超过 80 KB。');
+function parseMarkdown(buffer, fallback, packagedEntry) {
+  if (buffer.length > (packagedEntry ? LIMITS.file : LIMITS.markdown)) throw Error(packagedEntry ? '技能包内 SKILL.md 不能超过 10 MB。' : 'SKILL.md 不能超过 80 KB。');
   let text;
   try { text = new TextDecoder('utf-8', { fatal: true }).decode(buffer).replace(/^\uFEFF/, ''); }
   catch { throw Error('请使用 UTF-8 编码的 SKILL.md。'); }
@@ -34,8 +34,11 @@ function parseMarkdown(buffer, fallback) {
     }
     return value.replace(/^(['"])([\s\S]*)\1$/, '$2');
   }
-  const instructions = text.slice(match?.[0].length || 0).trim();
-  if (!instructions || instructions.length > 20000) throw Error('技能正文需要包含 1–20000 个字符。');
+  let instructions = text.slice(match?.[0].length || 0).trim();
+  if (!instructions || (!packagedEntry && instructions.length > 20000)) throw Error('技能正文需要包含 1–20000 个字符。');
+  // Large packaged instructions remain complete on disk; never truncate them
+  // or expand the always-injected prompt and aggregate selection budget.
+  if (packagedEntry && instructions.length > 20000) instructions = '此技能使用完整文件指令。执行技能前，必须从下方技能配套文件根目录读取 ' + packagedEntry + '，并遵循其中的工作指令。使用 read_file 分页读取，按返回的 next 继续，直到读完整份指令；不可把首个分页当作全文。再按任务需要读取引用文档、模板或脚本。';
   return { id: randomUUID(), kind: 'skill', name: (field('display_name') || field('name') || fallback).slice(0, 60), description: field('description').slice(0, 300), instructions, enabled: true };
 }
 function unpack(buffer) {
@@ -108,7 +111,7 @@ function createSkillPackages(root) {
     if (candidates[1]?.path.split('/').length === entry.path.split('/').length) throw Error('ZIP 中有多个技能，请将每个技能分别打包导入。');
     const prefix = entry.path.slice(0, -path.posix.basename(entry.path).length);
     const files = all.filter(f => f.path.startsWith(prefix)).map(f => ({ ...f, path: f.path.slice(prefix.length) }));
-    const skill = parseMarkdown(entry.data, prefix ? prefix.split('/').filter(Boolean).at(-1) : fallback);
+    const skill = parseMarkdown(entry.data, prefix ? prefix.split('/').filter(Boolean).at(-1) : fallback, path.posix.basename(entry.path));
     // Each import can repair a missing/damaged prior package without replacing
     // files used by an already running task.
     const id = digest(Buffer.concat([buffer, Buffer.from(randomUUID())]));
@@ -133,7 +136,7 @@ function createSkillPackages(root) {
     }
     return items;
   }
-  async function prepare(workspace, items) {
+  async function prepare(workspace, items, options = {}) {
     // Only our marked cache can be replaced. Resolve every path before touching
     // a project, including restored projects containing symlinks.
     const relative = '.runtime/ailo-skills';
@@ -159,9 +162,10 @@ function createSkillPackages(root) {
     // original bundled files are still restored from the hash-checked source.
     const selectedIds = new Set(bundles.map(bundle => bundle.id));
     for (const bundle of bundles) for (const f of bundle.files) await resolveFile(workspace.files, relative + '/' + bundle.id + '/' + f.path);
+    // Incremental loads in the same execution retain previously mounted skills
+    // and their dependencies. A new execution uses the default cleanup policy.
     // Removal cannot follow links, and the marker prevents deleting user files.
-    // Deselection removes the entire owned package, including generated extras.
-    for (const name of existing) if (name !== '.ailo-owned' && !selectedIds.has(name)) await fs.rm(path.join(mount, name), { recursive: true, force: true });
+    if (options.retainExisting !== true) for (const name of existing) if (name !== '.ailo-owned' && !selectedIds.has(name)) await fs.rm(path.join(mount, name), { recursive: true, force: true });
     await fs.writeFile(marker, OWNED, { mode: 0o600 });
     for (const bundle of bundles) for (const f of bundle.files) {
       const target = await resolveFile(workspace.files, relative + '/' + bundle.id + '/' + f.path, true);

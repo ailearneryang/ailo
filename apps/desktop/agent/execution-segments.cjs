@@ -17,8 +17,9 @@ async function runSegments(execute,{signal,onContinue,policy={},now=Date.now}={}
   result=await execute({maxSteps:limits.segmentSteps,maxDurationMs:Math.min(limits.segmentDurationMs,remaining),
    continuationReason:segment?'segment':'user',segmentIndex:segment,finalizeOnBudget:segment+1>=limits.maxSegments||remaining<=limits.segmentDurationMs});
   signal?.throwIfAborted();
-  if(result?.continuation?.safe!==true||result.agentRun?.mode!=='task'||result.agentRun?.status!=='paused')return result;
-  if(segment+1>=limits.maxSegments||now()-started>=limits.maxTotalDurationMs)break;
+  const next=require('./segment-progress.cjs').decision(result,{segmentsRemaining:segment+1<limits.maxSegments,timeRemaining:now()-started<limits.maxTotalDurationMs});
+  if(result?.agentRun?.segmentState)result.agentRun.segmentState.continuationDecision=next;
+  if(next!=='continue'){if(result?.continuation)delete result.continuation;return result;}
   try{onContinue?.('已保存当前阶段的成果，正在继续下一阶段…');}catch{}
  }
  // This is a real task budget, not another automatically renewed segment.

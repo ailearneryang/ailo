@@ -1,20 +1,22 @@
-// Convert the approved artwork to macOS icon sizes without changing the design.
-const fs=require('node:fs');
-const os=require('node:os');
-const path=require('node:path');
-const {execFileSync}=require('node:child_process');
+// Rasterize the shared vector face: every size uses the same source as Pet.
+const fs=require('node:fs'),path=require('node:path');
+const {createCanvas,loadImage}=require('../apps/desktop/node_modules/@napi-rs/canvas');
+const {iconSvg}=require('../apps/desktop/pet-artwork.cjs');
 const root=path.resolve(__dirname,'../apps/desktop');
-const source=path.join(root,'assets/ailo-icon-source.png');
-const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ailo-icon-'));
-const iconset=path.join(temp,'ailo.iconset');fs.mkdirSync(iconset);
-const resize=(size,dest)=>execFileSync('sips',['-z',String(size),String(size),source,'--out',dest],{stdio:'ignore'});
-try {
- for(const size of [16,32,128,256,512]) {
-  resize(size,path.join(iconset,`icon_${size}x${size}.png`));
-  resize(size*2,path.join(iconset,`icon_${size}x${size}@2x.png`));
- }
- execFileSync('iconutil',['-c','icns',iconset,'-o',path.join(root,'assets/ailo.icns')]);
- resize(512,path.join(root,'assets/ailo.png'));
- resize(64,path.join(root,'public/favicon.png'));
+async function png(size,dest){const canvas=createCanvas(size,size),image=await loadImage(Buffer.from(iconSvg(size)));canvas.getContext('2d').drawImage(image,0,0);const data=canvas.toBuffer('image/png');if(dest)fs.writeFileSync(dest,data);return data;}
+async function build(){
+ fs.writeFileSync(path.join(root,'assets/ailo-icon-source.svg'),iconSvg());
+ await png(1024,path.join(root,'assets/ailo-icon-source.png'));
+ await png(512,path.join(root,'assets/ailo.png'));
+ await png(64,path.join(root,'public/favicon.png'));
  fs.copyFileSync(path.join(root,'assets/ailo.png'),path.join(root,'public/ailo.png'));
-} finally {fs.rmSync(temp,{recursive:true,force:true});}
+ if(process.argv.includes('--png-only'))return;
+ // Modern macOS ICNS stores independently rasterized PNG representations.
+ // Write the container directly so icon generation also works without iconutil.
+ const representations=[['icp4',16],['icp5',32],['icp6',64],['ic07',128],['ic08',256],['ic09',512],['ic10',1024],['ic11',32],['ic12',64],['ic13',256],['ic14',512]];
+ const chunks=[];
+ for(const [type,size] of representations){const data=await png(size),header=Buffer.alloc(8);header.write(type,0,4,'ascii');header.writeUInt32BE(data.length+8,4);chunks.push(header,data);}
+ const header=Buffer.alloc(8);header.write('icns');header.writeUInt32BE(8+chunks.reduce((sum,chunk)=>sum+chunk.length,0),4);
+ fs.writeFileSync(path.join(root,'assets/ailo.icns'),Buffer.concat([header,...chunks]));
+}
+build().catch(error=>{console.error(error);process.exitCode=1;});

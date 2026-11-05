@@ -24,8 +24,8 @@ test('agent searches in ordinary chat, appends real sources, no project or plan 
  const {api,directory}=await setup(t,async()=>response());await api.save({provider:'baidu',key:'secret-key',limit:100});let i=0;const actions=[{action:'route',kind:'chat'},{action:'web_search',query:'天气'},{action:'reply',text:'已查到资料。'}];
  const result=await runAgent({base:directory,task:{id:'chat',messages:[{role:'user',content:'查天气'}]},model:{contextWindow:32768},webSearch:api,signal:new AbortController().signal,ask:async()=>({content:JSON.stringify(actions[i++])})});assert.match(result.content,/https:\/\/example.com\/weather/);assert.equal(result.agentRun.mode,'chat');assert.equal(result.agentRun.artifacts.length,0);
 });
-test('disabled search stops once without retries',async t=>{
- const {directory}=await setup(t,()=>assert.fail('not enabled'));let i=0;const result=await runAgent({base:directory,task:{id:'disabled',messages:[{role:'user',content:'查天气'}]},model:{contextWindow:32768},signal:new AbortController().signal,ask:async()=>({content:JSON.stringify(i++?{action:'web_search',query:'天气'}:{action:'route',kind:'chat'})})});assert.equal(i,2);assert.match(result.content,/未开启/);
+test('disabled search is attempted once, then explains the required user enablement without calling the provider',async t=>{
+ const {directory}=await setup(t,()=>assert.fail('not enabled'));let i=0;const actions=[{action:'route',kind:'chat'},{action:'web_search',query:'天气'},{action:'reply',text:'当前对话未开启联网搜索，请在应用连接中开启，或提供需要整理的资料。'}];const result=await runAgent({base:directory,task:{id:'disabled',messages:[{role:'user',content:'查天气'}]},model:{contextWindow:32768},signal:new AbortController().signal,ask:async()=>{assert.ok(i<3,'不得重复尝试未启用的搜索');return {content:JSON.stringify(actions[i++])};}});assert.equal(i,3);assert.match(result.content,/未开启/);
 });
 test('switching providers preserves each provider quota',async t=>{
  const {api}=await setup(t,async url=>url.includes('tavily')?Response.json({results:[]}):response());

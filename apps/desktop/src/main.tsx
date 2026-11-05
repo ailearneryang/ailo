@@ -1,9 +1,14 @@
+import {TaskNotificationToast} from './task-notification-toast';
+import {isDevelopment} from '../artifact-presentation.cjs';
+import {DeliveryReplyText} from './delivery-reply-text';
+import {queuedDispatch,nextQueued,queueBlockReason,deliverQueued,queuedAwaitingReceipt} from './input-dispatch';
 import {validateLoadedWorkspace} from "../workspace-load.mjs";
 import {reminderResume} from '../scheduled-message.cjs';
 import {legacyFeishuRecovery} from '../legacy-protocol-recovery.cjs';
 import {networkRecovery} from '../network-recovery.cjs';
 import {taskPresentation,mergeSessionSnapshot,syncLiveTaskRuns,type LiveSession} from './task-presentation';
 import {attachChatScroll} from './chat-scroll';
+import {ChatScrollButton} from './chat-scroll-button';
 import {ConversationActions,ConversationActionDialog,ArchivedConversations} from './conversation-management';
 import {FileLibrary} from './file-library';
 import {NotificationCenter,NotificationButton} from './notification-center';
@@ -28,6 +33,7 @@ import { canSendMaterial, hasMessageContent } from "../attachments.mjs";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
+import './execution-icon.css';
 import {KnowledgeCenter,KnowledgePicker} from './knowledge';
 import { Schedules } from "./schedules";
 import { MyAilo } from "./my-ailo";
@@ -45,19 +51,19 @@ import { ExtensionCenter } from "./extensions";
 import { ComposerInput } from "./composer-input";
 import { ComposerAdd } from "./composer-add";
 import { ClarificationCard } from "./clarification-card";
-import { formatAnswers, visibleReply } from "../clarification.mjs";
+import { formatAnswers } from "../clarification.mjs";
 import type { ClarificationAnswer } from "./types";
 import { Icon } from "./icon";
 import { ContextMeter } from "./context-meter";
 import { serializeMessage } from "../context.mjs";
-import {DeliveryResult} from './delivery-result';
+import {DeliveryResult,showStandaloneResult} from './delivery-result';
 import {deliveryForMessage} from './delivery-artifacts';
 import { ArtifactPanel } from "./artifact-panel";
 import {ReplyDetails} from './reply-details';
 import { TaskActivity } from "./task-activity";
 import {progressAnchor} from "./progress-placement";
-import { TaskProgress, ExecutionHistory } from "./task-progress";
-import { Pet } from "./pet";
+import { TaskProgress, ExecutionHistory, InputCoverageStatus } from "./task-progress";
+import { Pet, BrandMark } from "./pet";
 import { workspacePetState, taskPetState, unreadAttentionTasks, petNotificationToken } from "./pet-state";
 import {
   demoModel,
@@ -132,18 +138,25 @@ function App() {
   const finishedRequests=useRef(new Set<string>());
   const [sessions,setSessions]=useState<Record<string,LiveSession>>({});
   const syncSessions=()=>setSessions({...requests.current});
-  const streamText=active?sessions[active]?.content||'':'';
+  const contentSync=useRef<number|undefined>(undefined);
   const chatStatus=active?sessions[active]?.status||'':'';
   const drafts=useRef<Record<string,{input:string;materials:Material[]}>>({});
   const [steeringSending,setSteeringSending]=useState(false);
   const steeringRef=useRef(false);
-  type QueuedInput={id:string;taskId:string;content:string;materials?:Material[]};
+  type QueuedInput={id:string;taskId:string;content:string;materials?:Material[];error?:string};
   const [queued,setQueued]=useState<QueuedInput[]>(()=>{try{return JSON.parse(localStorage.getItem('ailo-message-queue')||'[]');}catch{return [];}});
+  const visibleQueued=queuedAwaitingReceipt(queued,data.tasks);
   const [queueEditing,setQueueEditing]=useState<string>();
   const [queueDraft,setQueueDraft]=useState('');
   const [queueSending,setQueueSending]=useState<string>();
   const queueSendingRef=useRef(false);
-  const queueAutoPaused=useRef(false);
+  const queueSendingTask=useRef<string|null>(null);
+  const respondingTasks=useRef(new Set<string>());
+  const [queuePaused,setQueuePaused]=useState<string[]>(()=>{try{return JSON.parse(localStorage.getItem('ailo-message-queue-paused')||'[]');}catch{return [];}});
+  const queuePausedRef=useRef(queuePaused);
+  useEffect(()=>{queuePausedRef.current=queuePaused;},[queuePaused]);
+  const [queueReconciled,setQueueReconciled]=useState(false);
+  useEffect(()=>{localStorage.setItem('ailo-message-queue-paused',JSON.stringify(queuePaused));},[queuePaused]);
   useEffect(()=>{localStorage.setItem('ailo-message-queue',JSON.stringify(queued));},[queued]);
   const pending=active && sessions[active]?active:null;
   const requestRef={current:active?requests.current[active]?.id||null:null};
@@ -156,7 +169,14 @@ function App() {
     if(status.failure)setData(previous=>({...previous,tasks:previous.tasks.map(t=>t.id===taskId?{...t,lastErrorCode:status.failure!.code,modelRequestDiagnostics:status.failure!.requestDiagnostics}:t)}));
     if(status.finished){delete requests.current[taskId];syncSessions();void window.ailo.read().then(setData);return;}
     if (status.run) setData(previous => ({...previous,tasks:previous.tasks.map(t => t.id === taskId ? {...t,agentRun:status.run,...(status.run?.conversationTitle?{title:status.run.conversationTitle,titleGenerated:true}:{})} : t)}));
-    requests.current[taskId]={...session,attached:true,...(status.run?{run:status.run,phase:'running' as const}:{}),...(status.message?{status:status.message}:{}),...(typeof status.content==='string'?{content:status.content,status:'正在生成回复…'}:{})};
+    requests.current[taskId]={...session,attached:true,...(status.activity?{activity:status.activity}:{}),...(status.run?{run:status.run,phase:'running' as const}:{}),...(status.message?{status:status.message}:{}),...(typeof status.content==='string'?{content:status.content,status:'正在生成回复…'}:{})};
+    // Streamed text arrives per provider delta; coalesce paints so a long reply
+    // does not re-render the conversation for every few characters.
+    if(typeof status.content==='string'&&!status.run&&!status.activity&&!status.message){
+      if(contentSync.current===undefined)contentSync.current=window.setTimeout(()=>{contentSync.current=undefined;syncSessions();},80);
+      return;
+    }
+    if(contentSync.current!==undefined){clearTimeout(contentSync.current);contentSync.current=undefined;}
     syncSessions();
   }), []);
   useEffect(()=>{
@@ -171,7 +191,7 @@ function App() {
         if(previousIds.size!==nextIds.size||[...nextIds].some(id=>!previousIds.has(id))){
           const state=await window.ailo.read();if(!cancelled)setData({...state,tasks:syncLiveTaskRuns(state.tasks,requests.current)});
         }else setData(state=>({...state,tasks:syncLiveTaskRuns(state.tasks,requests.current)}));
-        syncSessions();
+        syncSessions();setQueueReconciled(true);
       }catch{/* IPC may be closing; retry on next tick. */}finally{polling=false;}
     }
     void reconcile();const timer=setInterval(()=>void reconcile(),1000);
@@ -238,7 +258,7 @@ function App() {
   }
   const isConversation = view === "chat" || view === "assistant";
   const task = data.tasks.find((t) => t.id === active);
-  useEffect(()=>window.ailo.onNavigateTask(id=>{void window.ailo.read().then(state=>{setData(state);if(state.tasks.some(t=>t.id===id))select(id);});}),[active,input,materials]);
+  useEffect(()=>window.ailo.onNavigateTask(id=>{void window.ailo.read().then(state=>{setData(state);if(state.tasks.some(t=>t.id===id))select(id,state);});}),[active,input,materials]);
   async function operateConversation(id:string,action:ConversationOperation){
     if(action==='export'){try{if(await window.ailo.exportConversation(id))setNotice('对话已导出为 Markdown');}catch(e){setError((e as Error).message);}return;}
     if(action==='move'&&queued.some(m=>m.taskId===id)){setError('请先移除该对话的待发送消息，再移动项目');return;}
@@ -302,7 +322,7 @@ function App() {
       setSaving(false);
     }
   }
-  function select(id: string | null) {
+  function select(id: string | null, workspace:Workspace=data) {
     setArtifactSelection(undefined);
     if(temporaryArtifactPanel)setRightPanel(null);
     setTemporaryArtifactPanel(false);
@@ -313,19 +333,19 @@ function App() {
     const draft=drafts.current[id||'new']||{input:'',materials:[]};
     setActive(id);
     setNotice("");
-    setExtensionIds(id ? data.tasks.find(t => t.id === id)?.extensionIds || [] : data.projects.find(p => p.id === projectId)?.extensionIds || []);
+    setExtensionIds(id ? workspace.tasks.find(t => t.id === id)?.extensionIds || [] : workspace.projects.find(p => p.id === projectId)?.extensionIds || []);
     if (!id) {setPermissionChoices(previous=>{const next={...previous};delete next.new;return next;});setMemoryChoices(previous=>{const next={...previous};delete next.new;return next;});setNewKnowledgeIds([]);setProjectId("");setExtensionIds([]);setRightPanel(null);}
     if (id) {
-      const selected = data.tasks.find((t) => t.id === id);
+      const selected = workspace.tasks.find((t) => t.id === id);
       setProjectId(selected?.projectId || "");
-      setModelId(selected?.modelId || data.defaultModelId);
+      setModelId(selected?.modelId || workspace.defaultModelId);
     }
     setError("");
     setInput(draft.input);
     setMaterials(draft.materials);
     setView(id === ASSISTANT_ID ? "assistant" : "chat");
     if (id === null) {
-      setModelId(data.defaultModelId);
+      setModelId(workspace.defaultModelId);
     }
   }
   useEffect(()=>{if(view!=="models")setOpenAutoSettings(false);},[view]);
@@ -335,27 +355,37 @@ function App() {
     setView("models");
     return false;
   }
-  async function respond(nextTask: Task, clearDraft: boolean) {
-    if (requests.current[nextTask.id] || saving || importing || !modelReady()) return;
+  async function respond(nextTask: Task, clearDraft: boolean, fromQueue=false) {
+    const responseModel=fromQueue?models.find(m=>m.id===(nextTask.modelId||data.defaultModelId)):currentModel;
+    if (requests.current[nextTask.id] || respondingTasks.current.has(nextTask.id) || saving || importing) return;
+    if(!responseModel||responseModel.id==='demo'){if(fromQueue)throw Error('请先为任务配置可用模型，消息保留在队列中。');modelReady();return;}
+    const responseReasoning=fromQueue?nextTask.reasoningEffort||'medium':reasoningEffort;
+    const responseExpertIds=fromQueue?nextTask.extensionIds||[]:selectedIds;
+    const responseEffectiveIds=fromQueue?nextTask.extensionIds||[]:effectiveIds;
+    const responseFeishu=fromQueue?nextTask.feishuEnabled:useFeishu;
+    const responseAMap=fromQueue?nextTask.amapEnabled:useAMap;
+    const responseMCP=fromQueue?nextTask.mcpConnectionIds||[]:mcpConnectionIds;
+    const responseSearch=fromQueue?nextTask.searchEnabled:useSearch;
     const requestId = crypto.randomUUID();
+    respondingTasks.current.add(nextTask.id);
     requests.current[nextTask.id]={id:requestId,taskId:nextTask.id,inputId:[...(nextTask.messages||[])].reverse().find(m=>m.role==='user')?.id,startedAt:new Date().toISOString(),phase:'preparing',content:'',status:'正在检查上下文…'};syncSessions();
-    setActive(nextTask.id);
+    if(!fromQueue)setActive(nextTask.id);
     setError("");
     const messages = messagesFor(nextTask);
     const updated = {
       ...nextTask,
       messages,
       knowledgeIds:nextTask.knowledgeIds||(data.tasks.some(t=>t.id===nextTask.id)?[]:newKnowledgeIds),
-      modelId: currentModel.id,
-      modelName: currentModel.name,
-      reasoningEffort,
-      extensionIds: selectedIds,
-      feishuEnabled: useFeishu,
-      amapEnabled: useAMap,
-      mcpConnectionIds,
-      permissionMode:permissionChoices[connectionKey]??nextTask.permissionMode,
-      memoryEnabled:memoryChoices[connectionKey]??nextTask.memoryEnabled??true,
-      searchEnabled: useSearch,
+      modelId: responseModel.id,
+      modelName: responseModel.name,
+      reasoningEffort:responseReasoning,
+      extensionIds: responseExpertIds,
+      feishuEnabled: responseFeishu,
+      amapEnabled: responseAMap,
+      mcpConnectionIds:responseMCP,
+      permissionMode:fromQueue?nextTask.permissionMode:permissionChoices[connectionKey]??nextTask.permissionMode,
+      memoryEnabled:fromQueue?nextTask.memoryEnabled??true:memoryChoices[connectionKey]??nextTask.memoryEnabled??true,
+      searchEnabled: responseSearch,
       lastError: undefined,
       partialReply: undefined,
     };
@@ -364,7 +394,7 @@ function App() {
       const saved=await window.ailo.patchTask(updated.id,updated);
       taskSaved = true;
       setData(previous=>({...previous,tasks:previous.tasks.some(t=>t.id===saved.id)?previous.tasks.map(t=>t.id===saved.id?{...t,...saved}:t):[saved,...previous.tasks]}));
-      setTurnExtensions(previous=>({...previous,[connectionKey]:[]}));
+      if(!fromQueue)setTurnExtensions(previous=>({...previous,[connectionKey]:[]}));
       if (clearDraft) {
         setInput("");
         setMaterials([]);
@@ -375,13 +405,13 @@ function App() {
       const result = await window.ailo.complete({
         id: requestId,
         knowledgeIds:nextTask.knowledgeIds||(data.tasks.some(t=>t.id===nextTask.id)?[]:newKnowledgeIds),
-      modelId: currentModel.id,
-        extensionIds: effectiveIds,
-        reasoningEffort:reasoningSupported?reasoningEffort:undefined,
-      feishuEnabled: useFeishu,
-      amapEnabled: useAMap,
-      mcpConnectionIds,
-      searchEnabled: useSearch,
+      modelId: responseModel.id,
+        extensionIds: responseEffectiveIds,
+        reasoningEffort:supportsReasoning(responseModel)?responseReasoning:undefined,
+      feishuEnabled: responseFeishu,
+      amapEnabled: responseAMap,
+      mcpConnectionIds:responseMCP,
+      searchEnabled: responseSearch,
         taskId: updated.id,
         contextCheckpoint: nextTask.contextCheckpoint,
         messages: messages.map(m => ({role:m.role,content:m.content,materials:m.materials})),
@@ -410,7 +440,7 @@ function App() {
         setError(message);
       }
     } finally {
-      finishedRequests.current.add(requestId);if(requests.current[nextTask.id]?.id===requestId)delete requests.current[nextTask.id];syncSessions();
+      respondingTasks.current.delete(nextTask.id);finishedRequests.current.add(requestId);if(requests.current[nextTask.id]?.id===requestId)delete requests.current[nextTask.id];syncSessions();
     }
   }
   async function resendEditedMessage() {
@@ -428,11 +458,12 @@ function App() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!ready || composerBusy) return;
+    if(task){queuePausedRef.current=queuePausedRef.current.filter(id=>id!==task.id);setQueuePaused(queuePausedRef.current);}
     if(pending&&task?.temporary){setError('请先结束本次回复，再发送下一条临时消息');return;}
-    if(pending && task?.id===pending && requestRef.current) {
+    if(task&&(requests.current[task.id]||respondingTasks.current.has(task.id)||queueSendingTask.current===task.id)) {
       if(!hasMessageContent(input,materials)||input.trim().length>20000)return;
       setQueued(previous=>[...previous,{id:crypto.randomUUID(),taskId:task.id,content:input.trim(),materials}]);
-      queueAutoPaused.current=false;setInput('');setMaterials([]);setNotice('已加入待发送队列；带附件的消息将在本轮结束后发送。');
+      setInput('');setMaterials([]);setNotice('正在发送新要求，将优先处理；已发出的操作会先核对结果。');
       return;
     }
     if (
@@ -481,43 +512,44 @@ function App() {
     };
     await respond({ ...task, messages: [...messagesFor(task), message], materials: [...task.materials, ...attached] }, false);
   }
-  async function executeQueued(item:QueuedInput) {
-    if(queueSendingRef.current||steeringRef.current||saving||importing||!ready)return;
-    if(pending && (pending!==item.taskId||!requestRef.current))return;
-    if(queueEditing===item.id)return;
-    if(pending&&item.materials?.length){setNotice('带附件的消息将在当前回复结束后发送。');return;}
-    queueSendingRef.current=true;setQueueSending(item.id);queueAutoPaused.current=false;
+  async function executeQueued(item:QueuedInput,automatic=false) {
+    const live=requests.current[item.taskId];
+    if(!live&&respondingTasks.current.has(item.taskId))return;
+    const decision=queuedDispatch({requested:!automatic,ready,composerBusy:saving||importing,sending:queueSendingRef.current||steeringRef.current,paused:automatic&&queuePaused.includes(item.taskId),editing:queueEditing===item.id,taskId:item.taskId,pendingTaskId:live?item.taskId:null,requestId:live?.id,phase:live?.phase,blocked:automatic&&!!queueBlockReason(data.tasks.find(t=>t.id===item.taskId)||{id:item.taskId})});
+    if(decision==='wait')return;
+    queueSendingRef.current=true;queueSendingTask.current=item.taskId;setQueueSending(item.id);
+    if(!automatic){queuePausedRef.current=queuePausedRef.current.filter(id=>id!==item.taskId);setQueuePaused(queuePausedRef.current);setQueued(v=>v.map(m=>m.id===item.id?{...m,error:undefined}:m));}
     try {
-      if(pending && requestRef.current) {
+      if(live) {
         steeringRef.current=true;setSteeringSending(true);
-        const message=await window.ailo.steer({id:requestRef.current,taskId:item.taskId,content:item.content});
-        setData(previous=>({...previous,tasks:previous.tasks.map(t=>t.id===item.taskId?{...t,messages:messagesFor(t).some(m=>m.id===message.id)?messagesFor(t):[...messagesFor(t),message]}:t)}));
+        const message=await window.ailo.steer({id:live!.id,taskId:item.taskId,content:item.content,materials:item.materials,messageId:item.id});
+        setData(previous=>({...previous,tasks:previous.tasks.map(t=>t.id===item.taskId?{...t,materials:[...t.materials,...(message.materials||[]).filter(m=>!t.materials.some(v=>m.sourceId?v.sourceId===m.sourceId:v.name===m.name&&v.text===m.text))],messages:messagesFor(t).some(m=>m.id===message.id)?messagesFor(t):[...messagesFor(t),message]}:t)}));
         setQueued(previous=>previous.filter(m=>m.id!==item.id));
-        setNotice('补充指令已发送，将在下一次决策前处理。');
+        setNotice(message.materials?.length?'新要求和附件已发送，正在优先处理。':'新要求已发送，正在优先处理。');
       } else {
         const latest=await window.ailo.read();
+        setData({...latest,tasks:syncLiveTaskRuns(latest.tasks,requests.current)});
         const target=latest.tasks.find(t=>t.id===item.taskId);
         if(!target)throw Error('原任务不存在，待发送消息已保留。');
-        if(!modelReady())return;
-        // Stable message id makes recovery safe if the renderer was closed after saving.
-        const messages=messagesFor(target);
-        if(!messages.some(m=>m.id===item.id)) {
-          await respond({...target,materials:[...target.materials,...(item.materials||[])],messages:[...messages,{id:item.id,role:'user',content:item.content,materials:item.materials}]},false);
-        }
-        const saved=await window.ailo.read();
-        if(saved.tasks.find(t=>t.id===item.taskId)?.messages?.some(m=>m.id===item.id))setQueued(previous=>previous.filter(m=>m.id!==item.id));
-        else queueAutoPaused.current=true;
+        if(automatic&&queueBlockReason(target,queuePausedRef.current.includes(item.taskId)))return;
+        await deliverQueued(item,async()=>{const state=await window.ailo.read();return state.tasks.find(t=>t.id===item.taskId);},async(target,append)=>{
+          if(automatic&&queueBlockReason(target,queuePausedRef.current.includes(item.taskId)))throw Error('队列等待：'+queueBlockReason(target,queuePausedRef.current.includes(item.taskId)));
+          await respond(append?{...target,materials:[...target.materials,...(item.materials||[])],messages:[...messagesFor(target),{id:item.id,role:'user',content:item.content,materials:item.materials}]}:target,false,true);
+        });
+        setQueued(previous=>previous.filter(m=>m.id!==item.id));
       }
-    }catch(e){queueAutoPaused.current=true;setError(String(e).replace(/^.*Error: /,''));}
-    finally{steeringRef.current=false;setSteeringSending(false);queueSendingRef.current=false;setQueueSending(undefined);}
+    }catch(e){const message=String(e).replace(/^.*Error: /,'');if(live&&/^当前任务已停止/.test(message)){const current=requests.current[item.taskId];if(current?.id===live.id){requests.current[item.taskId]={...current,phase:'settling'};syncSessions();}return;}setError(message);setQueued(v=>v.map(m=>m.id===item.id?{...m,error:message}:m));}
+    finally{steeringRef.current=false;setSteeringSending(false);queueSendingRef.current=false;queueSendingTask.current=null;setQueueSending(undefined);}
   }
   useEffect(()=>{
-    if(!ready||busy||requestRef.current||queueSendingRef.current||queueAutoPaused.current||queueEditing||!task||task.lastError||task.agentRun?.status==='waiting_user'||['blocked','waiting_permission'].includes(task.agentRun?.status||''))return;
-    const next=queued.find(m=>m.taskId===task.id);
-    if(next)void executeQueued(next);
-  },[pending,saving,importing,ready,queued,active,queueSending,queueEditing]);
+    if(!ready||!queueReconciled||saving||importing||queueSendingRef.current||steeringRef.current)return;
+    const liveItem=queued.find((item,index)=>!item.error&&queueEditing!==item.id&&!queuePaused.includes(item.taskId)&&requests.current[item.taskId]?.phase==='running'&&queued.findIndex(m=>m.taskId===item.taskId)===index);
+    if(liveItem){void executeQueued(liveItem,true);return;}
+    const item=nextQueued(queued,data.tasks,[...Object.keys(requests.current),...respondingTasks.current],queuePaused,queueEditing);
+    if(item)void executeQueued(item,true);
+  },[ready,queueReconciled,queued,data.tasks,sessions,saving,importing,queueEditing,queueSending,queuePaused]);
   async function stop() {
-    queueAutoPaused.current=true;
+    if(active){queuePausedRef.current=[...new Set([...queuePausedRef.current,active])];setQueuePaused(queuePausedRef.current);}
     cancelledRef.current = requestRef.current;
     if (requestRef.current)
       try {
@@ -559,7 +591,8 @@ function App() {
   const progressAt=progressAnchor(task?.agentRun,task?messagesFor(task):[]);
   const latestUserMessageId=task?messagesFor(task).filter(m=>m.role==='user').at(-1)?.id:undefined;
   const currentState=task?taskPresentation(task,sessions[task.id]):undefined;
-  const currentProgress=task && (task.agentRun && <TaskProgress task={task} historical={currentState?.historical} currentStatus={currentState?.progressStatus} onOpenArtifacts={()=>{setTemporaryArtifactPanel(false);setArtifactSelection(undefined);setRightPanel('artifacts');}} busy={!ready || busy || messageEdit?.taskId===task.id} onContinue={() => {
+  const processOwnsProgress=!!task&&pending===task.id&&!currentState?.historical;
+  const currentProgress=task && (task.agentRun && <TaskProgress task={task} showLoaded={pending!==task.id} historical={currentState?.historical} currentStatus={currentState?.progressStatus} onOpenArtifacts={()=>{setTemporaryArtifactPanel(false);setArtifactSelection(undefined);setRightPanel('artifacts');}} busy={!ready || busy || messageEdit?.taskId===task.id} onContinue={() => {
                   if(task.agentRun?.taskContinuation?.taskOpen&&!networkRecovery(task.agentRun)&&!legacyFeishuRecovery(task.agentRun)&&!reminderResume(task,task.agentRun)){setInput('继续原任务。已处理的条件或补充信息：');setNotice(task.agentRun.taskContinuation.question);return;}
                   if (messagesFor(task).at(-1)?.role === 'user') { void respond(task,false); return; }
                   const message: Message = {id:crypto.randomUUID(),role:"user",content:"请从已保存的任务状态继续，先检查已有成果，不重复执行已完成步骤。"};
@@ -712,7 +745,7 @@ function App() {
             ) : view === "about" ? (
               <div className="about-page">
                 <div className="about-intro">
-                  <Pet interactive />
+                  <BrandMark size={80}/>
                   <div><h1>关于 Ailo</h1><p className="about-version">macOS 预览版 · {__AILO_VERSION__}</p></div>
                 </div>
                 <p className="about-description">你的个人 AI 助手。从一个问题、一份材料，开始推进手头的事。</p>
@@ -742,6 +775,7 @@ function App() {
             ) : (
               <div className="conversation-stage">
               <div className="thread" key={task.id} ref={attachChatScroll}>
+                <ChatScrollButton/>
                 <ConversationNavigation messages={messagesFor(task)} conversationId={task.id}/>
                 <div className="thread-content">
                 <div className="day">
@@ -750,7 +784,7 @@ function App() {
                     "未归类"}
                 </div>
                 {task.agentRun?.history?.filter(r=>!messagesFor(task).some(m=>m.id===r.afterMessageId)).map((r,i)=><ExecutionHistory key={r.executionId||i} task={task} run={r} onOpenArtifacts={()=>{setTemporaryArtifactPanel(false);setArtifactSelection(undefined);setRightPanel('artifacts');}}/>)}
-                {!progressAt && currentProgress && <details className="completed-execution"><summary>此前任务进度</summary>{currentProgress}</details>}
+                {!progressAt && !processOwnsProgress && currentProgress && <details className="completed-execution"><summary>此前任务进度</summary>{currentProgress}</details>}
                 {task.archived&&<p className="experience-note">此对话已归档。<button onClick={()=>void operateConversation(task.id,'restore')}>恢复到历史列表</button></p>}
                 {task.branchOf&&<p className="experience-note">分支自：<button onClick={()=>select(task.branchOf!.id)}>{task.branchOf.title}</button>{task.responseOnly?' · 本轮只生成回答，不执行工具':''}</p>}
                 {messagesFor(task).map((message,index) => (
@@ -767,7 +801,7 @@ function App() {
                         <small>{message.modelName}</small>
                       </div>
                     )}
-                    {message.role==="assistant"&&<ReplyDetails message={message}/>}
+                    {message.role==="assistant"&&<ReplyDetails message={message}>{progressAt===message.id&&!processOwnsProgress?currentProgress:null}</ReplyDetails>}
                     <div
                       className={
                         message.role === "user" ? `bubble${message.clarificationReplyTo ? ' clarification-reply' : ''}` : "assistant-text"
@@ -777,19 +811,20 @@ function App() {
                         <textarea autoFocus aria-label="编辑最近一条消息" value={messageEdit.content} disabled={busy} onChange={e=>setMessageEdit({...messageEdit,content:e.target.value})}/>
                         <p className="message-edit-note">重新发送后，将按新内容重新回复。原回复会备份，已生成的项目文件会保留。</p>
                         <div><button className="primary" disabled={busy||!messageEdit.content.trim()} onClick={()=>void resendEditedMessage()}>发送</button><button disabled={busy} onClick={()=>setMessageEdit(null)}>取消</button></div>
-                      </div> : message.role === "assistant" ? <AssistantText content={message.content}/> : message.content}
+                      </div> : message.role === "assistant" ? <DeliveryReplyText content={message.content} delivery={deliveryForMessage(task,messagesFor(task),message.id)} currentRun={task.agentRun}/> : message.content}
                       {!!message.materials?.length && <div className="message-files" aria-label="消息附件">
                         {message.materials.map((material,i)=><span className="message-file" key={i} title={material.name}><Icon name="file"/><span>{material.name}</span></span>)}
                       </div>}
                     </div>
+                    {message.role==='user'&&<InputCoverageStatus run={task.agentRun} messageId={message.id}/>}
                     {message.role==='assistant'&&(()=>{const delivery=deliveryForMessage(task,messagesFor(task),message.id);return delivery?<DeliveryResult key={task.id+':'+(delivery.executionId||message.id)} task={task} run={delivery} onOpen={path=>{setTemporaryArtifactPanel(!!path);setArtifactSelection(path?{path}:undefined);setRightPanel('artifacts');}}/>:null;})()}
-                    {messageEdit?.taskId!==task.id&&<MessageActions onBranch={!task.temporary?()=>void forkConversation(message.id):undefined} onRegenerate={!task.temporary&&message.role==='assistant'?()=>void forkConversation(message.id,true):undefined} message={message} createdAt={message.createdAt||(index===0&&message.role==='user'?task.created:undefined)} disabled={busy}
+                    {messageEdit?.taskId!==task.id&&<MessageActions onFeedback={message.role==='assistant'?async rating=>{const result=await window.ailo.messageFeedback({taskId:task.id,messageId:message.id,rating});setData(d=>({...d,tasks:d.tasks.map(t=>t.id===task.id?{...t,messages:messagesFor(t).map(m=>m.id===result.messageId?{...m,feedback:result.feedback}:m)}:t)}));}:undefined} onBranch={!task.temporary?()=>void forkConversation(message.id):undefined} onRegenerate={!task.temporary&&message.role==='assistant'?()=>void forkConversation(message.id,true):undefined} message={message} createdAt={message.createdAt||(index===0&&message.role==='user'?task.created:undefined)} disabled={busy}
                       onEdit={message.role==='user'&&latestUserMessageId===message.id&&!pending?()=>setMessageEdit({taskId:task.id,messageId:message.id,content:message.content}):undefined}/>}
                     {message.role==='assistant'&&index===messagesFor(task).length-1&&!busy&&<CompanionResultAction task={task}/>}
                     {view === "assistant" && data.tasks.filter(t=>(t.parentAssistantId === ASSISTANT_ID && t.parentMessageId === message.id) || task.assistantReferences?.[message.id]?.includes(t.id)).map(linked=><button key={linked.id} className="assistant-linked-task" onClick={()=>select(linked.id)}><Icon name="folder"/><span><strong>{linked.title}</strong><small>{sessions[linked.id] ? sessions[linked.id].status : linked.assistantPaused ? "已暂停" : linked.lastError ? "需要处理" : linked.agentRun?.status === "completed" ? "成果已准备好" : linked.messages?.at(-1)?.clarification ? "需要补充信息" : linked.messages?.at(-1)?.role === "assistant" ? "已有结果" : "查看任务进度"}{linked.agentRun?.artifacts.length ? ` · ${linked.agentRun.artifacts.length} 项成果` : ""}</small></span><span>查看任务 ↗</span></button>)}
                     {view === "assistant" && task.assistantScheduleLinks?.filter(link=>link.messageId===message.id).map(link=><button key={link.id} className="assistant-linked-task" onClick={()=>setView("schedules")}><Icon name="clock"/><span><strong>{link.title}</strong><small>已保存到定时任务</small></span><span>查看安排 ↗</span></button>)}
                     {messagesFor(task).at(-1)?.role==='assistant'&&task.agentRun?.memoryUsed?.inputId===latestUserMessageId&&message.id===[...messagesFor(task)].reverse().find(m=>m.role==='assistant')?.id&&task.agentRun?.memoryUsed?.ownerId===(user?.id||'local')&&!!task.agentRun.memoryUsed.entries.length&&<details className="memory-used-receipt"><summary>参考了 {task.agentRun.memoryUsed.entries.length} 条记忆</summary><ul>{task.agentRun.memoryUsed.entries.map(entry=><li key={entry.id}>{entry.topic} · {entry.scope==='personal'?'个人':'当前项目'}</li>)}</ul><button onClick={()=>setView('memory')}>查看与管理记忆 ↗</button></details>}
-                    {progressAt===message.id && currentProgress}
+                    {progressAt===message.id && !processOwnsProgress && !(message.role==="assistant"&&message.replyDetails&&Number.isFinite(message.replyDetails.durationMs)&&message.replyDetails.durationMs>=0) && currentProgress}
                     {message.role === "assistant" && message.clarification && <ClarificationCard
                       messageId={message.id} value={message.clarification} disabled={busy}
                       active={messagesFor(task).at(-1)?.id === message.id}
@@ -798,16 +833,10 @@ function App() {
                     {task.agentRun?.history?.filter(r=>r.afterMessageId===message.id).map((r,i)=><ExecutionHistory key={r.executionId||i} task={task} run={r} onOpenArtifacts={()=>{setTemporaryArtifactPanel(false);setArtifactSelection(undefined);setRightPanel('artifacts');}}/>)}
                   </div>
                 ))}
-                {task && pending===task.id && <TaskActivity task={task} status={chatStatus} session={sessions[task.id]}/>}
-                {pending === task.id ? (visibleReply(streamText) && (
-                  <div className="reply">
-                    <div className="byline">
-                      <Pet size="mini" state={taskPetState(task, chatStatus)} />
-                      Ailo
-                    </div>
-                    <div className="assistant-text"><AssistantText content={visibleReply(streamText)}/></div>
-                  </div>
-                )) : (
+                {task&&showStandaloneResult(task,!!sessions[task.id])&&<DeliveryResult key={task.id+':retained-results'} task={task} run={task.agentRun!} onOpen={path=>{setTemporaryArtifactPanel(!!path);setArtifactSelection(path?{path}:undefined);setRightPanel('artifacts');}}/>}
+                {task&&sessions[task.id]?.run?.currentIntent==='task'&&(()=>{const liveRun=sessions[task.id].run!;return liveRun.resultPreview||liveRun.artifacts.some(a=>!isDevelopment(a))?<DeliveryResult key={task.id+':live-results'} task={{...task,agentRun:liveRun}} run={liveRun} live onOpen={path=>{setTemporaryArtifactPanel(!!path);setArtifactSelection(path?{path}:undefined);setRightPanel('artifacts');}}/>:null;})()}
+                {task && pending===task.id && <TaskActivity task={task} status={chatStatus} session={sessions[task.id]}>{processOwnsProgress?currentProgress:null}</TaskActivity>}
+                {pending !== task.id && (
                   messagesFor(task).at(-1)?.role === "user" &&
                   !/^已停止(?:回复|执行)(?:[。，]|$)/.test(task.lastError || "") && (
                     <div className="chat-retry">
@@ -840,12 +869,15 @@ function App() {
             )}
             {isConversation && (
               <div className={"compose-area " + (task ? "chat-compose" : "")}>
-                {task && queued.some(m=>m.taskId===task.id) && <div className="message-queue" aria-label="待发送消息">
-                  <p><Icon name="queue"/>待发送 · {queued.filter(m=>m.taskId===task.id).length}</p>
-                  {queued.filter(m=>m.taskId===task.id).map(item=><div className="queued-message" key={item.id}>
-                    {queueEditing===item.id?<><textarea aria-label="编辑待发送消息" value={queueDraft} maxLength={20000} onChange={e=>setQueueDraft(e.target.value)}/><button type="button" title="保存" aria-label="保存" disabled={!hasMessageContent(queueDraft,item.materials)} onClick={()=>{setQueued(previous=>previous.map(m=>m.id===item.id?{...m,content:queueDraft.trim()}:m));setQueueEditing(undefined);}}><Icon name="check"/></button><button type="button" title="取消" aria-label="取消" onClick={()=>setQueueEditing(undefined)}><Icon name="close"/></button></>:<><i className="queued-state" title={queueSending===item.id?'正在处理':'队列中'} aria-label={queueSending===item.id?'正在处理':'队列中'}><Icon name="clock"/></i><span title={item.content||item.materials?.map(m=>m.name).join("、")}>{item.content||item.materials?.map(m=>m.name).join("、")}</span><div className="queued-actions"><button type="button" title="立即执行" aria-label="立即执行" disabled={!!queueSending||steeringSending} onClick={()=>void executeQueued(item)}><Icon name="play"/></button><button type="button" title="编辑" aria-label="编辑" disabled={queueSending===item.id} onClick={()=>{setQueueEditing(item.id);setQueueDraft(item.content);}}><Icon name="edit"/></button><button type="button" title="删除" aria-label="删除" disabled={queueSending===item.id} onClick={()=>setQueued(previous=>previous.filter(m=>m.id!==item.id))}><Icon name="trash"/></button></div></>}
+                {task && visibleQueued.some(m=>m.taskId===task.id) && <div className="message-queue" key={task.id} aria-label="待发送消息">
+                  <div className="message-queue-items">
+                  {visibleQueued.filter(m=>m.taskId===task.id).map(item=><div className="queued-message" key={item.id}>
+                    {queueEditing===item.id?<><textarea aria-label="编辑待发送消息" value={queueDraft} maxLength={20000} onChange={e=>setQueueDraft(e.target.value)}/><button type="button" title="保存" aria-label="保存" disabled={!hasMessageContent(queueDraft,item.materials)} onClick={()=>{setQueued(previous=>previous.map(m=>m.id===item.id?{...m,content:queueDraft.trim()}:m));setQueueEditing(undefined);}}><Icon name="check"/></button><button type="button" title="取消" aria-label="取消" onClick={()=>setQueueEditing(undefined)}><Icon name="close"/></button></>:<><i className="queued-state" title={queueSending===item.id?'正在处理':'队列中'} aria-label={queueSending===item.id?'正在处理':'队列中'}><Icon name="clock"/></i><span title={item.content||item.materials?.map(m=>m.name).join("、")}>{item.content||item.materials?.map(m=>m.name).join("、")}</span><div className="queued-actions"><button type="button" title="发送处理" aria-label="发送处理" disabled={!!queueSending||steeringSending} onClick={()=>void executeQueued(item)}><Icon name="play"/></button><button type="button" title="编辑" aria-label="编辑" disabled={queueSending===item.id} onClick={()=>{setQueueEditing(item.id);setQueueDraft(item.content);}}><Icon name="edit"/></button><button type="button" title="删除" aria-label="删除" disabled={queueSending===item.id} onClick={()=>setQueued(previous=>previous.filter(m=>m.id!==item.id))}><Icon name="trash"/></button></div></>}
                   </div>)}
+                  </div>
                 </div>}
+                {task&&visibleQueued.some(m=>m.taskId===task.id)&&!pending&&(visibleQueued.find(m=>m.taskId===task.id)?.error||queueBlockReason(task,queuePaused.includes(task.id)))&&<p className="compact-state-note" role="status">队列等待：{visibleQueued.find(m=>m.taskId===task.id)?.error||queueBlockReason(task,queuePaused.includes(task.id))}</p>}
+                {task&&!pending&&!!task.pendingInputIds?.length&&<p className="compact-state-note" role="status">另有 {task.pendingInputIds.length} 条补充消息已保存、尚未进入执行；处理当前阻塞后可继续，无需重新上传。</p>}
                 <form className="composer" onSubmit={submit}>
                   {materials.length > 0 && (
                     <div className="attachments">
@@ -978,6 +1010,7 @@ function App() {
           </section>
         </div>
       </main>
+      <TaskNotificationToast key={user?.id||'local'} onOpen={id=>{void window.ailo.read().then(state=>{setData(state);if(state.tasks.some(t=>t.id===id))select(id,state);else setNotice('该通知的来源任务已不存在。');}).catch(()=>setError('暂时无法打开任务，请稍后重试。'));}}/>
     </div></ConversationActions.Provider>
   );
 }

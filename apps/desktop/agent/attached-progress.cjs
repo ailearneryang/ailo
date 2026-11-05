@@ -50,7 +50,7 @@ function validate(progress,run){
    updates.set(step.id,step);
   }
   const steps=run.steps.map(step=>updates.has(step.id)?{...step,...updates.get(step.id)}:{...step});
-  validatePlan({goal:run.goal,decisions:run.decisions,acceptance:run.acceptance,steps});
+  validatePlan({goal:run.goal,decisions:run.decisions,acceptance:run.acceptance,steps},{ledger:true});
   return {...progress,steps};
  }
  return progress;

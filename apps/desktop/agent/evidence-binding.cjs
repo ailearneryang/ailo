@@ -1,13 +1,20 @@
 // Technical proof selection is separate from the user's requirement and scope.
 // Binding only selects a recorded receipt; verification still checks success,
 // freshness, coverage and the original requirement before granting any pass.
-const kinds=['command','visual','observation'];
-const schema={type:'object',additionalProperties:false,required:['kind','evidenceId'],properties:{kind:{type:'string',enum:kinds},evidenceId:{type:'string',minLength:1,maxLength:100}}};
+const kinds=['command','visual','observation','operation'];
+const schema={type:'object',additionalProperties:false,required:['kind','evidenceId'],properties:{kind:{type:'string',enum:kinds},evidenceId:{type:'string',minLength:1,maxLength:100},operation:require('./native-operation.cjs').schema}};
 const stable=value=>value&&typeof value==='object'?(Array.isArray(value)?value.map(stable):Object.fromEntries(Object.keys(value).sort().map(k=>[k,stable(value[k])]))):value;
 const equal=(a,b)=>JSON.stringify(stable(a))===JSON.stringify(stable(b));
 function invalid(message){return Object.assign(Error('证据绑定无效：'+message),{code:'EVIDENCE_BINDING_INVALID'});}
 function update(run,binding,requirement){
- if(!binding||typeof binding!=='object'||Array.isArray(binding)||Object.keys(binding).some(k=>!['kind','evidenceId'].includes(k))||!kinds.includes(binding.kind)||typeof binding.evidenceId!=='string'||!binding.evidenceId||binding.evidenceId.length>100)throw invalid('须提供 kind 与当前任务已记录的完整 evidenceId');
+ if(!binding||typeof binding!=='object'||Array.isArray(binding)||Object.keys(binding).some(k=>!['kind','evidenceId','operation'].includes(k))||!kinds.includes(binding.kind)||typeof binding.evidenceId!=='string'||!binding.evidenceId||binding.evidenceId.length>100)throw invalid('须提供 kind 与当前任务已记录的完整 evidenceId');
+ if(binding.kind==='operation'){
+  const native=require('./native-operation.cjs'),operation=native.prepare(run,binding.operation,requirement),expected=native.expectedId(operation);
+  const receipt=run.observationIndex?.find(r=>r.id===binding.evidenceId||r.eventId===binding.evidenceId),id=operation.phase==='effect'?binding.evidenceId:receipt?.id;
+  if(id!==expected)throw invalid('operation evidenceId须与绑定phase对应的完整读取回执/原actionId一致');
+  return {kind:'operation',evidenceId:expected,operation};
+ }
+ if(binding.operation!==undefined)throw invalid('operation只适用于明确的native文件过程');
  if(requirement.type==='visual'&&binding.kind!=='visual'||requirement.type==='behavior'&&!['command','observation'].includes(binding.kind))throw invalid('不能改变原要求的验证类型');
  // Exact identity only. Do not infer an event from a prefix, array position,
  // description, path, or a semantically similar requirement.

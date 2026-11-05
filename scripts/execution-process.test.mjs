@@ -1,0 +1,4 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import {stripTypeScriptTypes} from 'node:module';
+const js=stripTypeScriptTypes(fs.readFileSync(new URL('../apps/desktop/src/execution-process.ts',import.meta.url),'utf8'),{mode:'strip'});const {replyProcessStatus}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+test('every ended execution turn has one completed lifecycle label without changing its underlying task outcome',()=>{for(const status of ['completed','idle','partial','paused','blocked','failed',undefined])assert.equal(replyProcessStatus(status),'已完成');});
+test('only a real authorization or missing-user-input state displays awaiting input',()=>{assert.equal(replyProcessStatus('waiting_permission'),'待输入');assert.equal(replyProcessStatus('waiting_user'),'待输入');assert.equal(replyProcessStatus('completed'),'已完成');assert.equal(replyProcessStatus('blocked'),'已完成');});

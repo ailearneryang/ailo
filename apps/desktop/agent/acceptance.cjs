@@ -2,21 +2,22 @@ const fs=require('node:fs/promises');
 const {createHash}=require('node:crypto');
 const {resolveFile}=require('./workspace.cjs');
 const criterionId=text=>'a_'+createHash('sha256').update(text).digest('hex').slice(0,16);
-const appropriate=(type,kind)=>type==='visual'?kind==='visual':type==='behavior'?['command','observation'].includes(kind):type==='content'?kind!=='file_exists':true;
-function criteria(run){return require('./requirements.cjs').current(run).map(({id,text,type,scope,scopes,evidenceBinding})=>{
+const appropriate=(type,kind,binding)=>type==='visual'?kind==='visual':type==='behavior'?['command','observation'].includes(kind)||kind==='operation'&&binding?.kind==='operation':type==='content'?kind!=='file_exists':true;
+function criteria(run){return require('./requirements.cjs').current(run).map(({id,text,type,scope,scopes,evidenceBinding,quality})=>{
  const check=run.acceptanceResults?.[id];
  // Older auto mode accepted image blocks without establishing understanding.
  // A documented text model cannot inherit that assessment as a visual pass.
  // Keep the original result for audit; every delivery/pending/UI consumer uses
  // this projection. Unknown proxies and independently capable runs retain their
  // existing evidence contract rather than guessing a new observer provenance.
+ const anonymousVisual=type==='visual'&&check?.status==='passed'&&!(check.parts||[check]).every(p=>p.evidenceId&&p.sources?.length);
  const unavailableHistoricalVisual=type==='visual'&&run.observationCapabilities?.source==='documented_text_model'&&run.observationCapabilities.visualReview===false;
- return {id,text,type,scope,scopes,evidenceBinding,check:!unavailableHistoricalVisual&&check&&(check.type||'content')===type&&(check.parts||[check]).every(p=>appropriate(type,p.kind)&&!(type==='visual'&&run.visualObservations?.some(o=>o.eventId===p.evidenceId&&o.designBinding)&&p.designReviewVersion!==1))?check:undefined};
+ return {id,text,type,scope,scopes,evidenceBinding,quality,level:quality?.level||'must',check:!require('./quality-acceptance.cjs').pending(run,{id,type,scope,scopes,quality},check)&&(!quality?.tolerance||(check?.parts||[check]).every(p=>p?.toleranceResult?.passed===true))&&!anonymousVisual&&!require('./material-input.cjs').pending(run)&&!unavailableHistoricalVisual&&!require('./problem-state.cjs').blocks(run,{id,type}).length&&check&&(check.type||'content')===type&&(check.parts||[check]).every(p=>appropriate(type,p.kind,evidenceBinding)&&(p.kind!=='operation'||evidenceBinding?.kind==='operation'&&p.nativeOperation?.version===1)&&!(type==='visual'&&run.visualObservations?.some(o=>o.eventId===p.evidenceId&&o.designBinding)&&p.designReviewVersion!==1))?check:undefined};
  });}
 async function verify(workspace,action){
  // Malformed request fields are not evidence of an artifact
  // defect. Validate the complete batch before checking any file or proof.
- require('./verification-request.cjs').validate(action,criteria(workspace.run),id=>require('./evidence.cjs').resolveId(workspace.run,id));
+ require('./verification-request.cjs').validate(action,criteria(workspace.run),id=>require('./evidence.cjs').resolveId(workspace.run,id),require('./native-operation.cjs').context(workspace.run));
  let activeCheck;
  try{return await verifyBatch(workspace,action,check=>{activeCheck=check;});}
  catch(error){if(activeCheck?.criterionId)error.criterionId=activeCheck.criterionId;if(['VISUAL_REVIEW_UNAVAILABLE','VISUAL_REVIEW_PENDING','VERIFY_REQUEST_INVALID'].includes(error.code))throw error;await require('./validation-recovery.cjs').failed(workspace,activeCheck,error);throw error;}
@@ -24,18 +25,19 @@ async function verify(workspace,action){
 async function verifyBatch(workspace,action,track){
  const run=workspace.run;
  if(!Array.isArray(action.checks)||!action.checks.length||action.checks.length>12)throw Error('verify.checks 必须包含 1–12 条验收检查');
- const results=[],regionReviews=[],proof=require('./evidence.cjs');
+ const results=[],proof=require('./evidence.cjs');
  for(const raw of action.checks){
   track(raw);
-  const check={...raw,...(raw.evidenceId?{evidenceId:proof.resolveId(run,raw.evidenceId)}:{})};
-  const type=criteria(run).find(c=>c.id===check.criterionId).type;
+  const check={...raw,...(raw.evidenceId&&raw.kind!=='operation'?{evidenceId:proof.resolveId(run,raw.evidenceId)}:{})};
+  const requirement=criteria(run).find(c=>c.id===check.criterionId),type=requirement.type;
   if(type==='visual'&&run.observationCapabilities?.images===false)throw Object.assign(Error('当前没有模型图像观察能力，无法自动进行视觉验收。请继续生成与结构检查；交付时使用 outcome=limited，在 review.unverified 列出未核验视觉要求 ID，明确需要人工看图确认，不要反复截图或改用关键词冒充视觉检查。'),{code:'VISUAL_REVIEW_UNAVAILABLE'});
   if(type==='visual'&&check.kind!=='visual')throw Error('视觉要求必须绑定已传给模型的当前版本图像观察，文件或关键词检查不能替代');
-  if(type==='behavior'&&!['command','observation'].includes(check.kind))throw Error('行为要求必须绑定运行检查证据');
+  if(type==='behavior'&&!['command','observation'].includes(check.kind)&&!(check.kind==='operation'&&requirement.evidenceBinding?.kind==='operation'))throw Error('行为要求必须绑定运行检查证据');
   if(type!=='presence'&&check.kind==='file_exists')throw Error('文件存在只能核验 presence 要求，不能证明内容、行为或视觉质量');
-  let sha256,evidence,observationPath,sources,observedScope,rendererState,fileSet,buildInputs,buildInputsChanged,buildRevisionRequired,designReviewVersion;
-  const requirement=criteria(run).find(c=>c.id===check.criterionId);
-  if(check.kind==='command'){
+  let sha256,evidence,observationPath,sources,observedScope,rendererState,fileSet,buildInputs,buildInputsChanged,buildRevisionRequired,designReviewVersion,nativeOperation;
+  if(check.kind==='operation'){
+   const native=await require('./native-operation.cjs').verify(workspace,requirement,check);sources=native.sources;observedScope=native.scope;evidence=native.evidenceId;nativeOperation=native.nativeOperation;
+  }else if(check.kind==='command'){
    const event=await proof.lookup(workspace,check.evidenceId);
    if(!event||!['run_command','build_android'].includes(event.type))throw Error('验收命令证据无效，请使用 run_command/build_android 事件 ID');
    await proof.event(workspace,check.evidenceId);
@@ -62,14 +64,19 @@ async function verifyBatch(workspace,action,track){
     await require('./visual-observation.cjs').assertSources(workspace,image);
     const data=await fs.readFile(await resolveFile(workspace.files,image.path));
     if(createHash('sha256').update(data).digest('hex')!==image.sha256)throw Error('观察图片已变化，请重新读取');
+    // Validate the receipt and current input before region-level repairs can
+    // be independently persisted. A valid-looking report is not a receipt.
+    await proof.event(workspace,check.evidenceId);
+    await require('./material-input.cjs').verifyProof(workspace,check.criterionId,{evidenceId:check.evidenceId,sources:image.sources,type});
     if(image.designBinding){
      const design=await require('./android-design.cjs').inspect(workspace.files),screen=design.screens?.find(s=>s.boardId===image.designBinding.boardId&&s.layout===image.designBinding.layout&&s.reference===image.reference?.path);
      if(!screen||design.issues.length||image.designManifest?.id!==screen.baseline.designManifest.id)throw require('./design-regions.cjs').error('原稿区域清单缺失或已更新，请重新 view_image(path=当前截图,reference=原稿)');
-     const review=await require('./design-regions.cjs').assess(workspace,image,check.regions);if(review)regionReviews.push({image,review});
+     const review=await require('./design-regions.cjs').assess(workspace,image,check.regions);if(review){require('./design-regions.cjs').commit(run,review,image);await workspace.save();}
      designReviewVersion=1;
     }
     sha256=image.sha256;observationPath=image.path;sources=image.sources;observedScope=image.scope;rendererState=image.rendererState;
    }else if(!event||event.type==='browser'&&!event.detail.result?.dom){
+    if(['read_file','write_file','action_recovered'].includes(referenced?.type)||run.actionJournal?.some(e=>e.id===check.evidenceId&&e.action==='write_file')){const diagnostics={field:'checks',expected:'verification_checks',issue:'native_operation_selection',criterionType:type,nativeCandidate:false};throw Object.assign(Error(require('./verification-request.cjs').hint(diagnostics)),{code:'VERIFY_REQUEST_INVALID',diagnostics});}
     if(referenced?.type==='view_image'||image){const nav=await require('./evidence-navigation.cjs').context(workspace);throw Object.assign(Error('图片观察不能作为行为操作证据。请使用 verificationEvidence.byKind.observation 中覆盖原要求的真实 browser/android_device 事件；不要自动替换为图片或宣称行为通过。'),{code:'VERIFY_REQUEST_INVALID',diagnostics:{field:'checks',expected:'verification_checks',issue:'evidence_kind',criterionId:check.criterionId,evidenceId:check.evidenceId,allowedKind:'observation',candidateIds:nav.byKind.observation}});}
     throw Error('运行观察证据无效；使用 browser 或 android_device 的真实操作事件，图片读取不等于行为验证');
    }
@@ -98,7 +105,10 @@ async function verifyBatch(workspace,action,track){
   }else throw Error('验收检查类型无效');
   if(check.scope)proof.scope(check.scope);
   if(check.scope&&!proof.covers(observedScope,check.scope))throw Error('证据对象或观察范围未覆盖验收要求；局部截图和文字存在不能证明完整布局');
-  results.push({...check,type,sha256,sources,scope:observedScope,rendererState,fileSet,buildInputs,buildInputsChanged,buildRevisionRequired,designReviewVersion,...(observationPath?{path:observationPath}:{}),basis:['visual','observation'].includes(check.kind)?'model_assessment':'machine_check',evidenceId:evidence,revision:run.revision,status:'passed'});
+  sources=await require('./material-input.cjs').verifyProof(workspace,check.criterionId,{evidenceId:evidence,sources,type});
+  if(check.kind!=='operation')await require('./quality-acceptance.cjs').assertNewEvidence(workspace,requirement,{evidenceId:evidence,sources});
+  const toleranceResult=await require('./quality-contract.cjs').evaluate(workspace,requirement,evidence);if(toleranceResult.applicable&&!toleranceResult.passed)throw Object.assign(Error('当前测量未满足预先约定的容差：'+toleranceResult.measurement.metric+'='+toleranceResult.measurement.value+' '+toleranceResult.measurement.unit),{code:'QUALITY_TOLERANCE_FAILED'});
+  results.push({...check,type,verifiedAt:new Date().toISOString(),...(toleranceResult.applicable?{toleranceResult}:{}),sha256,sources,scope:observedScope,rendererState,fileSet,buildInputs,buildInputsChanged,buildRevisionRequired,designReviewVersion,...(nativeOperation?{nativeOperation}:{}),...(observationPath?{path:observationPath}:{}),basis:check.kind==='operation'?'native_operation':['visual','observation'].includes(check.kind)?'model_assessment':'machine_check',evidenceId:evidence,revision:run.revision,status:'passed'});
  }
  // Validate a requirement's complete scope against all its supplied evidence.
  // Multiple historical snapshots can establish a transition or cover pages.
@@ -109,29 +119,41 @@ async function verifyBatch(workspace,action,track){
   for(const range of [...(requirement.scope?[requirement.scope]:[]),...(requirement.scopes||[])])if(!parts.some(p=>proof.covers(p.scope,range)))throw Error('证据对象或观察范围未覆盖验收要求；请在同一次 verify 关联覆盖各范围的证据');
   updates[id]=parts.length===1?parts[0]:{...parts[0],parts,basis:parts.some(p=>p.basis==='model_assessment')?'model_assessment':'machine_check'};
  }
- // Publish only after the entire batch passes; never grant partial approval.
+ // Requirement approval remains atomic across this batch. Independent region
+ // repair receipts above do not grant any requirement a passed result.
  run.acceptanceResults={...run.acceptanceResults,...updates};
- for(const {image,review} of regionReviews)require('./design-regions.cjs').commit(run,review,image);
  await workspace.event('acceptance_verified',{results});
+ require('./quality-acceptance.cjs').verified(run,updates,run.events.at(-1).id);
  require('./validation-recovery.cjs').passed(run,results,run.events.at(-1).id);
+ await require('./problem-state.cjs').refresh(workspace);
  await workspace.save();return {results};
 }
 async function assertAccepted(workspace,{unverifiedVisualIds=[]}={}){
+ require('./material-input.cjs').assertReady(workspace.run);
+ await require('./problem-state.cjs').refresh(workspace);
  require('./design-regions.cjs').assertNoIssues(workspace.run);
+ const fresh=[];
  for(const criterion of criteria(workspace.run)){
+  if(require('./quality-contract.cjs').optional(criterion)){if(criterion.check)try{await require('./evidence.cjs').assertFresh(workspace,criterion.check);for(const part of criterion.check.parts||[criterion.check])if(part.evidenceId&&part.kind!=='operation')await require('./evidence.cjs').event(workspace,part.evidenceId);fresh.push(criterion.id);}catch{}continue;}
   if(unverifiedVisualIds.includes(criterion.id)){
    if(criterion.type!=='visual'||!require('./visual-limitation.cjs').unavailable(workspace.run))throw Error('只能在缺少图像能力时保留视觉要求为未核验');
    continue;
   }
   const check=criterion.check;
+  // Preserve the precise stale-dependency diagnosis even when the public
+  // projection correctly hides this old approval behind a pending problem.
+  if(!check&&workspace.run.acceptanceResults?.[criterion.id]?.status==='passed')await require('./evidence.cjs').assertFresh(workspace,workspace.run.acceptanceResults[criterion.id]);
   if(!check||check.status!=='passed')throw Error('尚未核验验收项：'+criterion.text+'；请先 verify，每项绑定真实检查或当前版本的命令证据');
   const parts=check.parts||[check],proof=require('./evidence.cjs');
   for(const part of parts){
    await proof.assertFresh(workspace,part);
-   if(part.evidenceId)await proof.event(workspace,part.evidenceId);
+   if(part.evidenceId&&part.kind!=='operation')await proof.event(workspace,part.evidenceId);
    if(part.sha256&&await proof.hashFile(await resolveFile(workspace.files,part.path))!==part.sha256)throw Error('验收文件已变化，请重新 verify：'+part.path);
   }
   for(const range of [...(criterion.scope?[criterion.scope]:[]),...(criterion.scopes||[])])if(!parts.some(part=>proof.covers(part.scope,range)))throw Error('验收范围未覆盖要求：'+criterion.id);
+  fresh.push(criterion.id);
  }
+ workspace.run.freshAcceptanceIds=fresh;workspace.run.qualityCoverage=qualitySummary(workspace.run);
 }
-module.exports={criteria,verify,assertAccepted,criterionId};
+function qualitySummary(run,options){return require('./quality-acceptance.cjs').summary(run,criteria(run),options);}
+module.exports={criteria,verify,assertAccepted,criterionId,qualitySummary};

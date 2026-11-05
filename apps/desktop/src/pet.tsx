@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import "./pet.css";
+import {face,palette} from "../pet-artwork.cjs";
 import { petStateLabels, type PetState } from "./pet-state";
 import { Icon } from "./icon";
 import { interact, usePetInteraction, usePetPreferences } from "./pet-preferences";
@@ -11,14 +12,19 @@ export function Pet({
   interactive = false,
   preview = false,
   state,
+  motion,
 }: {
   size?: "hero" | "brand" | "mini";
   thinking?: boolean;
   interactive?: boolean;
   preview?: boolean;
   state?: PetState;
+  motion?: "ambient" | "static";
 }) {
   const preferences = usePetPreferences();
+  const surface=useRef<HTMLButtonElement & HTMLSpanElement>(null);
+  const [inView,setInView]=useState(true),[pageVisible,setPageVisible]=useState(!document.hidden);
+  useEffect(()=>{if((motion||(size==="hero"?"ambient":"static"))==="static"&&!interactive)return;const update=()=>setPageVisible(!document.hidden);update();document.addEventListener("visibilitychange",update);const observer=typeof IntersectionObserver!=="undefined"?new IntersectionObserver(entries=>setInView(entries[0]?.isIntersecting??true)):undefined;if(surface.current)observer?.observe(surface.current);return()=>{document.removeEventListener("visibilitychange",update);observer?.disconnect();};},[preferences.visible,preview,motion,size,interactive]);
   const requested = state || (thinking ? "thinking" : "idle");
   const activity = requested==='completed'&&!preferences.celebrations||requested==='attention'&&!preferences.reminders?'idle':requested;
   const sharedInteraction=usePetInteraction();
@@ -37,47 +43,59 @@ export function Pet({
     if(!preview)void interact('pat').catch(()=>{});
     timer.current = setTimeout(() => setHappy(false), 1800);
   }
-  const className = `ailo-pet pet-${size} ${activity === "thinking" ? "is-thinking" : ""} is-${activity} ${happy || (!preview&&sharedInteraction) ? "is-happy" : ""} ${preferences.animated&&preferences.style!=="quiet" ? "" : "is-quiet"}`;
-  if (!preferences.visible && !preview) return <span className={`ailo-pet pet-${size} pet-fallback`} role="img" aria-label={label} title={label}><Icon name="chat" /></span>;
+  // Keep shared celebrations on the companion; small identity avatars stay quiet.
+  const interactionKind = happy ? 'pat' : !preview && (size === 'hero' || interactive) ? sharedInteraction?.kind : undefined;
+  const colors = { '--pet-mint': palette.mint, '--pet-accent': palette.mintAccent, '--pet-detail': palette.mintInk } as CSSProperties;
+  const className = `ailo-pet pet-${size} ${activity === "thinking" ? "is-thinking" : ""} is-${activity} ${interactionKind ? `is-happy is-${interactionKind}` : ""} ${preferences.animated&&preferences.style!=="quiet" ? "" : "is-quiet"} ${(motion||(size==="hero"?"ambient":"static"))==="static"?"is-static":""} ${inView&&pageVisible?"":"is-suspended"}`;
+  if (!preferences.visible && !preview) return <span ref={surface} style={colors} className={`ailo-pet pet-${size} pet-fallback`} role="img" aria-label={label} title={label}><Icon name="chat" /></span>;
+  const compact = size !== "hero";
   const artwork = (
     <>
-      <svg className="pet-art" viewBox="0 0 160 150" fill="none" aria-hidden="true">
-        <ellipse cx="78" cy="138" rx="43" ry="5" fill="#285447" opacity=".09" />
+      <svg className="pet-art" viewBox={compact ? "20 20 116 100" : "0 0 160 150"} fill="none" aria-hidden="true">
+        {compact && <rect className="pet-avatar-backdrop" x="20" y="20" width="116" height="100" rx="28" fill={palette.mint} />}
+        <ellipse className="pet-shadow" cx="78" cy="138" rx="43" ry="5" fill={palette.mintInk} opacity=".1" />
         <g className="pet-body">
           <g className="pet-tail">
-            <path d="M109 119C137 124 151 104 141 89C133 77 116 84 121 96C124 102 133 101 135 95" stroke="#D99750" strokeWidth="17" strokeLinecap="round" />
-            <path d="M121 96C124 102 133 101 135 95" stroke="#FFF4DF" strokeWidth="10" strokeLinecap="round" />
+            <path d="M108 120C132 124 146 108 139 95C135 86 123 87 123 96C123 102 132 104 135 97" stroke={palette.furShade} strokeWidth="16" strokeLinecap="round" />
+            <path d="M123 96C123 102 132 104 135 97" stroke={palette.cream} strokeWidth="10" strokeLinecap="round" />
           </g>
-          <path d="M45 94C47 78 60 74 78 74C100 74 110 87 111 106L115 125C102 139 50 139 40 125Z" fill="#ECAF68" />
-          <path d="M59 100Q78 92 97 100L101 126Q79 139 54 126Z" fill="#FFF4DF" />
-          <path d="M55 106L52 124M101 106L104 124" stroke="#D99750" strokeWidth="3" strokeLinecap="round" />
-          <ellipse cx="52" cy="130" rx="14" ry="8" fill="#FFF4DF" />
-          <ellipse cx="104" cy="130" rx="14" ry="8" fill="#FFF4DF" />
+          <path d="M48 95C51 82 63 78 78 78C95 78 106 87 108 105L112 124C110 134 98 138 78 138C58 138 46 134 44 124Z" fill={palette.fur} />
+          <path d="M61 105Q78 99 95 105L99 126Q78 138 57 126Z" fill={palette.cream} />
+          <path d="M56 113Q52 121 55 128M100 113Q104 121 101 128" stroke={palette.furShade} strokeWidth="2" strokeLinecap="round" />
+          <ellipse cx="55" cy="131" rx="12" ry="7" fill={palette.cream} />
+          <ellipse cx="101" cy="131" rx="12" ry="7" fill={palette.cream} />
           <g className="pet-head">
-            <path d="M36 53C33 43 34 27 40 27C46 26 57 35 63 41Q78 35 94 41C101 35 111 26 117 28C123 32 124 45 120 56C130 69 132 84 123 95C113 109 94 113 78 113C59 113 38 108 29 95C20 82 24 67 36 53Z" fill="#ECAF68" />
-            <path d="M26 83C30 73 44 74 57 82C66 87 69 77 79 78C90 77 92 87 102 82C115 73 127 75 129 84C127 103 105 113 78 113C51 113 29 103 26 83Z" fill="#FFF4DF" />
-            <g className="pet-eyes" fill="#285447">
-              <ellipse cx="57" cy="68" rx="4.5" ry="5.5" />
-              <ellipse cx="99" cy="68" rx="4.5" ry="5.5" />
+            <path d={face.head} fill={palette.fur} />
+            <path d={face.ears} fill={palette.cream} opacity=".65" />
+            <path d={face.muzzle} fill={palette.cream} />
+            <path d={face.brows} fill={palette.cream} />
+            <path d={face.cheeks} fill={palette.blush} opacity=".28" />
+            <g className="pet-eyes">
+              <path d={face.eyes} fill={palette.ink} />
+              <path d={face.highlights} fill={palette.cream} />
             </g>
-            <g className="pet-smile-eyes" stroke="#285447" strokeWidth="3" strokeLinecap="round">
-              <path d="M52 69Q57 62 62 69M94 69Q99 62 104 69" />
+            <g className="pet-smile-eyes" stroke={palette.ink} strokeWidth="2.7" strokeLinecap="round">
+              <path d="M55 73Q60 66 65 73M91 73Q96 66 101 73" />
             </g>
-            <path d="M71 84C70 80 87 80 86 84C85 88 80 92 78 92C76 92 72 88 71 84Z" fill="#285447" />
+            <path d={face.nose} fill={palette.ink} />
+            <path className="pet-mouth" d={face.mouth} stroke={palette.ink} strokeWidth="1.5" strokeLinecap="round" />
           </g>
-          <path d="M59 108Q78 116 97 108L91 121L78 127L64 120Z" fill="#C4D6BE" />
-          <circle cx="78" cy="117" r="2.2" fill="#38654F" />
-          {preferences.accessory==='scarf'&&<path d="M58 109Q78 119 98 109L92 124L79 131L73 122L64 132L59 121Z" fill="#D99750"/>}
+          <g className="pet-bandana">
+            <path d="M59 108Q78 115 97 108L92 119Q85 123 78 128L64 120Z" fill={palette.sage} />
+            <path d="M64 112Q78 117 92 112" stroke={palette.ink} strokeOpacity=".12" strokeWidth="1.2" strokeLinecap="round" />
+            <circle cx="78" cy="119" r="2" fill={palette.ink} opacity=".65" />
+          </g>
+          {preferences.accessory==='scarf'&&<path d="M58 109Q78 119 98 109L92 124L79 131L73 122L64 132L59 121Z" fill={palette.furShade}/>}
           {preferences.accessory==='star'&&<path d="m78 112 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1Z" fill="#DDAE47"/>}
           {preferences.accessory==='crown'&&<path d="m62 37-5-17 13 8 8-15 9 15 13-8-5 17Z" fill="#DDAE47" stroke="#B48B31" strokeWidth="2"/>}
         </g>
-        {!preview&&sharedInteraction?.kind==='feed'&&<g><ellipse cx="79" cy="137" rx="20" ry="5" fill="#D99750"/><path d="M59 136h40l-7 12H66Z" fill="#729262"/></g>}
-        {!preview&&sharedInteraction?.kind==='play'&&<circle cx="130" cy="130" r="10" fill="#729262" stroke="#FFF4DF" strokeWidth="3"/>}
-        <g className="pet-thoughts" fill="#729262">
+        {interactionKind==='feed'&&<g className="pet-bowl"><ellipse cx="79" cy="137" rx="20" ry="5" fill={palette.furShade}/><path d="M59 136h40l-7 12H66Z" fill={palette.mintInk}/></g>}
+        {interactionKind==='play'&&<circle className="pet-ball" cx="130" cy="130" r="10" fill={palette.mintAccent} stroke={palette.cream} strokeWidth="3"/>}
+        <g className="pet-thoughts" fill={palette.mintInk}>
           <circle cx="127" cy="49" r="2.5" /><circle cx="136" cy="39" r="3" /><circle cx="145" cy="28" r="4" />
         </g>
-        <g className="pet-state-badge"><circle cx="134" cy="33" r="15" fill={activity === "attention" ? "#B57423" : "#38654F"}/>{activity === "completed" ? <path d="m127 33 5 5 9-10" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/> : <path d="M134 25v10m0 6h.01" stroke="white" strokeWidth="3" strokeLinecap="round"/>}</g>
-        <path className="pet-heart" d="M128 27C119 20 112 30 117 35L128 44L139 35C144 30 137 20 128 27Z" fill="#D99750" />
+        <g className="pet-state-badge" transform={compact ? "translate(-15 5)" : undefined}><circle cx="134" cy="33" r="15" fill={activity === "attention" ? palette.attention : palette.mintAccent} stroke={palette.cream} strokeWidth="2"/>{activity === "completed" ? <path d="m127 33 5 5 9-10" stroke={palette.ink} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/> : <path d="M134 25v10m0 6h.01" stroke={palette.attentionInk} strokeWidth="3" strokeLinecap="round"/>}</g>
+        <path className="pet-heart" d="M128 27C119 20 112 30 117 35L128 44L139 35C144 30 137 20 128 27Z" fill={palette.furShade} />
       </svg>
       {interactive && (
         <span className="sr-only" role="status">
@@ -88,7 +106,9 @@ export function Pet({
   );
   return interactive ? (
     <button
+      ref={surface}
       type="button"
+      style={colors}
       className={className}
       aria-label={`摸摸 ${preferences.name} 柴犬`}
       title={activity === "idle" ? "摸摸我" : label}
@@ -98,12 +118,17 @@ export function Pet({
     </button>
   ) : (
     <span
+      ref={surface}
+      style={colors}
       className={className}
       role="img"
-      aria-label={activity === "idle" ? "Ailo 柴犬" : label}
+      aria-label={activity === "idle" ? `${preferences.name} 柴犬` : label}
       title={label}
     >
       {artwork}
     </span>
   );
 }
+
+/** Product identity stays static, independently of companion visibility. */
+export function BrandMark({size=56}:{size?:number}){return <img className="ailo-brand-mark" src="./ailo.png" width={size} height={size} alt="Ailo" draggable={false}/>;}

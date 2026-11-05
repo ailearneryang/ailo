@@ -97,7 +97,7 @@ async function execute(workspace,action,signal,options={}) {
     case 'mcp': if(!options.mcp)throw Object.assign(Error('当前对话未选择自定义应用连接。'),{code:'MCP_UNAVAILABLE'});return options.mcp.execute(action,signal);
     case 'amap': if(!options.amap)throw Object.assign(Error('当前环境未启用高德地图，请在应用连接中配置。'),{code:'AMAP_UNAVAILABLE'});return options.amap.execute(action,signal);
     case 'feishu': if(!options.feishuCli)throw Error('当前未启用飞书应用连接');return options.feishuCli.execute(action,signal,workspace.run.executionId||workspace.run.taskId);
-    case 'build_android': return require('./android-build.cjs').buildAndroid(files,action,signal,{...options,cacheDirectory:path.join(workspace.project,'build-cache')});
+    case 'build_android': await require('./visual-quality.cjs').assertAssets(workspace,{includeArtifacts:false});return require('./android-build.cjs').buildAndroid(files,action,signal,{...options,cacheDirectory:path.join(workspace.project,'build-cache')});
     case 'android_device': {
       if(!options.android)throw Error('当前执行环境没有启用 Android 设备管理服务');
       if(action.operation==='check')return require('./android-check.cjs').execute(workspace,action,signal,options);

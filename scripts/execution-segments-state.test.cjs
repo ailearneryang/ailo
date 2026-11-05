@@ -25,7 +25,7 @@ test('a productive task crosses a segment without rerouting, replaying work or c
   return response({action:'finish',text:'天气说明已完成',review:{summary:'当前文件内容与原始要求逐项核验通过',issues:[],unverified:[]}});
  };
  const result=await runSegments(options=>runAgent({...data,model,signal,ask,...options}),{signal,policy:{segmentSteps:4},onContinue:()=>continues++});
- assert.equal(result.agentRun.status,'completed');assert.equal(routes,1);assert.equal(calls,6);assert.equal(continues,1);
+ assert.equal(result.agentRun.status,'completed');assert.equal(routes,1);assert.equal(calls,5);assert.equal(continues,1);
  const w=await createWorkspace(data.base,data.task);assert.equal(w.run.performance.automaticContinuations,1);assert.equal(w.run.events.filter(e=>e.type==='write_file').length,1);assert.equal(w.run.acceptanceResults.weather.status,'passed');assert.ok(w.run.observationIndex.length>=3);
  assert.equal(w.run.runtimeIdentity.runtimeFingerprint.length,64);assert.equal(w.run.runtimeHistory.length,1);
 });

@@ -2,6 +2,7 @@ const {createHash}=require('node:crypto');
 const identity=require('./action-identity.cjs');
 const bookkeeping=new Set(['route','checkpoint','artifact']);
 function state(run){
+ require('./recovery-state.cjs').bind(run);
  if(!run.failureEpisodes||run.failureEpisodes.version!==1||run.failureEpisodes.executionId!==run.executionId)run.failureEpisodes={version:1,executionId:run.executionId,records:[]};
  return run.failureEpisodes;
 }
@@ -31,9 +32,9 @@ function failure(run,action,error){
  return episode;
 }
 function next(episode){
- if(episode.failures<3)return 'continue';
- if(episode.recoveries<2+(episode.resumeCredits||0)){episode.recoveries++;return 'recover';}
- return 'exhausted';
+ const decision=require('./recovery-control.cjs').afterFailure({},episode);
+ if(decision.recoveries!==undefined)episode.recoveries=decision.recoveries;
+ return decision.action;
 }
 function resume(run,{explicit=false}={}){
  if(!explicit)return;

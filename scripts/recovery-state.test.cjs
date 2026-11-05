@@ -1,0 +1,14 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
+const state=require('../apps/desktop/agent/recovery-state.cjs');
+test('legacy recovery ledgers migrate to one persisted state and compatibility fields share its objects',()=>{
+ const r={executionId:'original',repairValue:{stagnant:16},resultRecovery:{turns:12},failureEpisodes:{records:[{failures:5}]},loopEpisodes:[{attempt:4}],actionJournal:[{status:'unknown'}],readAttempts:[['same',2]]};const old=r.repairValue;state.bind(r);assert.equal(r.repairValue,old);r.repairValue.stagnant++;assert.equal(r.executionRecovery.repair.stagnant,17);const saved=JSON.parse(JSON.stringify(r));assert.equal(saved.repairValue,undefined);assert.equal(saved.resultRecovery,undefined);assert.equal(saved.failureEpisodes,undefined);assert.equal(saved.executionRecovery.failures.records[0].failures,5);assert.deepEqual(saved.actionJournal,[{status:'unknown'}]);assert.deepEqual(saved.readAttempts,[['same',2]]);
+});
+test('persisted canonical state wins over stale mirrors and clear cannot revive a removed window',()=>{
+ const r={executionId:'same',executionRecovery:{version:1,executionId:'same',repair:{stagnant:16}},repairValue:{stagnant:0}};state.bind(r);assert.equal(r.repairValue.stagnant,16);state.clear(r,'repairValue');assert.equal(r.repairValue,undefined);state.bind(r);assert.equal(r.repairValue,undefined);r.repairValue={stagnant:8};assert.equal(r.executionRecovery.repair.stagnant,8);
+});
+test('real scope changes archive counters while same execution and reloading preserve them',async t=>{
+ const base=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-recovery-state-'));t.after(()=>fs.rm(base,{recursive:true,force:true}));const task={id:'canonical',request:'原任务'},w=await require('../apps/desktop/agent/workspace.cjs').createWorkspace(base,task);w.run.executionId='original';state.setExecution(w.run,'original');w.run.repairValue={stagnant:16};await w.save();const raw=JSON.parse(await fs.readFile(path.join(w.project,'runs',require('../apps/desktop/agent/workspace.cjs').key(task.id)+'.json'),'utf8'));assert.equal(raw.repairValue,undefined);assert.equal(raw.executionRecovery.repair.stagnant,16);const loaded=await require('../apps/desktop/agent/workspace.cjs').createWorkspace(base,task);assert.equal(loaded.run.repairValue.stagnant,16);state.reset(loaded.run,'new');loaded.run.executionId='new';assert.equal(loaded.run.repairValue,undefined);assert.equal(loaded.run.executionRecoveryHistory[0].repair.stagnant,16);
+});
+test('unsupported saved state never gets silently replaced with an empty budget',()=>{
+ const r={executionId:'same',executionRecovery:{version:999,repair:{stagnant:16}},actionJournal:[{status:'unknown'}]};const before=JSON.stringify(r);assert.throws(()=>state.bind(r),e=>e.code==='RECOVERY_STATE_VERSION');assert.equal(JSON.stringify(r),before);
+});

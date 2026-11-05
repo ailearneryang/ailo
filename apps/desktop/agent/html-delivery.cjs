@@ -19,11 +19,11 @@ function rememberFailure(workspace,error){
  if(error.code!=='HTML_DELIVERY_BLOCKED')return;
  const run=workspace.run,id=issueId(error.path),description=error.message.slice(0,800);
  const requirementIds=require('./requirements.cjs').current(run).filter(r=>!r.scope&&!r.scopes||r.scope?.path===error.path||r.scopes?.some(s=>s.path===error.path)).map(r=>r.id);
- run.issues ||= [];
+ require('./problem-state.cjs').ensure(run);
  const old=run.issues.find(i=>i.id===id);
  const history={status:'open',description,evidenceId:error.evidenceId,at:new Date().toISOString()};
  const value={...old,id,status:'open',managedBy:'html-delivery',sourceBaseline:old?.sourceBaseline?.length?old.sourceBaseline:error.sourceBaseline,sourcePaths:[...new Set([...(old?.sourcePaths||[]),...(error.sourcePaths||[])])],requiresSourceAudit:old?.requiresSourceAudit||error.requiresSourceAudit,description,requirementIds:requirementIds.length?requirementIds:require('./requirements.cjs').current(run).map(r=>r.id),scope:{kind:'viewport',path:error.path},evidenceId:error.evidenceId,history:[...(old?.history||[]),history]};
- if(old)run.issues[run.issues.indexOf(old)]=value;else run.issues.push(value);
+ require('./problem-state.cjs').upsert(run,'issue',value);
  const prefix='HTML '+error.path+'：';
  run.executionState={...run.executionState,goal:run.executionState?.goal||run.goal,facts:run.executionState?.facts||[],gaps:[(prefix+description).slice(0,1200),...(run.executionState?.gaps||[]).filter(g=>!g.startsWith(prefix))].slice(0,12),nextAction:'针对页面检查缺口修复，重新打开页面并回看主体区域',expectedResult:'同一成果的最新页面观察覆盖视口，主体内容可访问且截图已回看',updatedAt:new Date().toISOString()};
  // A failed final check reopens the last step instead of repeatedly asking the
@@ -32,15 +32,19 @@ function rememberFailure(workspace,error){
  run.actionsSincePlan=0;
 }
 function resolveFailure(workspace,artifact,event){
+ require('./problem-state.cjs').ensure(workspace.run);
  const issue=workspace.run.issues?.find(i=>i.id===issueId(artifact.path)&&i.managedBy==='html-delivery');
  if(!issue||issue.status==='resolved'&&issue.evidenceId===event.id)return;
- issue.status='resolved';issue.evidenceId=event.id;issue.reason=require('./visual-limitation.cjs').unavailable(workspace.run)?'当前成果已重新进行页面级结构观察，布局诊断通过；当前无图像能力，视觉质量仍待人工核验':'当前成果已重新进行页面级观察，截图已传给模型且布局诊断通过';
+ issue.status='resolved';issue.evidenceId=event.id;issue.reason=!require('./request-contract.cjs').requiresVisual(workspace.run,artifact.path)?'当前版本DOM、资源与运行检查通过；本次未进行视觉比对':require('./visual-limitation.cjs').unavailable(workspace.run)?'当前成果已重新进行页面级结构观察，布局诊断通过；当前无图像能力，视觉质量仍待人工核验':'当前成果已重新进行页面级观察，截图已传给模型且布局诊断通过';
  issue.history.push({status:issue.status,evidenceId:event.id,reason:issue.reason,at:new Date().toISOString()});
+ require('./problem-state.cjs').upsert(workspace.run,'issue',issue);
  if(workspace.run.executionState)workspace.run.executionState.gaps=(workspace.run.executionState.gaps||[]).filter(g=>!g.startsWith('HTML '+artifact.path+'：'));
 }
 async function checkArtifact(workspace,artifact){
- const candidates=workspace.run.events.filter(e=>e.type==='browser'&&e.detail.result?.path===artifact.path&&e.detail.result?.screenshot);
- if(!candidates.length&&workspace.findEvent){const archived=await workspace.findEvent(e=>e.type==='browser'&&e.detail.result?.path===artifact.path&&e.detail.result?.screenshot);if(archived)candidates.push(archived);}
+ const visual=require('./request-contract.cjs').requiresVisual(workspace.run,artifact.path);
+ const suitable=e=>e.type==='browser'&&e.detail.result?.path===artifact.path&&(visual?e.detail.result?.screenshot:e.detail.result?.dom);
+ const candidates=workspace.run.events.filter(suitable);
+ if(!candidates.length&&workspace.findEvent){const archived=await workspace.findEvent(suitable);if(archived)candidates.push(archived);}
  const issue=workspace.run.issues?.find(i=>i.id===issueId(artifact.path)&&i.managedBy==='html-delivery');
  let lastError;
  for(const event of candidates.slice().reverse()){
@@ -55,7 +59,7 @@ async function checkArtifact(workspace,artifact){
   }
   // Never hide a current defective observation behind a historical good one.
   try{assertPageHealth(result);await proof.event(workspace,event.id);}catch(error){throw failure(artifact,event,error.message);}
-  if(!require('./visual-limitation.cjs').unavailable(workspace.run)&&!workspace.run.visualObservations?.some(o=>o.eventId===event.id&&o.delivered))throw failure(artifact,event,'HTML 截图尚未传给模型回看');
+  if(visual&&!require('./visual-limitation.cjs').unavailable(workspace.run)&&!workspace.run.visualObservations?.some(o=>o.eventId===event.id&&o.delivered))throw failure(artifact,event,'HTML 截图尚未传给模型回看');
   if(issue?.sourceBaseline?.some(source=>!result.sourceAudit?.sources?.some(s=>s.path===source.path&&s.sha256===source.sha256)))throw failure(artifact,event,'原稿依赖与发现问题时的版本不同；不能修改或删除原稿数据来使产物通过检查，请恢复原稿后修复生成逻辑');
   if(issue?.requiresSourceAudit&&(result.sourceAudit?.status!=='checked'||issue.sourcePaths?.some(p=>!result.sourceAudit.sources.some(s=>s.path===p))))throw failure(artifact,event,'先前发现的原稿缺陷尚未重新检查；不能删除或省略原稿依赖来关闭问题');
   if(result.scope?.kind!=='viewport'||result.dom?.layoutHealth?.scope!=='document'){
@@ -63,7 +67,7 @@ async function checkArtifact(workspace,artifact){
   }
   return event;
  }
- throw failure(artifact,null,lastError?.message||'请先 browser 打开最终文件并回看截图，确认主体内容和布局；不能只检查文件存在或文字关键词');
+ throw failure(artifact,null,lastError?.message||(visual?'请先 browser 打开最终文件并回看截图，确认主体内容和布局；不能只检查文件存在或文字关键词':'请先 browser 对当前文件进行真实页面与交互检查；DOM与运行回执足够，不自动要求视觉分析'));
 }
 async function assertRepair(workspace,issue,evidenceId){
  const path=issue.scope.path;
@@ -84,7 +88,15 @@ function recordObservation(workspace,event){
 }
 async function assertHtmlDelivery(workspace){
  for(const artifact of workspace.run.artifacts.filter(a=>/\.html?$/i.test(a.path))){
-  const event=await checkArtifact(workspace,artifact);resolveFailure(workspace,artifact,event);
+  const validation=require('./html-validation.cjs');
+  if(validation.documentMode(workspace.run,artifact)){
+   // An observed defect stays actionable even in a content-only document.
+   for(const e of workspace.run.events.filter(e=>e.type==='browser'&&e.detail.result?.path===artifact.path&&e.detail.result.sources?.some(s=>s.path===artifact.path&&s.sha256===artifact.sha256)).reverse()){
+    try{await proof.assertFresh(workspace,{sources:e.detail.result.sources,rendererState:e.detail.result.rendererState,revision:e.detail.revision});}catch(error){if(error.code==='ERR_ASSERTION')throw error;continue;}
+    assertPageHealth(e.detail.result);await proof.event(workspace,e.id);break;
+   }
+   await validation.checkDocument(workspace,artifact);
+  }else{const event=await checkArtifact(workspace,artifact);resolveFailure(workspace,artifact,event);}
  }
 }
 module.exports={assertHtmlDelivery,assertLayout,assertPageHealth,assertRepair,recordObservation,rememberFailure};

@@ -65,7 +65,16 @@ async function assertSources(workspace,observation){return require('./evidence.c
 async function messages(workspace,observations,images){
  const result=[];
  if(!images)return result;
- for(const observation of observations.filter(o=>!o.delivered).slice(-2)){
+ const candidates=[];
+ for(const observation of observations.filter(o=>!o.delivered&&!o.supersededBy).reverse()){
+  try{
+   const origin=await require('./evidence.cjs').lookup(workspace,observation.eventId);
+   if(origin?.type==='browser'&&!require('./request-contract.cjs').requiresVisual(workspace.run,origin.detail.result?.path)){observation.analysisNotRequired=true;continue;}
+   delete observation.analysisNotRequired;
+   candidates.unshift(observation);if(candidates.length===2)break;
+  }catch(error){observation.deliveryError=String(error.message).slice(0,500);}
+ }
+ for(const observation of candidates){
   try{
    await assertSources(workspace,observation);
    const file=await resolveFile(workspace.files,observation.path);if((await fs.stat(file)).size>20*1024*1024)throw Error('观察图片超过20MB');
@@ -88,6 +97,7 @@ async function messages(workspace,observations,images){
  return result;
 }
 function assertComparisons(run){
+ require('./visual-quality.cjs').assertNoOpen(run);
  require('./design-regions.cjs').assertNoIssues(run);
  const mismatches=(run.visualComparisons||[]).filter(o=>o.comparison?.grossMismatch);
  if(mismatches.length)throw Object.assign(Error('仍有已知原稿差异：'+mismatches.map(o=>o.path+' 对照 '+o.reference.path).join('；')+'。先修复实现并重新成对观察，不能重复截图或转人工确认来消除缺陷。'),{code:'VISUAL_DESIGN_MISMATCH'});

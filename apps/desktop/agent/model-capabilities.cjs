@@ -26,7 +26,8 @@ function observationCapabilities(model={}, {images,browser}={}){
  const confirmed=imageInput==='enabled';
  return {...base,imageTransport:true,images:!!images,visualReview:!!images,imageUnderstanding:confirmed?'user_confirmed':'unconfirmed',source:confirmed?'user_configuration':'unconfirmed_endpoint',reason:confirmed?'用户声明该端点支持图像输入；此设置不能证明实际理解或判断准确。':'该精确模型与端点的图像理解能力尚未确认；请求成功仅证明接受输入。'};
 }
-function projectVisualConstraint(snapshot){
+function projectVisualConstraint(input){
+ const visualDimension=input.visualDimension,snapshot=Object.hasOwn(input,'visualDimension')?(({visualDimension:_,...rest})=>rest)(input):input;
  if(snapshot.observationCapabilities?.images!==false)return snapshot;
  const instruction='当前模型不能观察图片。不要重复 view_image、截图或视觉 verify 来解决能力缺口。继续依据原始设计的字体、颜色、资源与坐标，以及 verificationEvidence.androidStructure 的真实控件位置，定点修改实现、构建并执行功能检查。旧截图送达不证明模型看懂；结构或色块相似也不能标为视觉通过。已知差异必须修复，尚未核验要求保留。';
  const visualFocus=focus=>{
@@ -37,6 +38,10 @@ function projectVisualConstraint(snapshot){
  };
  const replacement=focus=>({...focus,code:'VISUAL_CAPABILITY_UNAVAILABLE',navigation:{issue:'image_understanding_unavailable'},message:instruction,priorCode:focus.priorCode||focus.code});
  const state=snapshot.executionState;
+ // Without any visual requirement, observation or visual blocker the
+ // capability fact in observationCapabilities is enough; skip the guidance.
+ const visualInvolved=visualDimension!==false||(snapshot.acceptanceCriteria||[]).some(c=>c.type==='visual')||(state&&visualFocus(state.blocker))||(snapshot.decisionRecovery&&visualFocus(snapshot.decisionRecovery.focus))||snapshot.visualObservations?.length||snapshot.androidDesign||snapshot.pageChecks?.length;
+ if(!visualInvolved)return snapshot;
  return {...snapshot,visualReviewConstraint:{automatic:false,reason:snapshot.observationCapabilities.reason,unverifiedCriterionIds:(snapshot.acceptanceCriteria||[]).filter(c=>c.type==='visual').map(c=>c.id),instruction},
   ...(state&&visualFocus(state.blocker)?{executionState:{...state,blocker:replacement(state.blocker),nextAction:state.nextAction==='view_image'?'read_file':state.nextAction}}:{}),
   ...(snapshot.decisionRecovery&&visualFocus(snapshot.decisionRecovery.focus)?{decisionRecovery:{...snapshot.decisionRecovery,focus:replacement(snapshot.decisionRecovery.focus)}}:{}),

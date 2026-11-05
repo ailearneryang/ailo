@@ -42,7 +42,7 @@ test('company gateway completes recovery without vendor parameters or model swit
   return native({action:'finish',text:'完成',review:{summary:'已核验实际文件',issues:[],unverified:[]}},true);
  });
  const result=await chat.complete({id:'request',taskId:task.id,modelId:'company',messages:[{role:'user',content:plan.goal}]});
- assert.equal(result.agentRun.status,'completed',JSON.stringify({content:result.content,n,events:result.agentRun.events}));assert.equal(n,8);
+ assert.equal(result.agentRun.status,'completed',JSON.stringify({content:result.content,n,events:result.agentRun.events}));assert.equal(n,7);
  assert.deepEqual(bodies.slice(2,5).map(b=>b.max_tokens),[8192,16384,32768]);
  assert.deepEqual(records.filter(r=>r.recoveryMode).slice(0,2).map(r=>r.noActionTimeoutMs),[180000,240000]);
 });
@@ -89,6 +89,6 @@ test('failed build recovers through real edits and verification without rereadin
   if(n===10)return reply({action:'verify',checks:[{criterionId:s.acceptanceCriteria[0].id,kind:'text_contains',path:'report.txt',contains:['BUILD SUCCESSFUL'],reason:'核对本次构建结果'}],progress:{steps:[{id:'build',status:'done'}]}});
   return reply({action:'finish',text:'完成',review:{summary:'修复后构建验证完成',issues:[],unverified:[]}});
  }});
- assert.equal(result.agentRun.status,'completed');assert.equal(builds,2);assert.equal(n,11);assert.deepEqual(budgets.slice(3,6),[8192,16384,32768]);
+ assert.equal(result.agentRun.status,'completed');assert.equal(builds,2);assert.equal(n,10);assert.deepEqual(budgets.slice(3,6),[8192,16384,32768]);
  assert.ok(!actions.includes('read_execution'));assert.ok(!actions.includes('read_file'));assert.equal(actions.filter(a=>a==='edit_file').length,2);
 });

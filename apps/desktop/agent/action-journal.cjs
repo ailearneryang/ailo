@@ -4,12 +4,15 @@ const {resolveFile}=require('./workspace.cjs');
 const stable=value=>value&&typeof value==='object'?(Array.isArray(value)?value.map(stable):Object.fromEntries(Object.keys(value).sort().map(k=>[k,stable(value[k])]))):value;
 const fingerprint=action=>createHash('sha256').update(JSON.stringify(stable({...action,purpose:undefined,stepId:undefined,progress:undefined}))).digest('hex');
 const reads=new Set(['request_network','read_file','batch_read','view_image','list_files','read_material','read_source','inspect_source','search_materials','read_execution','read_history']);
+function unknown(run){return (run.actionJournal||[]).some(e=>['unknown','running'].includes(e.status)||e.status==='interrupted'&&!e.readOnly);}
 function begin(run,action){
  run.actionJournal ||= [];
  const hash=fingerprint(action);
  if(run.actionJournal.some(e=>e.fingerprint===hash&&e.status==='unknown'))throw Object.assign(Error('此前相同操作的结果尚未核对，禁止自动重放。请先检查文件、日志或远端状态；无法确认时说明阻塞。'),{code:'ACTION_RESULT_UNKNOWN'});
  const readOnly=reads.has(action.action)||action.action==='android_device'&&['status','logs','screenshot','check'].includes(action.operation);
  const entry={id:randomUUID(),fingerprint:hash,action:action.action,path:action.path,stepId:action.stepId||run.steps.find(s=>s.status==='running')?.id,status:'running',readOnly,startedAt:new Date().toISOString(),revision:run.revision,retries:0};
+ entry.purpose=typeof action.purpose==='string'?action.purpose.slice(0,200):undefined;
+ entry.resultPaths=require('./outcome-inspection.cjs').targets(action);
  if(action.action==='write_file')entry.expectedHash=createHash('sha256').update(action.content||'').digest('hex');
  run.actionJournal.push(entry);return entry;
 }
@@ -20,6 +23,7 @@ async function reconcile(workspace){
    try{const data=await fs.readFile(await resolveFile(workspace.files,entry.path));if(createHash('sha256').update(data).digest('hex')===entry.expectedHash){entry.status='succeeded';entry.recovered=true;entry.finishedAt=new Date().toISOString();await workspace.event('action_recovered',{actionId:entry.id,path:entry.path,message:'已核对中断写入的文件内容，无需重做。'});continue;}}catch{}
   }
   entry.status=entry.readOnly?'interrupted':'unknown';
+  await require('./outcome-inspection.cjs').inspect(workspace,entry);
  }
  await workspace.save();
 }
@@ -38,13 +42,16 @@ async function executeWithRecovery(workspace,entry,action,signal,execute){
   try{
    const result=await execute();
    entry.status=result?.timedOut?'unknown':result?.exitCode!==undefined&&result.exitCode!==0?'failed':'succeeded';
+   entry.timedOut=!!result?.timedOut;
+   await require('./outcome-inspection.cjs').inspect(workspace,entry);
    entry.finishedAt=new Date().toISOString();entry.exitCode=result?.exitCode;await workspace.save();return result;
   }catch(error){
    entry.errorCode=error.code||'TOOL_ERROR';entry.recovery=classify(error,entry);
    if(!signal.aborted&&entry.recovery==='retryable_read'&&attempt<2){entry.retries++;await workspace.event('action_retry',{actionId:entry.id,action:action.action,attempt:entry.retries,message:'只读操作暂时失败，正在自动重试。'});await workspace.save();continue;}
    entry.status=signal.aborted?(entry.readOnly?'interrupted':'unknown'):entry.recovery==='needs_reconciliation'?'unknown':'failed';
+   if(!signal.aborted)await require('./outcome-inspection.cjs').inspect(workspace,entry);
    entry.finishedAt=new Date().toISOString();await workspace.save();throw error;
   }
  }
 }
-module.exports={begin,reconcile,executeWithRecovery,classify};
+module.exports={begin,reconcile,executeWithRecovery,classify,unknown};

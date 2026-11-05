@@ -19,7 +19,8 @@ export type ClarificationOption = { id: string; label: string; description?: str
 export type ClarificationQuestion = { id: string; kind: "choice" | "attachment"; title: string; description?: string; options?: ClarificationOption[] };
 export type Clarification = { title: string; questions: ClarificationQuestion[]; defaults: string[] };
 export type ClarificationAnswer = { questionId: string; answer: string };
-export type Extension = { id: string; kind: "expert" | "skill"; name: string; description: string; instructions: string; enabled: boolean; package?: { id: string; files: number } };
+export type HubSkill = {rowKey:string;iconUrl:string;category:string;downloads:number|null;stars:number|null;slug:string;name:string;description:string;version:string;owner:string;requiresKey:boolean;paid:boolean};
+export type Extension = { id: string; kind: "expert" | "skill"; name: string; description: string; instructions: string; enabled: boolean; invocation?: 'auto'|'manual'; source?: {provider:"skillhub";slug:string;version:string;sha256:string}; package?: { id: string; files: number } };
 export type Material = {
   sourceId?: string;
   name: string;
@@ -41,8 +42,11 @@ export type Model = {
   apiKey?: string;
 };
 export type Project = {instructions?:string;sources?:import('./experience-types').ProjectSource[];defaultTools?:import('./experience-types').DefaultTools;settingsRevision?:number; description?:string; pinned?:boolean; localPath?:string; source?:'local'; id: string; name: string; extensionIds?: string[] };
-export type ReplyDetails = {startedAt:string;completedAt:string;durationMs:number;status?:string;goal?:string;events?:AgentRun['events'];modelRoutes?:{lane:string;from:string;to:string;reason:string;message:string;at:string}[];visualReviews?:{inputHash:string;modelId:string;modelName:string;at:string;summary:string;observations:string[];uncertainties:string[]}[]};
+export type ReplyUsage = {inputTokens:number;outputTokens:number;reasoningTokens:number;totalTokens:number;reportedRequests:number;requestCount:number;models:{id?:string;name?:string;model?:string;lane?:string}[]};
+export type ExecutionActivity = {usage?:ReplyUsage;events:AgentRun['events'];loadedExtensions?:AgentRun['loadedExtensions'];inFlight?:AgentRun['inFlight'];statuses?:{id:string;at:string;updatedAt?:string;message:string}[]};
+export type ReplyDetails = {performance?:{metricsVersion:1;modelRequests:number;coverageComplete:boolean;firstReplyMs:number|null;firstStreamTextMs:number|null;firstReplySource:'stream'|'final'|null;timingScope:string;processRequestRatio:number|null;processTimeRatio:number|null;protocolErrorRequests:number|null};statuses?:ExecutionActivity['statuses'];usage?:ReplyUsage;loadedExtensions?:AgentRun['loadedExtensions'];eventCount?:number;eventsTruncated?:boolean;startedAt:string;completedAt:string;durationMs:number;status?:string;goal?:string;events?:AgentRun['events'];modelRoutes?:{lane:string;from:string;to:string;reason:string;message:string;at:string}[];visualReviews?:{inputHash:string;modelId:string;modelName:string;at:string;summary:string;observations:string[];uncertainties:string[]}[]};
 export type Message = {
+  feedback?:{rating:'up'|'down';at:string};
   replyDetails?: ReplyDetails;
   createdAt?: string;
   clarification?: Clarification;
@@ -55,6 +59,7 @@ export type Message = {
   modelName?: string;
 };
 export type Task = {
+  pendingInputIds?:string[];
   archived?:boolean;archivedAt?:string;temporary?:boolean;manualTitle?:boolean;updatedAt?:string;responseOnly?:boolean;
   branchOf?:{id:string;messageId:string;title:string};
   permissionMode?:import('./permission-types').PermissionMode;
@@ -107,7 +112,22 @@ export type RequestContextUsage = {
   used:number;window:number;reserve:number;ratio:number;threshold:number;
   providerUsage?: {inputTokens?:number;outputTokens?:number;reasoningTokens?:number};
 };
+export type ProblemVersion={eventId?:string;revision?:number;at?:string;image?:{path:string;sha256:string};reference?:{path:string;sha256?:string};apk?:{path:string;sha256:string};sourceSetHash?:string;sourceCount?:number};
+export type TaskProblem={blocking?:boolean;previouslyResolved?:boolean;requiresRecheck?:boolean;findingVersion?:ProblemVersion;verifiedVersion?:ProblemVersion;id:string;description:string;status:'open'|'pending_check'|'resolved'|'regressed'|'uncertain'|'limitation'|'dismissed';source?:string;reason?:string;detectedRevision?:number;verifiedRevision?:number;detectedAt?:string;verifiedAt?:string;evidenceId?:string;regressions?:number};
+export type CandidateSnapshot={id:string;at:string;executionId?:string;passedIds:string[];resolvedIds:string[];totalRequirements:number;files:{path:string;label?:string;sha256:string;size:number;artifact?:boolean;evidenceImage?:boolean}[];resourceCoverage?:{complete:boolean;missingCount?:number}};
+export type RequirementQuality={level:'must'|'optional';origin:'user'|'agent_polish';sourceQuote?:string;polishOf?:string;tolerance?:{metric:string;unit:string;min:number;max:number;sourceQuote:string}};
+export type InputCoverageEntry={inputId:string;status:'received'|'planned'|'verified'|'answered'|'superseded'|'continuation';requirementIds:string[];verifiedRequirementIds?:string[];missingRequirementIds?:string[];materialCount?:number;supersededBy?:string};
+export type QualityCoverage={must:{total:number;passed:number;pendingIds:string[]};optional:{total:number;passed:number;pendingIds:string[]};optionalPending:{id:string;text:string;type?:string}[];mandatoryComplete:boolean};
+export type SelectedCandidate={status:'selected';candidateId:string;at:string;artifacts:{path:string;label?:string;sha256:string;size:number}[];passedIdsAtSnapshot:string[];resolvedIdsAtSnapshot:string[];missingIds:string[];optionalUnverifiedIds?:string[];optionalRegressions?:string[];historical:true;canComplete:false;requiresReverification:true;message?:string};
+export type ResultPreview={path:string;sha256:string;size:number;eventId:string;capturedAt:string;revision?:number;inputId?:string;kind:'android'|'browser';pixelSize:{width:number;height:number};apk?:{path:string;sha256:string};document?:string;available:boolean;sourceStatus:'current'|'changed'|'unknown'|'unavailable';apkAvailable?:boolean;capturedThisInput?:boolean;changedSinceInput?:boolean};
 export type AgentRun = {
+  resultPreview?:ResultPreview;
+  resultChanges?:{changedArtifacts:string[];retainedArtifacts:string[]};
+  inputCoverage?:InputCoverageEntry[]|{version:number;executionId?:string;entries:InputCoverageEntry[]};
+  qualityCoverage?:QualityCoverage;
+  candidateProtection?:{version:number;best?:CandidateSnapshot;latest?:CandidateSnapshot;previous?:CandidateSnapshot[];lastAttempt?:{status:string;comparison?:string;message?:string};notice?:string};
+  materialInput?:{inputId:string;status:string;required:boolean;materials:{id:string;name:string;error?:string;reads:{kind:string;next?:number|null}[]}[];uses?:{id:string;role:string;reason:string;requirementIds:string[]}[]};
+  problemLedger?:TaskProblem[];
   resultRecovery?:{version:number;executionId?:string;stage:string;turns:number;maxTurns?:number;failures:{code:string;message:string}[]};
   visualAnalysisFailures?:{recoveryScope?:string;code:string;sourceHash:string;inputHash:string;modelId:string;at:string;message:string}[];
   waitingError?:{code:string;message:string;networkCode?:string;providerCategory?:string};
@@ -116,14 +136,14 @@ export type AgentRun = {
   runtimeIdentity?:{appVersion:string;runtimeFingerprint:string;promptSchemaVersion:string;toolSchemaVersion:string;capturedAt:string;modelConfigFingerprint:string};
   segmentState?:{index:number;reason:string;startedAt:string;safe?:boolean};
   performance?:{wallMs:number;modelMs:number;modelRequests:number;failedModelRequests:number;processModelMs:number;processModelRequests:number;noActionMs:number;noActionRequests:number;toolMs:number;toolCalls:number;batchItems:number;attachedUpdates:number;reportedUsageRequests:number;inputTokens:number;outputTokens:number;reasoningTokens:number;beforeActionMs?:number;timedActionMs?:number;timedActionRequests?:number;toolErrors?:number;validationFailures?:number;successfulTools?:number;runtimeCountersSince?:string;noOpWrites?:number;reusedTools?:number;automaticContinuations?:number};
-  delivery?:{outcome:'complete'|'limited'|'partial'|'blocked';visualReviewPending?:boolean;unverified?:string[];status?:string;at:string;availableArtifacts?:AgentRun['artifacts'];unavailableArtifacts?:string[];coverage?:{passed:number;total:number};reasonCode?:string;findings?:{text:string;sourceIds:string[];excerpt?:boolean}[];summary?:string};
-  issues?:{id:string;status:'open'|'resolved'|'limitation';description:string;reason?:string;requirementIds:string[]}[];
+  delivery?:{retryAvailable?:boolean;hasNewDeliverable?:boolean;stopReason?:string;nextAction?:string;selectedCandidate?:SelectedCandidate;changes?:{inputId?:string;request?:string;changedArtifacts:string[];retainedArtifacts:string[]};outcome:'complete'|'limited'|'partial'|'blocked';visualReviewPending?:boolean;unverified?:string[];status?:string;at:string;availableArtifacts?:AgentRun['artifacts'];unavailableArtifacts?:string[];coverage?:{passed:number;total:number};reasonCode?:string;findings?:{text:string;sourceIds:string[];excerpt?:boolean}[];summary?:string};
+  issues?:{id:string;status:'open'|'resolved'|'limitation'|'dismissed';description:string;reason?:string;requirementIds:string[]}[];
   executionState?:{goal:string;gaps?:string[];nextAction?:string;expectedResult?:string;blocker?:unknown};
   completionReview?:{summary:string;issues:string[];unverified:string[];revision:number;at:string};
   currentOutcome?:string;currentInputId?:string;currentIntent?:'chat'|'task';
   memoryUsed?:{inputId?:string;ownerId?:string;entries:{id:string;topic:string;scope:string;source?:import("./memory-types").MemorySource}[]};
-  loadedExtensions?: {id:string;name:string;kind:"skill"|"expert"}[];
-  acceptanceCriteria?:{id:string;text:string;type?:string;basis?:'model_assessment'|'machine_check';status:'passed'|'recorded'|'pending'}[];
+  loadedExtensions?: {id:string;name:string;kind:"skill"|"expert";source?:'manual'|'auto';reason?:string}[];
+  acceptanceCriteria?:{id:string;text:string;type?:string;level?:'must'|'optional';quality?:RequirementQuality;basis?:'model_assessment'|'machine_check'|'native_operation';status:'passed'|'recorded'|'pending'}[];
   designRegionIssues?:{regionId:string;region:string;reason:string}[];
   recoverySummary?:{retried:number;recovered:number;unknown:number};
   conversationTitle?: string;
@@ -131,13 +151,13 @@ export type AgentRun = {
   afterMessageId?: string;
   progressInputId?: string;
   history?: AgentRun[];
-  inFlight?: {operation?:string;actionId?:string;command?:string;output?:string;outputTruncated?:boolean;outputAt?:string;action:string;path?:string;purpose?:string;name?:string;entry?:string;at:string};
+  inFlight?: {query?:string;operation?:string;actionId?:string;command?:string;output?:string;outputTruncated?:boolean;outputAt?:string;action:string;path?:string;purpose?:string;name?:string;entry?:string;at:string};
   contextUsage?: RequestContextUsage;
   status: string; mode: 'chat' | 'task'; goal: string;
-  steps: {id:string;title:string;status:string;detail?:string;summary?:string;requiresConfirmation?:boolean}[];
+  steps: {id:string;title:string;status:string;detail?:string;summary?:string;requiresConfirmation?:boolean;requirementIds?:string[]}[];
   decisions: string[]; acceptance: string[];
   artifacts: {path:string;label:string;size:number;sha256:string}[];
-  events: {id:string;type:string;at:string;detail:{actionId?:string;action?:string;command?:string;startedAt?:string;durationMs?:number;timedOut?:boolean;outputTruncated?:boolean;operation?:string;purpose?:string;exitCode?:number;path?:string;name?:string;entry?:string;offset?:number;message?:string;output?:string}}[];
+  events: {id:string;type:string;at:string;detail:{feedback?:string[];reason?:string;field?:string;issue?:string;query?:string;sourceCount?:number;sources?:{title:string;domain:string}[];actionId?:string;action?:string;command?:string;startedAt?:string;durationMs?:number;timedOut?:boolean;outputLimit?:number;outputTruncated?:boolean;operation?:string;purpose?:string;exitCode?:number;path?:string;name?:string;entry?:string;offset?:number;message?:string;output?:string}}[];
   updatedAt?: string;
 };
 export type Workspace = {
@@ -190,6 +210,7 @@ declare global {
       libraryReveal:(input:{id:string})=>Promise<void>;
       notificationsRead:()=>Promise<import('./experience-types').NotificationData>;
       notificationsUpdate:(input:{action:'read'|'clear'|'settings';id?:string;value?:Partial<import('./experience-types').NotificationData['settings']>})=>Promise<import('./experience-types').NotificationData>;
+      onTaskNotification:(callback:(item:import('./experience-types').TaskNotification)=>void)=>()=>void;
       onNotificationsChanged:(callback:()=>void)=>()=>void;
       onNavigateTask:(callback:(id:string)=>void)=>()=>void;
       dictationStart:(locale:string)=>Promise<{active:boolean}>;
@@ -198,6 +219,11 @@ declare global {
       onDictation:(callback:(event:{type:'ready'|'text'|'end'|'error';text?:string})=>void)=>()=>void;
       memoryExport:(owner:string)=>Promise<boolean>;
       onMemoryChanged:(callback:(owner:string)=>void)=>()=>void;
+      skillHubCategories:()=>Promise<{key:string;name:string}[]>;
+      skillHubIcon:(url:string)=>Promise<string>;
+      skillHubSearch:(input:{keyword:string;page:number;category?:string;sortBy?:string})=>Promise<{total:number;skills:HubSkill[]}>;
+      skillHubDetail:(slug:string)=>Promise<HubSkill>;
+      skillHubInstall:(input:{slug:string;version:string})=>Promise<Extension>;
       importSkill:(input:{name:string;buffer:ArrayBuffer})=>Promise<Extension>;
       projectMemory:(id:string)=>Promise<ProjectMemoryData>;
       saveProjectMemory:(id:string,input:{notes:string;revision:number;hiddenTaskIds?:string[]})=>Promise<unknown>;
@@ -258,19 +284,22 @@ declare global {
   mcpConnectionIds?: string[];
   searchEnabled?: boolean;
         messages: { role: "user" | "assistant"; content: string }[];
-      }) => Promise<{ content: string; replyDetails?:ReplyDetails; clarification?: Clarification; modelName: string; contextCheckpoint?: ContextCheckpoint; promptTokens?: number }>;
-      onChatStatus: (callback: (status: { id: string; message?: string; content?: string; taskId?:string; finished?:boolean; run?:AgentRun;failure?:{code:string;requestDiagnostics?:Record<string,unknown>;retryCount:number} }) => void) => () => void;
+      }) => Promise<{ content: string; pendingInputIds?:string[]; replyDetails?:ReplyDetails; clarification?: Clarification; modelName: string; contextCheckpoint?: ContextCheckpoint; promptTokens?: number }>;
+      onChatStatus: (callback: (status: { id: string; message?: string; content?: string; taskId?:string; finished?:boolean; activity?:ExecutionActivity; run?:AgentRun;failure?:{code:string;requestDiagnostics?:Record<string,unknown>;retryCount:number} }) => void) => () => void;
       cancel: (id: string) => Promise<void>;
       sessions: () => Promise<(import('./task-presentation').LiveSession & {taskId:string;updatedAt?:string})[]>;
       editLastMessage: (id:string,messageId:string,content:string) => Promise<Task>;
+      messageFeedback:(input:{taskId:string;messageId:string;rating:'up'|'down'|null})=>Promise<{messageId:string;feedback?:Message['feedback']}>;
       patchTask: (id:string,patch:Partial<Task>,append?:Message[]) => Promise<Task>;
       setTaskPinned: (id:string,pinned:boolean) => Promise<Task>;
-      steer: (input:{id:string;taskId:string;content:string}) => Promise<Message>;
+      steer: (input:{id:string;taskId:string;content:string;materials?:Material[];messageId?:string}) => Promise<Message>;
       projectFiles: (taskId:string) => Promise<{files:{path:string;label:string;size:number;sha256:string}[];truncated:boolean}>;
       openArtifact: (taskId:string, artifactPath:string, projectFile?:boolean) => Promise<void>;
       reveal: (taskId:string, artifactPath?:string, projectFile?:boolean) => Promise<void>;
       editArtifact:(taskId:string,path:string,input:{version:string;operation?:string;text?:string;sheet?:string;address?:string})=>Promise<ArtifactPreview>;
       preview: (taskId:string, artifactPath:string, projectFile?:boolean) => Promise<ArtifactPreview>;
+      previewCandidate:(taskId:string,candidateId:string,artifactPath:string)=>Promise<ArtifactPreview & {snapshotNotice?:string}>;
+      revealCandidate:(taskId:string,candidateId:string,artifactPath:string)=>Promise<void>;
       read: () => Promise<Workspace>;
       save: (state: Workspace) => Promise<void>;
       pasteFiles: (entries: { name: string; bytes: Uint8Array }[]) => Promise<Material[]>;
