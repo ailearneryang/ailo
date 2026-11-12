@@ -22,4 +22,13 @@ function faceSvg() {
 function iconSvg(size = 1024) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 1024 1024"><rect x="80" y="86" width="864" height="864" rx="194" fill="#617B6C" opacity=".08"/><rect x="80" y="80" width="864" height="864" rx="194" fill="${palette.mint}" stroke="${palette.mintBorder}" stroke-width="2"/><g transform="translate(-34 23) scale(7)">${faceSvg()}</g></svg>`;
 }
-module.exports = { palette, face, faceSvg, iconSvg };
+// Reuse the actual Shiba face geometry, with transparent features instead of a
+// colored app tile, for the native macOS monochrome template treatment.
+function trayIconSvg(size=18){
+ // Softer, tangent-connected contours stay legible at menu-bar sizes.
+ const head='M36 54C34 48 33 34 37 29C41 23 53 31 61 39C62 40 64 40 66 40C74 38 84 38 92 40C94 40 96 40 97 39C105 31 116 24 120 30C124 36 122 49 120 55C119 58 123 63 125 69C131 91 112 111 78 111C45 111 25 96 29 76C30 66 37 58 36 54Z';
+ const ears='M40 38C40 34 42 34 45 37L51 42C53 44 51 45 48 46L43 48C40 49 40 45 40 38ZM116 38C116 34 114 34 111 37L105 42C103 44 105 45 108 46L113 48C116 49 116 45 116 38Z';
+ const muzzle='M31 84C34 77 42 78 52 83C64 90 68 82 78 82C88 82 92 90 104 83C114 78 122 77 125 84C122 100 103 109 78 109C53 109 34 100 31 84Z';
+ return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="20 18 116 104"><defs><mask id="shiba"><path d="${head}" fill="white"/><path d="${ears}" fill="black"/><path d="${muzzle}" fill="black"/><path d="${face.brows}" fill="black"/><path d="${face.eyes}" fill="black"/></mask></defs><path d="${head}" fill="black" mask="url(#shiba)"/><path d="${head}" fill="none" stroke="black" stroke-width="4" stroke-linejoin="round"/><path d="${face.nose}" fill="black"/><path d="${face.mouth}" stroke="black" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>`;
+}
+module.exports = { palette, face, faceSvg, iconSvg, trayIconSvg };

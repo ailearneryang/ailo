@@ -1,3 +1,4 @@
+import {DailyBrief} from './daily-brief';
 import {TaskNotificationToast} from './task-notification-toast';
 import {isDevelopment} from '../artifact-presentation.cjs';
 import {DeliveryReplyText} from './delivery-reply-text';
@@ -16,7 +17,8 @@ import {DictationButton} from './dictation-button';
 import type {ConversationOperation} from './experience-types';
 import './experience.css';
 import {ConversationSearch} from './conversation-search-dialog';
-import {initializeCompanion} from './pet-preferences';
+import {initializeCompanion,usePetPreferences} from './pet-preferences';
+import {companionLabel,CompanionRename} from './companion-name';
 import {CompanionResultAction} from './pet-settings';
 import {supportsReasoning} from "../reasoning.cjs";
 import {CompanionNavigation} from './companion-navigation';
@@ -50,6 +52,7 @@ import { ModelPicker } from "./model-picker";
 import { ExtensionCenter } from "./extensions";
 import { ComposerInput } from "./composer-input";
 import { ComposerAdd } from "./composer-add";
+import {inlineAnswerFor,isInlineAnswer} from './clarification-presentation';
 import { ClarificationCard } from "./clarification-card";
 import { formatAnswers } from "../clarification.mjs";
 import type { ClarificationAnswer } from "./types";
@@ -78,6 +81,7 @@ import {
 function recentGroup(created:string){const date=new Date(created),now=new Date();if(date.toDateString()===now.toDateString())return '今天';const yesterday=new Date();yesterday.setDate(now.getDate()-1);if(date.toDateString()===yesterday.toDateString())return '昨天';return date.getFullYear()+'年'+(date.getMonth()+1)+'月';}
 const ASSISTANT_ID = "my-ailo-assistant";
 function App() {
+  const companionPreferences=usePetPreferences(),assistantName=companionLabel(companionPreferences.name);
   const [data, setData] = useState<Workspace>(emptyWorkspace);
   const [conversationOperation,setConversationOperation]=useState<{id:string;action:ConversationOperation}>();
   const [regenerateTarget,setRegenerateTarget]=useState<string>();
@@ -265,7 +269,7 @@ function App() {
     if(['rename','move','delete'].includes(action)){setConversationOperation({id,action});return;}
     try{await window.ailo.conversationAction({id,action});const state=await window.ailo.read();setData(state);if(action==='archive'){setQueued(v=>v.filter(m=>m.taskId!==id));if(active===id)select(null);}setNotice(action==='archive'?'已归档，可在设置或搜索中找回':'对话已恢复');}catch(e){setError((e as Error).message);}
   }
-  async function forkConversation(messageId:string,regenerate=false){if(!task||task.temporary)return;try{const result=await window.ailo.conversationAction({id:task.id,action:regenerate?'regenerate':'branch',messageId});if(!('title' in result))return;const state=await window.ailo.read();setData(state);select(result.id);setModelId(result.modelId||data.defaultModelId);setProjectId(result.projectId||'');if(regenerate)setRegenerateTarget(result.id);}catch(e){setError((e as Error).message);}}
+  async function forkConversation(messageId:string,regenerate=false,useFeedback=false){if(!task||task.temporary)return;try{const result=await window.ailo.conversationAction({id:task.id,action:regenerate?'regenerate':'branch',messageId,useFeedback});if(!('title' in result))return;const state=await window.ailo.read();setData(state);select(result.id);setModelId(result.modelId||data.defaultModelId);setProjectId(result.projectId||'');if(regenerate)setRegenerateTarget(result.id);}catch(e){setError((e as Error).message);}}
   useEffect(()=>{if(regenerateTarget&&task?.id===regenerateTarget&&ready&&!busy){setRegenerateTarget(undefined);void respond(task,false);}},[regenerateTarget,task?.id,ready,busy]);
   async function startTemporary(){try{const created=await window.ailo.temporaryConversation();if(!created)return;select(created.id);setData(d=>({...d,tasks:[created,...d.tasks]}));setProjectId('');setModelId(data.defaultModelId);setExtensionIds([]);setInput('');setMaterials([]);}catch(e){setError((e as Error).message);}}
   const attentionCount = unreadAttentionTasks(data.tasks, Object.keys(sessions)).length;
@@ -463,7 +467,7 @@ function App() {
     if(task&&(requests.current[task.id]||respondingTasks.current.has(task.id)||queueSendingTask.current===task.id)) {
       if(!hasMessageContent(input,materials)||input.trim().length>20000)return;
       setQueued(previous=>[...previous,{id:crypto.randomUUID(),taskId:task.id,content:input.trim(),materials}]);
-      setInput('');setMaterials([]);setNotice('正在发送新要求，将优先处理；已发出的操作会先核对结果。');
+      setInput('');setMaterials([]);setNotice('已加入等待队列；可点击该行运行，或等待当前任务结束后依次执行。');
       return;
     }
     if (
@@ -493,7 +497,7 @@ function App() {
         }
       : {
           id: view === "assistant" ? ASSISTANT_ID : crypto.randomUUID(),
-          title: view === "assistant" ? "我的 Ailo" : (input.trim()||materials.map(m=>m.name).join('、')).slice(0, 26),
+          title: view === "assistant" ? assistantName : (input.trim()||materials.map(m=>m.name).join('、')).slice(0, 26),
           request: input.trim(),
           materials,
           projectId,
@@ -543,8 +547,6 @@ function App() {
   }
   useEffect(()=>{
     if(!ready||!queueReconciled||saving||importing||queueSendingRef.current||steeringRef.current)return;
-    const liveItem=queued.find((item,index)=>!item.error&&queueEditing!==item.id&&!queuePaused.includes(item.taskId)&&requests.current[item.taskId]?.phase==='running'&&queued.findIndex(m=>m.taskId===item.taskId)===index);
-    if(liveItem){void executeQueued(liveItem,true);return;}
     const item=nextQueued(queued,data.tasks,[...Object.keys(requests.current),...respondingTasks.current],queuePaused,queueEditing);
     if(item)void executeQueued(item,true);
   },[ready,queueReconciled,queued,data.tasks,sessions,saving,importing,queueEditing,queueSending,queuePaused]);
@@ -591,6 +593,7 @@ function App() {
   const progressAt=progressAnchor(task?.agentRun,task?messagesFor(task):[]);
   const latestUserMessageId=task?messagesFor(task).filter(m=>m.role==='user').at(-1)?.id:undefined;
   const currentState=task?taskPresentation(task,sessions[task.id]):undefined;
+  const assistantTask=data.tasks.find(t=>t.id===ASSISTANT_ID),assistantState=assistantTask?taskPresentation(assistantTask,sessions[ASSISTANT_ID]):undefined;
   const processOwnsProgress=!!task&&pending===task.id&&!currentState?.historical;
   const currentProgress=task && (task.agentRun && <TaskProgress task={task} showLoaded={pending!==task.id} historical={currentState?.historical} currentStatus={currentState?.progressStatus} onOpenArtifacts={()=>{setTemporaryArtifactPanel(false);setArtifactSelection(undefined);setRightPanel('artifacts');}} busy={!ready || busy || messageEdit?.taskId===task.id} onContinue={() => {
                   if(task.agentRun?.taskContinuation?.taskOpen&&!networkRecovery(task.agentRun)&&!legacyFeishuRecovery(task.agentRun)&&!reminderResume(task,task.agentRun)){setInput('继续原任务。已处理的条件或补充信息：');setNotice(task.agentRun.taskContinuation.question);return;}
@@ -614,7 +617,7 @@ function App() {
           <Icon name="compose" /><span>新的对话</span>
         </button>
         <nav>
-          <CompanionNavigation state={companionState} count={attentionCount} selected={view === "assistant"} onSelect={()=>select(ASSISTANT_ID)}/>
+          <CompanionNavigation name={assistantName} state={companionState} count={attentionCount} selected={view === "assistant"} onSelect={()=>select(ASSISTANT_ID)} running={assistantState?.animating} status={assistantState?.activityStatus}/>
           <button aria-label="文件与成果" title="文件与成果" className={view==='files'?'selected':''} onClick={()=>setView('files')}><Icon name="folder"/><span>文件与成果</span></button>
           <button aria-label="知识库" title="知识库" className={view === "knowledge" ? "selected" : ""} onClick={()=>setView("knowledge")}><Icon name="book"/><span>知识库</span></button>
           <button aria-label="定时任务" title="定时任务" className={view === "schedules" ? "selected" : ""} onClick={()=>{setScheduleTarget(null);setView("schedules");}}><Icon name="clock"/><span>定时任务</span></button>
@@ -662,7 +665,7 @@ function App() {
         <header>
           <div className="workspace-heading">
             <strong>
-              {view === "files" ? "文件与成果" : view === "notifications" ? "通知" : view === "archived" ? "已归档对话" : view === "profile" ? "个人资料" : view === "pets" ? "陪伴与成长" : view === "permissions" ? "操作权限" : view === "memory" ? "个人记忆" : view === "appearance" ? "外观设置" : view === "assistant" ? "我的 Ailo" : view === "knowledge" ? "知识库" : view === "schedules" ? "定时任务" : view === "extensions" ? "扩展" : view === "about"
+              {view === "files" ? "文件与成果" : view === "notifications" ? "通知" : view === "archived" ? "已归档对话" : view === "profile" ? "个人资料" : view === "pets" ? "陪伴与成长" : view === "permissions" ? "操作权限" : view === "memory" ? "个人记忆" : view === "appearance" ? "外观设置" : view === "assistant" ? assistantName : view === "knowledge" ? "知识库" : view === "schedules" ? "定时任务" : view === "extensions" ? "扩展" : view === "about"
                 ? "关于 Ailo"
                 : view === "models"
                   ? "偏好设置"
@@ -670,6 +673,7 @@ function App() {
                     ? "我的账号"
                     : view === "project" ? data.projects.find(p=>p.id===projectId)?.name || "项目" : task?.title || "你的个人助手"}
             </strong>
+            {view === "assistant" && <CompanionRename key={user?.id||"local"}/>}
             {(view !== "assistant" || !ready || saving) && <small className={'workspace-status'+(ready&&!saving?' ready':'')}>
               <span className="dot" />
               {saving
@@ -694,6 +698,7 @@ function App() {
             {task && isConversation && <button ref={rightPanelToggle} className="artifact-toggle task-sidebar-toggle" title={rightPanel?'收起任务侧栏':'打开任务侧栏：产物、项目文件和材料'} aria-label={rightPanel?'收起任务侧栏':'打开任务侧栏'} aria-expanded={!!rightPanel} aria-controls="artifact-panel" onClick={()=>{setTemporaryArtifactPanel(false);setArtifactSelection(undefined);setRightPanel(rightPanel?null:'artifacts');}}><Icon name="panel"/></button>}
           </div>
         </header>
+        {isConversation&&<DailyBrief key={user?.id||'local'}/>}
         <div className="workspace">
           {/* Conversation identity owns the entire page lifecycle, including progress and activity. */}
           <section key={`${view}:${task?.id || 'new'}`} className={"conversation" + (view === "assistant" ? " assistant-conversation" : "") + (isConversation && !task ? " conversation-home" : "")}>
@@ -770,12 +775,12 @@ function App() {
               <div className="welcome home-welcome">
                 <Pet interactive />
                 <h1>今天，有什么想交给我？</h1>
-                <p>开始一件独立的事；需要持续交流或安排任务，可以使用「我的 Ailo」。</p>
+                <p>开始一件独立的事；需要持续交流或安排任务，可以使用「{assistantName}」。</p>
               </div>
             ) : (
               <div className="conversation-stage">
               <div className="thread" key={task.id} ref={attachChatScroll}>
-                <ChatScrollButton/>
+                <ChatScrollButton running={currentState?.animating} status={currentState?.activityStatus}/>
                 <ConversationNavigation messages={messagesFor(task)} conversationId={task.id}/>
                 <div className="thread-content">
                 <div className="day">
@@ -786,13 +791,14 @@ function App() {
                 {task.agentRun?.history?.filter(r=>!messagesFor(task).some(m=>m.id===r.afterMessageId)).map((r,i)=><ExecutionHistory key={r.executionId||i} task={task} run={r} onOpenArtifacts={()=>{setTemporaryArtifactPanel(false);setArtifactSelection(undefined);setRightPanel('artifacts');}}/>)}
                 {!progressAt && !processOwnsProgress && currentProgress && <details className="completed-execution"><summary>此前任务进度</summary>{currentProgress}</details>}
                 {task.archived&&<p className="experience-note">此对话已归档。<button onClick={()=>void operateConversation(task.id,'restore')}>恢复到历史列表</button></p>}
-                {task.branchOf&&<p className="experience-note">分支自：<button onClick={()=>select(task.branchOf!.id)}>{task.branchOf.title}</button>{task.responseOnly?' · 本轮只生成回答，不执行工具':''}</p>}
-                {messagesFor(task).map((message,index) => (
+                {task.branchOf&&<p className="experience-note">分支自：<button onClick={()=>select(task.branchOf!.id)}>{task.branchOf.title}</button>{task.responseOnly?' · 本轮重新生成回答，可使用已启用的搜索和只读资料':''}</p>}
+                {task.conversationSections?.some(section=>!messagesFor(task).some(message=>message.id===section.afterMessageId))&&<details className="conversation-section"><summary>查看其他分支历史</summary>{task.conversationSections.filter(section=>!messagesFor(task).some(message=>message.id===section.afterMessageId)).map(section=><details key={section.id}><summary>{section.kind==='branch'?'分支':'重新生成'} · {new Date(section.createdAt).toLocaleString()}</summary>{section.messages.map(previous=><div key={previous.id} className="conversation-section-history"><small>{previous.role==='user'?'你':'Ailo'}</small><AssistantText content={previous.content}/></div>)}</details>)}</details>}
+                {messagesFor(task).map((message,index) => isInlineAnswer(message,messagesFor(task)) ? null : (
                   <div
                     key={message.id}
                     data-search-message={message.id}
                     className={message.role === "user" ? "user-turn" : "reply"}
-                    data-conversation-turn={message.role === 'user' ? message.id : undefined}
+                    data-conversation-turn={message.role === 'user' ? message.id : inlineAnswerFor(message,messagesFor(task))?.id}
                   >
                     {message.role === "assistant" && (
                       <div className="byline">
@@ -818,17 +824,19 @@ function App() {
                     </div>
                     {message.role==='user'&&<InputCoverageStatus run={task.agentRun} messageId={message.id}/>}
                     {message.role==='assistant'&&(()=>{const delivery=deliveryForMessage(task,messagesFor(task),message.id);return delivery?<DeliveryResult key={task.id+':'+(delivery.executionId||message.id)} task={task} run={delivery} onOpen={path=>{setTemporaryArtifactPanel(!!path);setArtifactSelection(path?{path}:undefined);setRightPanel('artifacts');}}/>:null;})()}
-                    {messageEdit?.taskId!==task.id&&<MessageActions onFeedback={message.role==='assistant'?async rating=>{const result=await window.ailo.messageFeedback({taskId:task.id,messageId:message.id,rating});setData(d=>({...d,tasks:d.tasks.map(t=>t.id===task.id?{...t,messages:messagesFor(t).map(m=>m.id===result.messageId?{...m,feedback:result.feedback}:m)}:t)}));}:undefined} onBranch={!task.temporary?()=>void forkConversation(message.id):undefined} onRegenerate={!task.temporary&&message.role==='assistant'?()=>void forkConversation(message.id,true):undefined} message={message} createdAt={message.createdAt||(index===0&&message.role==='user'?task.created:undefined)} disabled={busy}
+                    {messageEdit?.taskId!==task.id&&<MessageActions taskId={task.id} rememberFeedback={!task.temporary&&task.memoryEnabled!==false} onImprove={!task.temporary&&message.role==='assistant'?()=>void forkConversation(message.id,true,true):undefined} onFeedback={message.role==='assistant'?async (rating,details)=>{const result=await window.ailo.messageFeedback({taskId:task.id,messageId:message.id,rating,...details});setData(d=>({...d,tasks:d.tasks.map(t=>t.id===task.id?{...t,messages:messagesFor(t).map(m=>m.id===result.messageId?{...m,feedback:result.feedback}:m)}:t)}));}:undefined} onBranch={!task.temporary?()=>void forkConversation(message.id):undefined} onRegenerate={!task.temporary&&message.role==='assistant'?()=>void forkConversation(message.id,true):undefined} message={message} createdAt={message.createdAt||(index===0&&message.role==='user'?task.created:undefined)} disabled={busy}
                       onEdit={message.role==='user'&&latestUserMessageId===message.id&&!pending?()=>setMessageEdit({taskId:task.id,messageId:message.id,content:message.content}):undefined}/>}
                     {message.role==='assistant'&&index===messagesFor(task).length-1&&!busy&&<CompanionResultAction task={task}/>}
                     {view === "assistant" && data.tasks.filter(t=>(t.parentAssistantId === ASSISTANT_ID && t.parentMessageId === message.id) || task.assistantReferences?.[message.id]?.includes(t.id)).map(linked=><button key={linked.id} className="assistant-linked-task" onClick={()=>select(linked.id)}><Icon name="folder"/><span><strong>{linked.title}</strong><small>{sessions[linked.id] ? sessions[linked.id].status : linked.assistantPaused ? "已暂停" : linked.lastError ? "需要处理" : linked.agentRun?.status === "completed" ? "成果已准备好" : linked.messages?.at(-1)?.clarification ? "需要补充信息" : linked.messages?.at(-1)?.role === "assistant" ? "已有结果" : "查看任务进度"}{linked.agentRun?.artifacts.length ? ` · ${linked.agentRun.artifacts.length} 项成果` : ""}</small></span><span>查看任务 ↗</span></button>)}
                     {view === "assistant" && task.assistantScheduleLinks?.filter(link=>link.messageId===message.id).map(link=><button key={link.id} className="assistant-linked-task" onClick={()=>setView("schedules")}><Icon name="clock"/><span><strong>{link.title}</strong><small>已保存到定时任务</small></span><span>查看安排 ↗</span></button>)}
                     {messagesFor(task).at(-1)?.role==='assistant'&&task.agentRun?.memoryUsed?.inputId===latestUserMessageId&&message.id===[...messagesFor(task)].reverse().find(m=>m.role==='assistant')?.id&&task.agentRun?.memoryUsed?.ownerId===(user?.id||'local')&&!!task.agentRun.memoryUsed.entries.length&&<details className="memory-used-receipt"><summary>参考了 {task.agentRun.memoryUsed.entries.length} 条记忆</summary><ul>{task.agentRun.memoryUsed.entries.map(entry=><li key={entry.id}>{entry.topic} · {entry.scope==='personal'?'个人':'当前项目'}</li>)}</ul><button onClick={()=>setView('memory')}>查看与管理记忆 ↗</button></details>}
                     {progressAt===message.id && !processOwnsProgress && !(message.role==="assistant"&&message.replyDetails&&Number.isFinite(message.replyDetails.durationMs)&&message.replyDetails.durationMs>=0) && currentProgress}
+                    {task.conversationSections?.filter(section=>section.afterMessageId===message.id).map(section=><div key={section.id} className="conversation-section" aria-label={section.kind==='branch'?'会话分支':'重新生成'}><span>{section.kind==='branch'?'从此处分支':'重新生成'}</span>{section.messages.length>section.tailStart&&<details><summary>查看此前内容</summary>{section.messages.slice(section.tailStart).map(previous=><div key={previous.id} className="conversation-section-history"><small>{previous.role==='user'?'你':'Ailo'}</small><AssistantText content={previous.content}/></div>)}</details>}</div>)}
+                    {inlineAnswerFor(message,messagesFor(task))&&<span data-search-message={inlineAnswerFor(message,messagesFor(task))!.id} className="clarification-answer-anchor"/>}
                     {message.role === "assistant" && message.clarification && <ClarificationCard
                       messageId={message.id} value={message.clarification} disabled={busy}
                       active={messagesFor(task).at(-1)?.id === message.id}
-                      completed={messagesFor(task).find(m => m.clarificationReplyTo === message.id)?.clarificationAnswers}
+                      completed={inlineAnswerFor(message,messagesFor(task))?.clarificationAnswers}
                       onSubmit={(answers, attached) => answerQuestions(message, answers, attached)} />}
                     {task.agentRun?.history?.filter(r=>r.afterMessageId===message.id).map((r,i)=><ExecutionHistory key={r.executionId||i} task={task} run={r} onOpenArtifacts={()=>{setTemporaryArtifactPanel(false);setArtifactSelection(undefined);setRightPanel('artifacts');}}/>)}
                   </div>

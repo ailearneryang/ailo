@@ -1,6 +1,5 @@
 // Steering accepts the same imported material records as an ordinary message.
-// Raw originals may come only from imports or this task's owned project.
-const fs=require('node:fs/promises'),path=require('node:path');
+// Raw originals may come only from imports or this task's recorded lineage.
 async function validate(input,{base,task}={}){
  const {hasMessageContent,canSendMaterial}=await import('./attachments.mjs');
  const content=typeof input.content==='string'?input.content.trim():'';
@@ -11,12 +10,7 @@ async function validate(input,{base,task}={}){
   if(!m||typeof m.name!=='string'||!m.name.trim()||m.name.length>300||!canSendMaterial(m)||m.sourceId!==undefined&&(typeof m.sourceId!=='string'||!/^[a-f0-9-]{36}$/.test(m.sourceId))||m.text!==undefined&&m.text!==null&&typeof m.text!=='string')throw Error('补充材料尚未解析或原文件ID无效');
   if(m.sourceId){
    if(!base||!task)throw Error('材料所属任务不可用');
-   const project=require('./agent/workspace-path.cjs').workspacePath(base,task);
-   let found=false;
-   for(const file of [path.join(base,'imports',m.sourceId),path.join(project,'originals',m.sourceId)]){
-    try{const st=await fs.lstat(file);if(st.isSymbolicLink()||!st.isFile()||st.nlink>1)throw Error('材料原文件必须为已导入的独立文件');found=true;break;}catch(e){if(e.code!=='ENOENT')throw e;}
-   }
-   if(!found)throw Error('补充材料原文件缺失或不属于当前任务，请重新添加');
+   if(!await require('./material-originals.cjs').findMaterialOriginal(base,task,m.sourceId))throw Error('补充材料原文件缺失或不属于当前任务，请重新添加');
   }
   safe.push(structuredClone(Object.fromEntries(['name','size','text','summary','sourceId','archive'].filter(k=>m[k]!==undefined).map(k=>[k,m[k]]))));
  }

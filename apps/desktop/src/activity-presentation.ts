@@ -1,5 +1,5 @@
 import type {AgentRun} from './types';
-const actions:Record<string,string>={web_search:'正在搜索网页',knowledge:'正在查询知识库',amap:'正在查询地图',assistant:'正在处理个人事务',edit_spreadsheet:'正在编辑表格',mcp:'正在使用应用工具',feishu:'正在处理飞书内容',build_android:'正在构建并验证应用',android_device:'正在验证应用',write_file:'正在更新文件',edit_file:'正在修改文件',read_file:'正在读取文件',list_files:'正在检查项目文件',read_material:'正在读取材料',read_source:'正在读取原始材料',inspect_source:'正在分析材料',search_materials:'正在搜索材料',read_history:'正在回查对话',read_execution:'正在核对执行记录',run_command:'正在执行命令',request_directory:'正在申请目录授权',request_network:'正在申请联网授权',batch_read:'正在批量读取资料',browser:'正在检查网页',view_image:'正在查看图片',verify:'正在检查验收结果'};
+const actions:Record<string,string>={web_search:'正在搜索网页',knowledge:'正在查询知识库',amap:'正在查询地图',assistant:'正在处理个人事务',subagent:'正在协调子 Agent',edit_spreadsheet:'正在编辑表格',mcp:'正在使用应用工具',feishu:'正在处理飞书内容',build_android:'正在构建并验证应用',android_device:'正在验证应用',write_file:'正在更新文件',edit_file:'正在修改文件',read_file:'正在读取文件',list_files:'正在检查项目文件',read_material:'正在读取材料',read_source:'正在读取原始材料',inspect_source:'正在分析材料',search_materials:'正在搜索材料',read_history:'正在回查对话',read_execution:'正在核对执行记录',run_command:'正在执行命令',request_directory:'正在申请目录授权',request_network:'正在申请联网授权',batch_read:'正在批量读取资料',browser:'正在检查网页',view_image:'正在查看图片',verify:'正在检查验收结果'};
 const recovery:Record<string,string>={output_limit:'本次处理遇到输出长度限制，系统将自动重试，无需操作。',tool_argument_limit:'本次处理内容过多，系统正在拆分后重试，无需操作。',protocol_error:'本次执行指令未能正确生成，系统正在自动重试，无需操作。',empty_response:'本次未收到有效响应，系统正在自动重试，无需操作。',no_action_recovery:'本次尚未生成可执行操作，系统正在自动重试。',loop_recovery:'系统正在调整执行方式，避免重复无效操作。',tool_recovery:'系统正在分析操作失败的原因并调整执行方式。'};
 const progressTypes=new Set(['plan','write_file','edit_file','run_command','read_file','read_material','read_source','artifact','acceptance_check','build_android','android_device']);
 // Bookkeeping must not displace the latest concrete action, blocker or recovery.
@@ -79,7 +79,7 @@ export function formatProgressAge(seconds:number):string {
  return `上次更新于 ${Math.floor(value/3600)} 小时${Math.floor(value%3600/60)?` ${Math.floor(value%3600/60)} 分`:''}前`;
 }
 
-const userOperations=new Set([...Object.keys(actions),'tool_error','command_interrupted','artifact','acceptance_check','web_search','knowledge','amap','assistant','edit_spreadsheet']);
+const userOperations=new Set([...Object.keys(actions),'tool_error','command_interrupted','artifact','acceptance_check','web_search','knowledge','amap','assistant','subagent','edit_spreadsheet']);
 export function isActivityOperation(event:AgentRun['events'][number]):boolean {return userOperations.has(event.type);}
 // Display text only. Original instructions, model errors and evidence remain in diagnostics.
 export function userActivityText(value:unknown,max=44):string {
@@ -95,7 +95,7 @@ function userStep(run:AgentRun|undefined):string {
  const active=run?.steps?.filter(s=>s.status==='running'||s.status==='blocked')||[];
  return userActivityText(active.length===1?active[0].title:undefined)||userActivityText(run?.goal);
 }
-const operationNames:Record<string,string>={run_command:'运行项目命令',write_file:'保存文件',edit_file:'修改文件',read_file:'读取文件',list_files:'查看项目文件',build_android:'构建应用',android_device:'检查应用运行情况',read_execution:'回看执行记录',read_history:'回看对话',request_directory:'申请目录访问权限',request_network:'申请联网',verify:'检查结果',acceptance_check:'检查结果',browser:'检查网页效果',view_image:'查看图片',tool_error:'操作未成功',command_interrupted:'操作已中断',artifact:'保存成果文件',batch_read:'读取资料'};
+const operationNames:Record<string,string>={run_command:'运行项目命令',subagent:'汇总子 Agent 调查',write_file:'保存文件',edit_file:'修改文件',read_file:'读取文件',list_files:'查看项目文件',build_android:'构建应用',android_device:'检查应用运行情况',read_execution:'回看执行记录',read_history:'回看对话',request_directory:'申请目录访问权限',request_network:'申请联网',verify:'检查结果',acceptance_check:'检查结果',browser:'检查网页效果',view_image:'查看图片',tool_error:'操作未成功',command_interrupted:'操作已中断',artifact:'保存成果文件',batch_read:'读取资料'};
 export function userOperationTitle(event:AgentRun['events'][number]):string {
  const d=event.detail;
  const device=event.type==='android_device'?({start:'准备项目模拟器',install:'安装当前 APK',launch:'启动应用',logs:'读取运行日志',screenshot:'获取运行截图',check:'核对应用运行结果',status:'检查模拟器状态',stop:'停止项目模拟器'} as Record<string,string>)[d.operation||'']:undefined;

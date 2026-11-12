@@ -17,3 +17,8 @@ test('rotated credentials and denied access never reuse a stale secret or persis
 test('deleting a model removes its cached credential even if the old ciphertext later reappears on disk',async t=>{
  const f=await fixture(t);await f.storage.modelCredentials('m');const state=await f.storage.readWorkspace();await f.storage.saveWorkspace({...state,models:[],defaultModelId:'demo'});await fs.writeFile(path.join(f.root,'workspace.json'),JSON.stringify(f.workspace));assert.equal(await f.storage.modelCredentialsAvailable('m'),false);assert.equal(f.calls(),1);
 });
+test('OS decryption refusal has a typed non-corruption error and leaves encrypted credentials unchanged for a later unlock',async t=>{
+ const f=await fixture(t);f.setDenied(true);const before=await fs.readFile(path.join(f.root,'workspace.json'),'utf8');
+ await assert.rejects(f.storage.modelCredentials('m'),error=>error.code==='MODEL_CREDENTIALS_UNAVAILABLE'&&error.message.includes('尚不能判定密钥已失效')&&!error.message.includes('permission denied'));
+ assert.equal(await fs.readFile(path.join(f.root,'workspace.json'),'utf8'),before);f.setDenied(false);assert.ok((await f.storage.modelCredentials('m')).apiKey);assert.equal(f.calls(),2);
+});

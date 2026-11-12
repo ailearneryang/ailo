@@ -40,7 +40,7 @@ export function ClarificationCard({ value, messageId, disabled, completed, activ
     finally {lock.current=false;setLoading(false);}
   }
   return <form className="clarification-card" aria-label={value.title} onSubmit={submit}>
-    <div className="clarification-heading"><strong>{value.title}</strong><span>{completed ? '已提交' : active ? `${value.questions.length} 个问题` : '已继续对话'}</span></div>
+    <div className="clarification-heading"><strong>{value.title}</strong><span>{completed ? '已回答' : active ? `${value.questions.length} 个问题` : '已继续对话'}</span></div>
     {!completed && active && <p className="clarification-hint">推荐项已预选，点击提交后才会确认。也可以填写自己的答案。</p>}
     {value.questions.map((q,index) => <fieldset key={q.id} disabled={frozen}>
       <legend><span className="question-number">{index+1}</span>{q.title}</legend>
@@ -67,6 +67,6 @@ export function ClarificationCard({ value, messageId, disabled, completed, activ
     </fieldset>)}
     {!!value.defaults.length && <details className="clarification-defaults"><summary>拟采用的默认方案 · {value.defaults.length} 项</summary><ul>{value.defaults.map((d,i)=><li key={i}>{d}</li>)}</ul></details>}
     {error && <p role="alert" className="error">{error}</p>}
-    {!completed && active && <div className="clarification-footer"><span>{loading?'正在处理…':ready?'提交后将作为一条消息继续对话':'请回答每个问题'}</span><button className="primary" disabled={frozen || !ready}>提交答案</button></div>}
+    {!completed && active && <div className="clarification-footer"><span>{loading?'正在处理…':ready?'提交后将继续执行':'请回答每个问题'}</span><button className="primary" disabled={frozen || !ready}>提交答案</button></div>}
   </form>;
 }

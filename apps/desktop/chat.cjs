@@ -7,6 +7,10 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
   const {abortable,recoverRequest,requestId,cancelBody}=require('./model-request.cjs');
   const limits = typeof timeouts === "number" ? { connect: timeouts, headerStep:0, retryDelay:0, first: timeouts, idle: timeouts, text: timeouts, decision: timeouts, total: timeouts * 10 } : { connect:60000, headerStep:timeouts.connect===undefined?30000:0, first:60000, retries:2, retryDelay:500, idle: 90000, text: 180000, decision: 180000, total: 900000, ...timeouts };
   const explicitDecisionLimit=typeof timeouts==='number'||Number.isFinite(timeouts.decision);
+  const awake=storage.executionAwake;
+  const activeNow=awake?awake.now:Date.now;
+  const setTimeout=awake?awake.setTimeout:globalThis.setTimeout;
+  const clearTimeout=awake?awake.clearTimeout:globalThis.clearTimeout;
   const pending = new Map();
   const scheduler=require('./chat-scheduler.cjs').createScheduler(3);
   const steering = new Map();
@@ -19,7 +23,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
       const ownerState=await storage.readWorkspace();
       const ownerTask=ownerState.tasks.find(t=>t.id===taskId);
       if(!ownerTask)throw Error('任务不存在');
-      const validated=await require('./steering-input.cjs').validate({content,materials},{base:storage.agentDirectory,task:ownerTask});
+      const validated=await require('./steering-input.cjs').validate({content,materials},{base:storage.agentDirectory,task:require('./material-originals.cjs').withMaterialOrigins(ownerTask,ownerState.tasks)});
       if(!session.accepting||pending.get(id)?.signal.aborted)throw Error('当前任务已停止，补充内容尚未提交，请作为新消息发送。');
       const message={id:messageId||require('node:crypto').randomUUID(),role:'user',content:validated.content,...(validated.materials.length?{materials:validated.materials}:{}),createdAt:new Date().toISOString()};
       const save=session.saving.then(async()=>{
@@ -49,6 +53,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
       if (pending.has(input.id)||[...steering.values()].some(s=>s.taskId && s.taskId===input.taskId)) throw Error('此会话正在执行或排队，请补充消息或等待完成。');
       const controller = new AbortController();
       pending.set(input.id, controller);
+      const sessionActiveStarted=activeNow();
       const session={taskId:input.taskId,startedAt:new Date().toISOString(),phase:'preparing',queue:[],saving:Promise.resolve(),accepting:false};
       steering.set(input.id,session);
       let routeHistory=[];
@@ -62,7 +67,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
         ...(routeHistory.length?{modelRoutes:routeHistory}:{}),
         ...(visualHistory.size?{visualReviews:[...visualHistory.values()].slice(-8)}:{}),
         startedAt:session.startedAt,completedAt:new Date().toISOString(),
-        durationMs:Math.max(0,Date.now()-Date.parse(session.startedAt)),
+        durationMs:Math.max(0,activeNow()-sessionActiveStarted),
         ...activity.capture(result.agentRun),
         ...(result.agentRun?{status:result.agentRun.currentIntent==='chat'&&result.agentRun.currentOutcome==='reply'?'idle':result.agentRun.status,goal:result.agentRun.goal}:{status:result.clarification?'waiting_user':'idle'}),
       }};};
@@ -79,7 +84,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
         clearTimeout(timer);
         timer = setTimeout(onTimeout, ms);
       }
-      let release,releasePower,executionStarted,executionExtensions=[],requestUsage=true;
+      let release,releasePower,releaseAwake,executionStarted,executionExtensions=[],requestUsage=true;
       try {
         const {hasMessageContent}=await import('./attachments.mjs');
         if (
@@ -100,21 +105,29 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
         )
           throw Error("对话内容无效或过长，请新建对话。");
         const schedulingState=input.taskId && storage.readWorkspace ? await storage.readWorkspace() : {tasks:[]};
-        const schedulingTask=schedulingState.tasks?.find(t=>t.id===input.taskId);session.inputId=schedulingTask?.messages?.findLast(m=>m.role==='user')?.id;
+        const schedulingTask=require('./material-originals.cjs').withMaterialOrigins(schedulingState.tasks?.find(t=>t.id===input.taskId),schedulingState.tasks||[]);session.inputId=schedulingTask?.messages?.findLast(m=>m.role==='user')?.id;
         release=await scheduler.acquire(schedulingTask?.projectId || (schedulingTask?.scheduledTaskId?'schedule:'+schedulingTask.scheduledTaskId:input.taskId) || input.id,controller.signal,input.onStatus);
         try{releasePower=storage.executionPower?.hold();}catch{}
-        executionStarted=Date.now();session.phase='preparing';
+        releaseAwake=awake?.subscribe(sleeping=>input.onStatus?.(sleeping?'电脑已睡眠，唤醒后继续执行…':'电脑已唤醒，正在继续任务…'));
+        if(awake?.suspended)input.onStatus?.('电脑已睡眠，唤醒后继续执行…');
+        await awake?.wait(controller.signal);
+        session.phase='preparing';
         input.onStatus?.('正在执行…');
+        const answerStyle=require('./answer-style.cjs').styleContext(schedulingState.tasks,schedulingTask);
         const selected = input.extensionIds?.length ? selectedExtensions((await storage.readWorkspace()).extensions || [], input.extensionIds) : [];
         executionExtensions=selected;
         const routeEvents=routeHistory;let reportedRoutes=0;
-        const router=await require('./model-routing.cjs').createModelRouter(storage,input.modelId,{signal:controller.signal,onRoute:event=>{routeEvents.push({...event,at:new Date().toISOString()});input.onStatus?.(event.message);}});
+        const credentialsFor=require('./execution-credentials.cjs').createExecutionCredentials(storage,{signal:controller.signal,scheduled:input.executionOrigin==='scheduled',onStatus:input.onStatus});
+        const router=await require('./model-routing.cjs').createModelRouter(storage,input.modelId,{signal:controller.signal,credentialsFor,onRoute:event=>{routeEvents.push({...event,at:new Date().toISOString()});input.onStatus?.(event.message);}});
+        executionStarted=activeNow();
         const model=router.model;
         const reasoning = reasoningParameters(router.primary,input.reasoningEffort);
         const visualRouter=require('./model-routing.cjs').createVisualRouter(router,{onStatus:input.onStatus});
         const usageSupport=new Map();
         let lastLane;
         async function askOnce(messages, maxTokens, showReply = false, prefix = "", requestPhase, format = {}, attempt=0, requestObserver,requestOptions={}) {
+          await awake?.wait(controller.signal);
+          messages=require('./answer-style.cjs').withStyle(messages,answerStyle);
           const model=requestOptions.model||router.primary;
           const reasoning=reasoningParameters(model,input.reasoningEffort);
           const url = new URL(model.baseUrl);
@@ -138,7 +151,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           const prepared=prepareRequestBudget(messages,format,model,requestOptions.prepared?.stats.requestedReserve||maxTokens);
           await requestOptions.onContext?.({...prepared.stats,status:'sending'});
           maxTokens=prepared.budget;
-          const startedAt = Date.now();
+          const startedAt = activeNow();
           if(requestOptions.deadlineAt!==undefined&&startedAt>=requestOptions.deadlineAt)throw Object.assign(Error('本次决策与工具目录请求已达到总等待预算，任务进度已保留。'),{code:'MODEL_NO_ACTION_TIMEOUT'});
           if (showReply) replyStartedAt ??= startedAt;
           const isDecision = requestPhase === '任务决策';
@@ -149,7 +162,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           const cancelRequest = () => requestController.abort();
           controller.signal.addEventListener('abort', cancelRequest, {once:true});
           let requestFailure;
-          const diagnostic={metricsVersion:1,id:require('node:crypto').randomUUID(),modelId:model.id||input.modelId,selectedModelId:input.modelId,routingLane:requestOptions.lane||'primary',taskId:input.taskId,attempt,phase,startedAt:new Date(startedAt).toISOString(),transport:fetchImpl.transport||'node-fetch',chunks:0,bytes:0,maxChunkGapMs:0};
+          const diagnostic={metricsVersion:1,id:require('node:crypto').randomUUID(),modelId:model.id||input.modelId,selectedModelId:input.modelId,routingLane:requestOptions.lane||'primary',taskId:input.taskId,attempt,phase,startedAt:new Date().toISOString(),transport:fetchImpl.transport||'node-fetch',chunks:0,bytes:0,maxChunkGapMs:0};
           for(const [key,value]of Object.entries(requestOptions.requestComposition||{}))if(['systemBytes','stateBytes','toolSchemaBytes','toolResultBytes','deduplicatedBytes'].includes(key)&&Number.isFinite(value))diagnostic[key]=value;
           let lastChunkAt;
           let proxyTimer;
@@ -171,7 +184,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
               ? `任务决策超时：${Math.round(outputWait / 1000)} 秒内未开始返回下一步动作。任务进度、项目文件和材料已保留，可重试当前步骤。`
               : `${phase}超时：${Math.round(outputWait / 1000)} 秒内未生成正文（思考数据不算正文）。可重试或切换模型；原始对话和材料已保留。`;
             if(isDecision){diagnostic.timeoutStage='no_action';requestTimeout('MODEL_NO_ACTION_TIMEOUT',deadlineMessage);}else if(router.enabled||requestOptions.requestLocal){requestTimeout('MODEL_OUTPUT_TIMEOUT',deadlineMessage);}else{timeoutMessage=deadlineMessage;timeoutCode='MODEL_OUTPUT_TIMEOUT';controller.abort();}
-          }, Math.max(0, outputWait - (Date.now() - textStartedAt)));
+          }, Math.max(0, outputWait - (activeNow() - textStartedAt)));
           // Response headers can be delayed by gateway queueing or model prefill;
           // this is not a TCP/TLS connection timer. Retries allow more queue time.
           const headerWait=Math.min(limits.connect+attempt*limits.headerStep,Math.max(limits.connect,120000));
@@ -182,7 +195,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
             if(requestOptions.requestLocal){requestTimeout('MODEL_OUTPUT_TIMEOUT',`${phase}已达到本次整理时限，将保留原始结果。`);return;}
             timeoutMessage = `${phase}超时：已达到单次请求最长等待时间（${Math.round(limits.total / 60000)} 分钟）。`;
             timeoutCode='MODEL_TOTAL_TIMEOUT';controller.abort();
-          }, Math.min(limits.total,requestOptions.deadlineAt===undefined?limits.total:Math.max(1,requestOptions.deadlineAt-Date.now())));
+          }, Math.min(limits.total,requestOptions.deadlineAt===undefined?limits.total:Math.max(1,requestOptions.deadlineAt-activeNow())));
           try {
           interruptModel();requestController.signal.throwIfAborted();
           const providerReasoning={...reasoning,...decisionReasoningParameters(model,requestOptions.decisionStage),...(requestOptions.recovery?recoveryReasoningParameters(model,requestOptions.recoveryStage):{})};
@@ -207,7 +220,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
             },
             body: requestBody,
           }),requestController.signal,response=>response.body?.cancel()).catch(error=>{throw require('./network-error.cjs').networkError(error,true);});
-          diagnostic.headersMs=Date.now()-startedAt;diagnostic.providerRequestId=requestId(response.headers);diagnostic.httpStatus=response.status;
+          diagnostic.headersMs=activeNow()-startedAt;diagnostic.providerRequestId=requestId(response.headers);diagnostic.httpStatus=response.status;
           if(model.apiKey&&diagnostic.providerRequestId?.includes(model.apiKey))delete diagnostic.providerRequestId;
           armTimer(limits.first,()=>requestTimeout('MODEL_FIRST_CONTENT_TIMEOUT',`${phase}超时：未收到模型内容（${Math.round(limits.first/1000)} 秒；已收到响应头）。`));
           const requestHasImages=messages.some(message=>Array.isArray(message.content)&&message.content.some(part=>part.type==='image_url'));
@@ -245,16 +258,16 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           }
           const result=await readCompletion(response, {
             signal: requestController.signal,
-            onChunk: bytes=>{const now=Date.now();diagnostic.chunks++;diagnostic.bytes+=bytes;if(lastChunkAt!==undefined)diagnostic.maxChunkGapMs=Math.max(diagnostic.maxChunkGapMs,now-lastChunkAt);lastChunkAt=now;diagnostic.firstByteMs??=now-startedAt;},
+            onChunk: bytes=>{const now=activeNow();diagnostic.chunks++;diagnostic.bytes+=bytes;if(lastChunkAt!==undefined)diagnostic.maxChunkGapMs=Math.max(diagnostic.maxChunkGapMs,now-lastChunkAt);lastChunkAt=now;diagnostic.firstByteMs??=now-startedAt;},
             onCleanup: cancelled=>{diagnostic.streamCancelled=cancelled;},
-            onActivity: () => {diagnostic.firstContentMs??=Date.now()-startedAt;armTimer(limits.idle,()=>requestTimeout(isDecision?'MODEL_DECISION_IDLE_TIMEOUT':'MODEL_STREAM_IDLE_TIMEOUT',`${phase}超时：模型内容已停止更新（${Math.round(limits.idle/1000)} 秒）。`));},
+            onActivity: () => {diagnostic.firstContentMs??=activeNow()-startedAt;armTimer(limits.idle,()=>requestTimeout(isDecision?'MODEL_DECISION_IDLE_TIMEOUT':'MODEL_STREAM_IDLE_TIMEOUT',`${phase}超时：模型内容已停止更新（${Math.round(limits.idle/1000)} 秒）。`));},
             onToolActivity: (argumentChars,counts) => {
               if(Number.isSafeInteger(counts?.toolArgumentDeltas))diagnostic.toolArgumentDeltas=counts.toolArgumentDeltas;
-              diagnostic.toolArgumentChars=argumentChars;if(!argumentChars)return;diagnostic.firstActionMs??=Date.now()-startedAt;
+              diagnostic.toolArgumentChars=argumentChars;if(!argumentChars)return;diagnostic.firstActionMs??=activeNow()-startedAt;
               hasText = true;
               if(requestOptions.replyPreview&&counts?.index===0){
                 const preview=replyStream.replyText(counts.name,counts.arguments);
-                if(preview&&preview!==lastReplyPreview){lastReplyPreview=preview;diagnostic.firstReplyMs??=Date.now()-startedAt;input.onText?.(preview);}
+                if(preview&&preview!==lastReplyPreview){lastReplyPreview=preview;diagnostic.firstReplyMs??=activeNow()-startedAt;input.onText?.(preview);}
               }
               if(!isDecision)clearTimeout(textTimer);
               else if(!firstToolArguments){
@@ -263,8 +276,8 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
                 diagnostic.actionCompletionTimeoutMs=completionWait;
                 textTimer=setTimeout(()=>{diagnostic.timeoutStage='action_completion';requestTimeout('MODEL_NO_ACTION_TIMEOUT',`任务决策超时：工具参数开始后 ${Math.round(completionWait/1000)} 秒内未完成动作。已有进度已保留。`);},completionWait);
               }
-              if (isDecision && Date.now()-lastThinkingStatus>=1000) {
-                lastThinkingStatus=Date.now();
+              if (isDecision && activeNow()-lastThinkingStatus>=1000) {
+                lastThinkingStatus=activeNow();
                 input.onStatus?.('模型正在生成下一步动作，接收完成后执行…');
               }
             },
@@ -272,15 +285,15 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
               diagnostic.contentChars=content.length;hasText = true;
               // Prose is not an executable decision. Keep its action deadline.
               if(!isDecision)clearTimeout(textTimer);
-              if (showReply) {if(content.trim())diagnostic.firstReplyMs??=Date.now()-startedAt;input.onText?.(prefix + content);}
+              if (showReply) {if(content.trim())diagnostic.firstReplyMs??=activeNow()-startedAt;input.onText?.(prefix + content);}
               else if(requestOptions.replyPreview){
                 // JSON/text compatibility modes carry the action in content.
                 const preview=replyStream.replyText('ailo_action',content);
-                if(preview&&preview!==lastReplyPreview){lastReplyPreview=preview;diagnostic.firstReplyMs??=Date.now()-startedAt;input.onText?.(preview);}
+                if(preview&&preview!==lastReplyPreview){lastReplyPreview=preview;diagnostic.firstReplyMs??=activeNow()-startedAt;input.onText?.(preview);}
               }
             },
             onThinking: showReply || isDecision ? (chars) => {
-              diagnostic.reasoningChars=chars;const now = Date.now();
+              diagnostic.reasoningChars=chars;const now = activeNow();
               if (hasText || now - lastThinkingStatus < 1000) return;
               lastThinkingStatus = now;
               if(isDecision) { input.onStatus?.(`正在决定下一步 · 模型仍在思考 · 已等待 ${Math.floor((now-startedAt)/1000)} 秒（最长 ${Math.round(outputWait/60000)} 分钟）`); return; }
@@ -290,6 +303,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           diagnostic.providerUsage=result.providerUsage;
           if(isDecision){try{diagnostic.action=require('./agent/tool-menu.cjs').discovery(result)?'request_tools':require('./agent/protocol.cjs').decodeAction(result).action;if(diagnostic.action!=='request_tools')require('./agent/protocol.cjs').decodeAction(result,{steps:requestOptions.decisionSteps,boundReadPages:true});}
           catch(error){if(error.code==='AGENT_PROTOCOL'){diagnostic.protocolErrorReason=error.reason;for(const key of ['jsonErrorOffset','jsonCleanedChars','jsonErrorCharacterClass','toolArgumentDeltas'])if(error.diagnostics?.[key]!==undefined)diagnostic[key]=error.diagnostics[key];}}}
+          await awake?.wait(controller.signal);
           diagnostic.outcome='completed';return result;
           } catch (error) {
             diagnostic.providerUsage=error.providerUsage;
@@ -309,7 +323,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
             diagnostic.abortRequested=true;
             requestController.abort();
             if(session.interruptModel===interruptModel)delete session.interruptModel;
-            diagnostic.durationMs=Date.now()-startedAt;
+            diagnostic.durationMs=activeNow()-startedAt;
             replyMetrics.record(diagnostic);
             replyUsage.record(diagnostic.id,diagnostic.providerUsage,{id:model.id,name:model.name,model:model.model,lane:requestOptions.lane||'primary'});
             try{publishActivity(activity.capture(session.run));}catch{}
@@ -327,7 +341,8 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           lastLane=requestOptions.lane;
           const key=JSON.stringify([requestOptions.model.baseUrl,requestOptions.model.model]);
           let usage=usageSupport.get(key)!==false;
-          for(;;){try{requestUsage=usage;return await recoverRequest(attempt=>askOnce(messages,maxTokens,showReply,prefix,requestPhase,format,attempt,requestObserver,requestOptions),{signal:controller.signal,retries:limits.retries??2,retryDelay:limits.retryDelay??500,onRetry:(attempt,total)=>input.onStatus?.(`模型响应暂时停顿，正在自动重试当前${requestPhase==='任务决策'?'决策':'请求'}（${attempt}/${total}）…`)});}catch(error){if(error.code==='MODEL_USAGE_UNSUPPORTED'&&usage){usage=false;usageSupport.set(key,false);continue;}throw error;}}
+          const networkWait=storage.executionConnectivity?.();
+          for(;;){try{requestUsage=usage;return await recoverRequest(attempt=>askOnce(messages,maxTokens,showReply,prefix,requestPhase,format,attempt,requestObserver,requestOptions),{signal:controller.signal,retries:limits.retries??2,retryDelay:limits.retryDelay??500,waitForNetwork:networkWait?signal=>networkWait(signal,input.onStatus):undefined,onRetry:(attempt,total)=>input.onStatus?.(`模型响应暂时停顿，正在自动重试当前${requestPhase==='任务决策'?'决策':'请求'}（${attempt}/${total}）…`)});}catch(error){if(error.code==='MODEL_USAGE_UNSUPPORTED'&&usage){usage=false;usageSupport.set(key,false);continue;}throw error;}}
         }
         async function prepareVisual(messages,requestObserver,requestOptions={}){
           const visual=await visualRouter(messages,async (visualMessages,actual)=>{
@@ -339,7 +354,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           return visual;
         }
         async function summarizeResult(state,summarySignal,requestObserver){
-          const deadlineAt=Date.now()+45000;
+          const deadlineAt=activeNow()+45000;
           const {result}=await router.run('primary',async actual=>{
             const {countMessages,capacity}=await import('./context.mjs');
             const data={goal:String(state.goal||'').slice(0,1200),originalGoal:state.originalGoal,inputId:state.inputId,changes:state.changes,pending:state.pending,sources:state.sources.map(s=>({...s,text:s.text.slice(0,1600)}))};
@@ -360,7 +375,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
           return {...result,visualReviews:visual.reviews,visualFailures:visual.failures,modelRoutes};
         }
         const { parseClarification } = await import("./clarification.mjs");
-        if (storage.agentDirectory && input.taskId && !storage.isTemporary?.(input.taskId) && !schedulingTask?.responseOnly) {
+        if (storage.agentDirectory && input.taskId && !storage.isTemporary?.(input.taskId)) {
           const state = await storage.readWorkspace();
           let task = state.tasks.find(t => t.id === input.taskId);
           if (!task) throw Error("任务不存在。");
@@ -371,6 +386,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
             memory=await storage.personalMemory.scope({task,owner});
           }
           if(storage.permissions&&!task.permissionMode&&storage.patchTask){const policy=await storage.permissions.read(task.id);task=await storage.patchTask(task.id,{permissionMode:policy.currentMode});}
+          task=require('./material-originals.cjs').withMaterialOrigins(task,state.tasks||[]);
           const scheduledContext=await require('./schedule-context.cjs').prepareScheduleContext(storage.agentDirectory,task,state.tasks||[]);
           const { runAgent } = require("./agent/runner.cjs");
           const {allowedActions}=require("./agent/protocol.cjs");
@@ -389,7 +405,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
             // backoff; otherwise a short caller deadline would reclassify a
             // transport retry as a model no-action failure before attempt three.
             const backoffAllowance=Array.from({length:Math.max(0,limits.retries??2)},(_,i)=>Math.min(4000,(limits.retryDelay??500)*2**i)).reduce((a,b)=>a+b,0);
-            const authorized=allowedActions(state),deadlineAt=Date.now()+limits.total+backoffAllowance;
+            const authorized=allowedActions(state),deadlineAt=activeNow()+limits.total+backoffAllowance;
             let discoveryCount=0;
             const {prepareRequestBudget}=await import('./context.mjs');
             for (;;) {
@@ -445,7 +461,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
             }catch(error){if(error.code==='ERR_ASSERTION')throw error;session.pendingAckIds=[...new Set([...(session.pendingAckIds||[]),...ids])];}
           };
           if(replayAckIds.length)await acknowledgeInputs(replayAckIds);
-          const executeAgent=async permissionScope=>{let browserWorkspace;try{return await require('./agent/execution-segments.cjs').runSegments(async segmentOptions=>runAgent({...segmentOptions,autonomous:storage.autonomousTasks===true,retainBrowser:true,onWorkspace:workspace=>{browserWorkspace=workspace;},permissions:permissionScope,requestOrigin:input.executionOrigin||'unknown',runtimeContinuation:input.runtimeContinuation,reasoningConfig:reasoning,getSteering:async()=>{await session.saving;if(browserWorkspace&&(require('./agent/result-settlement.cjs').unknown(browserWorkspace.run)||browserWorkspace.run.inFlight)){const ready=session.queue.filter(m=>!session.restoredInputIds.has(m.id));session.queue=session.queue.filter(m=>session.restoredInputIds.has(m.id));return ready;}return session.queue.splice(0);},onSteeringAccepted:acknowledgeInputs, base: storage.agentDirectory, task, model, scheduledContext,memory,images:storage.imageObserver,browser:storage.browserObserver, projectMemoryContext:task.projectId?await require('./project-memory.cjs').readMemory(storage.agentDirectory,state.projects?.find(p=>p.id===task.projectId)||{id:task.projectId},state.tasks||[]):null, projectContext:require('./project-context.cjs').projectContext(state.projects?.find(p=>p.id===task.projectId)), personalAssistant:task.id===require('./personal-assistant.cjs').ASSISTANT_ID?storage.personalAssistant:undefined, knowledge:storage.knowledge?.scope(task.knowledgeIds||[]),mcp:storage.mcpConnections?.scope(input.mcpConnectionIds||[]),amap:input.amapEnabled===false?undefined:storage.amap, webSearch:input.searchEnabled===true?storage.webSearch:undefined, android:storage.androidManager, authorizeBuild:storage.authorizeBuild,directoryAccess:permissionScope?.directoryAccess||storage.directoryAccess,feishuCli:input.feishuEnabled===false?{execute:async()=>{throw Object.assign(Error('当前对话已关闭飞书，请在输入框 ＋ → 应用连接中开启后再试。'),{code:'FEISHU_DECLINED'});}}:storage.feishuCli,
+          const executeAgent=async permissionScope=>{let browserWorkspace;const subagentAsk=require('./subagent-request.cjs').createSubagentRequest({fetchImpl,model,signal:permissionScope?.signal||controller.signal,onUsage:(id,usage,usedModel)=>{replyUsage.record(id,usage,usedModel);publishActivity(activity.capture(session.run));},recordRequest:async record=>{replyMetrics.record(record);if(browserWorkspace)require('./agent/performance.cjs').request(browserWorkspace.run,record);await storage.recordModelRequest?.(record);}});try{return await require('./agent/execution-segments.cjs').runSegments(async segmentOptions=>runAgent({...segmentOptions,budgetNow:activeNow,waitUntilAwake:signal=>awake?.wait(signal),autonomous:storage.autonomousTasks===true,retainBrowser:true,onWorkspace:workspace=>{browserWorkspace=workspace;},permissions:permissionScope,requestOrigin:input.executionOrigin||'unknown',runtimeContinuation:input.runtimeContinuation,reasoningConfig:reasoning,getSteering:async()=>{await session.saving;if(browserWorkspace&&(require('./agent/result-settlement.cjs').unknown(browserWorkspace.run)||browserWorkspace.run.inFlight)){const ready=session.queue.filter(m=>!session.restoredInputIds.has(m.id));session.queue=session.queue.filter(m=>session.restoredInputIds.has(m.id));return ready;}return session.queue.splice(0);},onSteeringAccepted:acknowledgeInputs, base: storage.agentDirectory, task, model, subagentAsk, scheduledContext,memory,images:storage.imageObserver,browser:storage.browserObserver, projectMemoryContext:task.projectId?await require('./project-memory.cjs').readMemory(storage.agentDirectory,state.projects?.find(p=>p.id===task.projectId)||{id:task.projectId},state.tasks||[]):null, projectContext:require('./project-context.cjs').projectContext(state.projects?.find(p=>p.id===task.projectId)), personalAssistant:task.id===require('./personal-assistant.cjs').ASSISTANT_ID?storage.personalAssistant:undefined, knowledge:storage.knowledge?.scope(task.knowledgeIds||[]),mcp:storage.mcpConnections?.scope(input.mcpConnectionIds||[]),amap:input.amapEnabled===false?undefined:storage.amap, webSearch:input.searchEnabled===true?storage.webSearch:undefined, android:storage.androidManager, authorizeBuild:storage.authorizeBuild,directoryAccess:permissionScope?.directoryAccess||storage.directoryAccess,feishuCli:input.feishuEnabled===false?{execute:async()=>{throw Object.assign(Error('当前对话已关闭飞书，请在输入框 ＋ → 应用连接中开启后再试。'),{code:'FEISHU_DECLINED'});}}:storage.feishuCli,
             signal:permissionScope?.signal||controller.signal, ask: askAgent,summarizeResult, prepareModelMessages:router.enabled?(messages,onContext,onRequest)=>prepareVisual(messages,onRequest,{onContext}):undefined, extensions: selected, availableSkills: state.extensions||[], skillPackages: storage.skillPackages,
             onStatus: input.onStatus, onRun: async run=>{
               executionExtensions=run.loadedExtensions||[];
@@ -457,7 +473,7 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
               }
               if(task.scheduledTaskId||task.id===require("./personal-assistant.cjs").ASSISTANT_ID)run={...run,conversationTitle:undefined};
               input.onRun?.(run);
-            } }),{signal:permissionScope?.signal||controller.signal,onContinue:input.onStatus,policy:require('./agent/execution-segments.cjs').evaluationPolicy(input,storage.agentExecutionPolicy)});}finally{if(browserWorkspace)storage.browserObserver?.close(browserWorkspace);}};
+            } }),{signal:permissionScope?.signal||controller.signal,onContinue:input.onStatus,now:activeNow,policy:require('./agent/execution-segments.cjs').evaluationPolicy(input,storage.agentExecutionPolicy)});}finally{if(browserWorkspace)storage.browserObserver?.close(browserWorkspace);}};
           const scopedAgent=async scope=>{const cancel=()=>controller.abort();scope.signal.addEventListener('abort',cancel,{once:true});try{return await executeAgent(scope);}finally{scope.signal.removeEventListener('abort',cancel);}};
           let result;
           // Close intake atomically with the final handoff. A message accepted
@@ -497,7 +513,8 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
         if (prepared.compacted && input.taskId && storage.saveContextCheckpoint)
           await storage.saveContextCheckpoint(input.taskId, prepared.checkpoint);
         input.onStatus?.(prepared.compacted ? "历史已整理，正在等待模型回复…" : "正在等待模型回复…");
-        const replyImages=router.enabled&&storage.agentDirectory?await require('./chat-image-input.cjs').imageMessages(storage.agentDirectory,schedulingTask,input.messages):[];
+        const replyImages=storage.agentDirectory?await require('./chat-image-input.cjs').imageMessages(storage.agentDirectory,schedulingTask,input.messages):[];
+        if(replyImages.length&&!router.enabled&&model.imageInput==='disabled')throw Object.assign(Error('当前模型未启用图片输入，请为当前模型启用图片能力或使用已配置的视觉模型；原图片已保留。'),{code:'MODEL_IMAGE_UNSUPPORTED'});
         let accumulated = "";
         for (let attempt = 0; attempt < 3; attempt++) {
           let messages = accumulated ? [...prepared.messages,
@@ -538,8 +555,8 @@ function createChat(storage, fetchImpl = fetch, timeouts = {}) {
         await session.saving;
         steering.delete(input.id);
         pending.delete(input.id);
-        release?.();try{releasePower?.();}catch{}
-        if(executionStarted!==undefined)try{await storage.recordExecution?.({id:input.id,durationMs:Date.now()-executionStarted,reasoningEffort:input.reasoningEffort,skills:executionExtensions.filter(e=>e.kind==='skill').map(e=>e.id),connections:[...(input.mcpConnectionIds||[]),...(input.feishuEnabled?['feishu']:[]),...(input.amapEnabled?['amap']:[]),...(input.searchEnabled?['search']:[])]});}catch{}
+        release?.();try{releaseAwake?.();releasePower?.();}catch{}
+        if(executionStarted!==undefined)try{await storage.recordExecution?.({id:input.id,durationMs:activeNow()-executionStarted,reasoningEffort:input.reasoningEffort,skills:executionExtensions.filter(e=>e.kind==='skill').map(e=>e.id),connections:[...(input.mcpConnectionIds||[]),...(input.feishuEnabled?['feishu']:[]),...(input.amapEnabled?['amap']:[]),...(input.searchEnabled?['search']:[])]});}catch{}
       }
     },
   };

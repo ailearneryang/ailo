@@ -8,7 +8,7 @@ const toolIcons:Record<string,IconName>={
  read_file:'file',write_file:'edit',edit_file:'edit',edit_spreadsheet:'grid',artifact:'file',
  read_material:'book',read_source:'book',inspect_source:'search',batch_read:'book',list_files:'folder-open',
  view_image:'image',android_device:'device',mcp:'plug',feishu:'chat',knowledge:'book',
- read_history:'clock',read_execution:'clock',memory:'memory',assistant:'chat',
+ read_history:'clock',read_execution:'clock',memory:'memory',assistant:'chat',subagent:'user',
  request_directory:'lock',request_network:'globe',permission_requested:'lock',permission_required:'lock',
  verify:'check',acceptance_check:'check',tool_error:'info',load_skill:'sparkles',request_tools:'tool',
 };

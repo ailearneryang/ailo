@@ -1,8 +1,8 @@
 export function queuedDispatch(input:{requested?:boolean;ready:boolean;composerBusy:boolean;sending:boolean;paused:boolean;editing:boolean;taskId?:string;pendingTaskId?:string|null;requestId?:string|null;phase?:string;blocked?:boolean}):'steer'|'start'|'wait'{
   if(!input.ready||input.composerBusy||input.sending||input.paused||input.editing||!input.taskId)return 'wait';
-  // New input takes priority at the next safe boundary; the fallback queue
-  // retains settlement, edit, pause and stable-message protections.
-  if(input.pendingTaskId)return input.pendingTaskId===input.taskId&&!!input.requestId&&input.phase==='running'?'steer':'wait';
+  // Submitted commands remain visible as individual queue rows while a task
+  // runs. Only that row's Run button may send it into the current execution.
+  if(input.pendingTaskId)return input.requested===true&&input.pendingTaskId===input.taskId&&!!input.requestId&&input.phase==='running'?'steer':'wait';
   return input.requestId||input.blocked?'wait':'start';
 }
 export type QueueTask={id:string;archived?:boolean;assistantPaused?:boolean;lastError?:string;messages?:{id:string;role:string;clarification?:unknown}[];agentRun?:{status?:string;currentOutcome?:string;taskContinuation?:{taskOpen?:boolean;question?:string}}};

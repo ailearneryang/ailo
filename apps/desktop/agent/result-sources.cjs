@@ -47,13 +47,16 @@ async function files(workspace,{signal}={}){
 async function findings(workspace,{signal}={}){
  const sources=[];let used=0;
  const turn=workspace.run.inputTurn,prior=new Set([...(turn?.observationIds||[]),...(turn?.eventIds||[])]);
- for(const record of (await records(workspace,readable)).reverse()){
+ const candidates=(await records(workspace,readable)).reverse();
+ // Current search receipts must not be crowded out by pages of historical files.
+ candidates.sort((a,b)=>Number(b.action.action==='web_search')-Number(a.action.action==='web_search'));
+ for(const record of candidates){
   signal?.throwIfAborted();
   if(turn?.followup&&(prior.has(record.id)||prior.has(record.response?.eventId)))continue;
   const result=record.response?.result;
   if(record.response?.error||record.response?.notExecuted||!result||result.notExecuted||result.timedOut||result.exitCode!==undefined&&result.exitCode!==0)continue;
   if(result.path&&result.sha256)try{const hash=await require('./evidence.cjs').hashFile(await resolveFile(workspace.files,result.path));if(hash!==result.sha256)continue;}catch{continue;}
-  const value=result.text||result.output||result.content||(result.results?JSON.stringify(result.results):'');
+  const value=result.text||result.output||result.content||(Array.isArray(result.sources)?'搜索：'+String(result.query||'')+'\n'+(require('./search-context.cjs').project(result,record.id)?.sources||[]).map(s=>[s.title,s.date,s.url,s.content.slice(0,120)].filter(Boolean).join(' · ')).join('\n'):result.results?JSON.stringify(result.results):'');
   if(typeof value!=='string'||!value.trim())continue;
   const text=value.slice(0,Math.min(2400,16000-used));if(!text)break;
   sources.push({id:record.id,path:result.path||record.action.path,label:workspace.lookup?.(record.action.id)?.name||({web_search:'搜索结果',knowledge:'知识库材料',run_command:'实际计算输出'}[record.action.action]),text,action:record.action.action});used+=text.length;

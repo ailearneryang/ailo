@@ -3,7 +3,7 @@ const {randomUUID,createHash}=require('node:crypto');
 const {resolveFile}=require('./workspace.cjs');
 const stable=value=>value&&typeof value==='object'?(Array.isArray(value)?value.map(stable):Object.fromEntries(Object.keys(value).sort().map(k=>[k,stable(value[k])]))):value;
 const fingerprint=action=>createHash('sha256').update(JSON.stringify(stable({...action,purpose:undefined,stepId:undefined,progress:undefined}))).digest('hex');
-const reads=new Set(['request_network','read_file','batch_read','view_image','list_files','read_material','read_source','inspect_source','search_materials','read_execution','read_history']);
+const reads=new Set(['request_network','subagent','read_file','batch_read','view_image','list_files','read_material','read_source','inspect_source','search_materials','read_execution','read_history']);
 function unknown(run){return (run.actionJournal||[]).some(e=>['unknown','running'].includes(e.status)||e.status==='interrupted'&&!e.readOnly);}
 function begin(run,action){
  run.actionJournal ||= [];
@@ -19,6 +19,7 @@ function begin(run,action){
 async function reconcile(workspace){
  for(const entry of workspace.run.actionJournal||[]){
   if(entry.status!=='running'&&entry.status!=='unknown')continue;
+  if(await require('./beatra-authorization.cjs').reconcile(workspace,entry))continue;
   if(entry.action==='write_file'&&entry.expectedHash){
    try{const data=await fs.readFile(await resolveFile(workspace.files,entry.path));if(createHash('sha256').update(data).digest('hex')===entry.expectedHash){entry.status='succeeded';entry.recovered=true;entry.finishedAt=new Date().toISOString();await workspace.event('action_recovered',{actionId:entry.id,path:entry.path,message:'已核对中断写入的文件内容，无需重做。'});continue;}}catch{}
   }

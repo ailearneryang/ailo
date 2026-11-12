@@ -6,11 +6,11 @@ function mayFailover(error){
  if(error.code==='MODEL_PROVIDER_ERROR')return error.providerCategory==='transient';
  return error.code==='MODEL_NETWORK'&&!!require('./network-error.cjs').transientNetworkCode(error.networkCode);
 }
-async function createModelRouter(storage,selectedId,{signal,onRoute,now=Date.now,cooldownMs=30000,maxProbes=2}={}){
+async function createModelRouter(storage,selectedId,{signal,onRoute,now=Date.now,cooldownMs=30000,maxProbes=2,credentialsFor=id=>storage.modelCredentials(id)}={}){
  const state=selectedId===AUTO_ID?await storage.readWorkspace():null;
  const config=selectedId===AUTO_ID?validateRouting(state.autoModel,state.models||[]):null;
  if(selectedId===AUTO_ID&&!config)throw Error('请先在模型设置中配置 Auto 的主模型和视觉模型');
- const primary=await storage.modelCredentials(config?.primaryModelId||selectedId);
+ const primary=await credentialsFor(config?.primaryModelId||selectedId);
  const lanes={primary:[config?.primaryModelId||selectedId,...(config?.failover&&config.primaryFallbackId?[config.primaryFallbackId]:[])],vision:config?.visionModelId?[config.visionModelId,...(config.failover&&config.visionFallbackId?[config.visionFallbackId]:[])]:[]};
  const positions={primary:0,vision:0},credentials=new Map([[config?.primaryModelId||selectedId,primary]]),circuits=new Map();
  const metadata=id=>state?.models?.find(m=>m.id===id)||primary;
@@ -19,7 +19,7 @@ async function createModelRouter(storage,selectedId,{signal,onRoute,now=Date.now
  // The executor's preflight budget must fit every allowed primary. Each actual
  // request is measured again against its own model and wire schema.
  const model=config?{...primary,id:AUTO_ID,name:'Auto',contextWindow:Math.min(...primaryModels.map(m=>m.contextWindow||32768)),maxOutputTokens:Math.min(...primaryModels.map(m=>m.maxOutputTokens||8192)),autoRouting:{visionAvailable:!!lanes.vision.length,configFingerprint}}:primary;
- async function get(id){if(!credentials.has(id))credentials.set(id,await storage.modelCredentials(id));return credentials.get(id);}
+ async function get(id){if(!credentials.has(id))credentials.set(id,await credentialsFor(id));return credentials.get(id);}
  async function run(lane,request){
   if(!lanes[lane]?.length)throw Object.assign(Error('Auto 尚未配置可用视觉模型；原任务和材料已保留。'),{code:'MODEL_VISION_UNAVAILABLE'});
   const attempted=new Set();

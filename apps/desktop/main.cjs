@@ -2,6 +2,7 @@ const {
   app,
   BrowserWindow,
   Menu,
+  Tray,
   ipcMain,
   dialog,
   shell,
@@ -35,6 +36,16 @@ const storage = require("./storage.cjs").createStorage(
   app.getPath("userData"),
   safeStorage,
 );
+const shareCredentials=require('./share-credentials.cjs').createShareCredentials({directory:app.getPath('userData'),safeStorage});
+const gistShare=require('./share-gist.cjs').createGistShare({storage,credentials:shareCredentials,fetchImpl:require('electron').net.fetch});
+app.on('before-quit',()=>gistShare.clear());
+storage.executionAwake=require('./execution-awake.cjs').createExecutionAwake();
+storage.executionConnectivity=require('./execution-connectivity.cjs').createConnectivityWait({isOnline:()=>require('electron').net.isOnline(),awake:storage.executionAwake});
+storage.executionPresence=require('./execution-presence.cjs').createExecutionPresence({awake:storage.executionAwake,isUnlocked:()=>{try{return powerMonitor.getSystemIdleState(1)!=='locked';}catch{return false;}}});
+powerMonitor.on('lock-screen',()=>storage.executionPresence.lock());
+powerMonitor.on('unlock-screen',()=>storage.executionPresence.unlock());
+powerMonitor.on('suspend',()=>storage.executionAwake.suspend());
+powerMonitor.on('resume',()=>{storage.executionAwake.resume();storage.executionPresence.resume();});
 storage.executionPower=require('./execution-power.cjs').createExecutionPower(require('electron').powerSaveBlocker);
 const chat = require("./chat.cjs").createChat(storage,require('./model-transport.cjs').createModelTransport());
 storage.personalMemory=require('./personal-memory.cjs').createPersonalMemory({directory:app.getPath('userData'),account:()=>storage.account(),workspace:()=>storage.readWorkspace(),notify:owner=>{if(win&&!win.isDestroyed())win.webContents.send('memory:changed',owner);}});
@@ -49,7 +60,7 @@ storage.imageObserver=require('./agent/image-observer.cjs').createImageObserver(
 storage.browserObserver=require('./agent/browser-observer.cjs').createBrowserObserver(require('electron'));
 storage.autonomousTasks=true;
 storage.agentDirectory = path.join(app.getPath("userData"), "agent");
-const {experience,dictation}=require('./experience-ipc.cjs').attachExperience({app,ipcMain,storage,chat,trusted,getWin:()=>win,dialog,shell,workspaceState,readMaterial,createWindow:()=>create()});
+const {experience,dictation,taskNotifications,notificationPresenter,testNotification}=require('./experience-ipc.cjs').attachExperience({app,ipcMain,storage,chat,trusted,getWin:()=>win,dialog,shell,workspaceState,readMaterial,createWindow:()=>create()});
 storage.permissions=require('./permissions.cjs').createPermissions({directory:app.getPath('userData'),base:storage.agentDirectory,account:()=>storage.account(),workspace:()=>storage.readWorkspace(),patchTask:(id,patch)=>storage.patchTask(id,patch),notify:owner=>{if(win&&!win.isDestroyed())win.webContents.send('permissions:changed',owner);},
  selectDirectory:async(action,signal)=>{if(signal.aborted)return null;const result=await dialog.showOpenDialog(win,{title:'选择允许只读访问的文件夹',defaultPath:action.path,properties:['openDirectory','dontAddToRecent']});return result.canceled||signal.aborted?null:result.filePaths[0];},
  confirm:async(request,signal)=>{
@@ -146,6 +157,10 @@ ipcMain.handle("task:edit-last-message", async (e, {id,messageId,content}) => {
   if(!task.temporary)await companion.activity(task,[task.messages.at(-1)],owner).catch(error=>console.error('陪伴记录保存失败',error.message));return task;
 });
 ipcMain.handle('message:feedback',(e,input)=>{trusted(e);return storage.messageFeedback(input);});
+ipcMain.handle('share:status',(e,input)=>{trusted(e);return gistShare.status(input);});
+ipcMain.handle('share:publish',(e,input)=>{trusted(e);return gistShare.publish(input);});
+ipcMain.handle('share:disconnect',(e,input)=>{trusted(e);return gistShare.disconnect(input);});
+ipcMain.handle('share:connect',(e,input)=>{trusted(e);return gistShare.connect(input);});
 ipcMain.handle("task:patch", async (e, {id,patch,append}) => {trusted(e);if(patch?.permissionMode!==undefined&&chat.sessions().some(s=>s.taskId===id)){const old=(await storage.readWorkspace()).tasks.find(t=>t.id===id);if(old?.permissionMode!==patch.permissionMode)throw Error('请先停止任务再更改权限模式');}return storage.isTemporary(id)?storage.patchTask(id,patch,append):companionModule.patchUserTask(storage,companion,id,patch,append);});
 ipcMain.handle("task:pin", (e, {id,pinned}) => { trusted(e); return storage.setTaskPinned(id,pinned); });
 ipcMain.handle("chat:steer", async (e, input) => {
@@ -168,7 +183,7 @@ const schedules=require('./scheduled-tasks.cjs').createScheduledTasks({
       await storage.patchTask(run.taskId,{modelName:result.modelName,contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens},[{id:run.id+'-assistant',role:'assistant',content:result.content,replyDetails:result.replyDetails,modelName:result.modelName,clarification:result.clarification}]);
       if(result.agentRun?.delivery?.status==='settled'){if(result.agentRun.status==='partial')return {status:'partial'};throw Error('本轮已结束，尚未形成可交付成果。');}
       if(result.clarification||['blocked','waiting_permission','paused','running','understanding'].includes(result.agentRun?.status))throw Error('任务需要人工处理，请查看对话继续。');
-    }catch(error){await storage.patchTask(run.taskId,{lastError:error.message});throw error;}
+    }catch(error){await storage.patchTask(run.taskId,{lastError:error.message,lastErrorCode:error.code||'MODEL_RESPONSE_ERROR'});throw error;}
   },
   notify:(task,result)=>{
     if(win&&!win.isDestroyed())win.webContents.send('chat:status',{finished:true});
@@ -308,8 +323,8 @@ ipcMain.handle("state:write", (e, state) => {
 for (const method of ["account", "register", "login", "logout"])
   ipcMain.handle("account:" + method, async (e, input) => {
     trusted(e);
-    if(method!=='account'){memoryWorker.cancel();storage.permissions.cancelAll();chat.cancelAll();await experience.dispose();dictation.cancel();}
-    return storage[method](input);
+    if(method!=='account'){gistShare.clear();memoryWorker.cancel();storage.permissions.cancelAll();chat.cancelAll();await experience.dispose();dictation.cancel();}
+    const result=await storage[method](input);if(method!=='account')void storage.menuBar?.refresh().catch(()=>{});return result;
   });
 const feishuCli=require('./feishu-cli.cjs').createFeishuCli({
   directory:app.getPath('userData'),openExternal:url=>shell.openExternal(url),
@@ -343,6 +358,8 @@ storage.mcpConnections=require('./mcp-connections.cjs').createMCPConnections({di
   return choice.response===0&&!signal.aborted;
 }});
 for(const method of ['list','save','test','authorize','disconnect','remove','permissions','resolveCall'])ipcMain.handle('mcp:'+method,(e,input)=>{trusted(e);return storage.mcpConnections[method](input);});
+const dailyBrief=require('./daily-brief.cjs').createDailyBrief({directory:app.getPath('userData'),account:()=>storage.account()});
+ipcMain.handle('daily-brief:read',(e,input)=>{trusted(e);return dailyBrief.read(input);});
 storage.webSearch=require('./web-search.cjs').createWebSearch({directory:app.getPath('userData'),safeStorage});
 for(const method of ['status','save','test','disconnect'])ipcMain.handle('web-search:'+method,(e,input)=>{trusted(e);return storage.webSearch[method](method==='save'?input:undefined);});
 for(const method of ['status','begin','disconnect','openAuthorization','openPermissions'])ipcMain.handle('feishu-cli:'+method,(e,input)=>{trusted(e);return feishuCli[method](method==='begin'?input:undefined);});
@@ -442,6 +459,9 @@ app.whenReady().then(async () => {
     }
   }
   create();
+  storage.menuBar=require('./menu-bar.cjs').createMenuBar({Tray,Menu,nativeImage,iconPath:path.join(__dirname,'assets/ailo-trayTemplate.png'),notifications:taskNotifications,sessions:()=>chat.sessions(),account:()=>storage.account(),
+   openWindow:()=>{if(!win||win.isDestroyed())create();else{if(win.isMinimized())win.restore();win.show();win.focus();}},
+   openTask:async(taskId,owner,id)=>{if(((await storage.account())?.id||'local')!==owner)return;await notificationPresenter.openTask(taskId,owner);if(id)await taskNotifications.update({action:'read',id});},testNotification,quit:()=>app.quit()});
   await schedules.start();
   void memoryWorker.start().catch(error=>console.error("记忆后台启动失败",error.message));
   const checkSchedules=()=>schedules.tick().catch(error=>console.error('Scheduled task check failed:',error.message));
@@ -454,7 +474,7 @@ app.whenReady().then(async () => {
 let quitting=false;
 app.on("before-quit", e => {
   if(quitting)return;
-  e.preventDefault();storage.executionPower.dispose();storage.browserObserver.dispose();memoryWorker.stop();storage.permissions.cancelAll();schedules.stop();chat.cancelAll();
+  e.preventDefault();storage.menuBar?.dispose();storage.executionPower.dispose();storage.browserObserver.dispose();memoryWorker.stop();storage.permissions.cancelAll();schedules.stop();chat.cancelAll();
   Promise.allSettled([experience.dispose(),dictation.cancel(),storage.androidManager.dispose(),feishuCli.dispose(),storage.amap.dispose(),storage.mcpConnections.dispose()]).finally(()=>{quitting=true;app.quit();});
 });
 app.on("window-all-closed", () => {

@@ -5,7 +5,7 @@ function createPersonalAssistant({storage,chat,schedules,notify=()=>{}}){
   function launch(task,modelId){
     const id=randomUUID();
     const promise=chat.complete({id,taskId:task.id,executionOrigin:'assistant',modelId,extensionIds:task.extensionIds,searchEnabled:task.searchEnabled,feishuEnabled:task.feishuEnabled,amapEnabled:task.amapEnabled,mcpConnectionIds:task.mcpConnectionIds,
-      messages:(task.messages||[]).map(({role,content})=>({role,content})),
+      messages:(task.messages||[]).map(({role,content,materials})=>({role,content,...(materials?.length?{materials}:{})})),
       onRun:run=>notify({id,taskId:task.id,run}),onStatus:message=>notify({id,taskId:task.id,message}),onText:content=>notify({id,taskId:task.id,content})});
     launches.set(task.id,promise);
     void promise.then(result=>storage.patchTask(task.id,{contextCheckpoint:result.contextCheckpoint,promptTokens:result.promptTokens,lastError:undefined},[{id:id+'-assistant',role:'assistant',content:result.content,clarification:result.clarification,replyDetails:result.replyDetails,modelName:result.modelName}]))
@@ -47,8 +47,9 @@ function createPersonalAssistant({storage,chat,schedules,notify=()=>{}}){
       if(typeof params.prompt!=='string'||!params.prompt.trim()||params.prompt.length>20000)throw Error('请提供补充要求或继续指令');
       const instructionKey=createHash('sha256').update(String(input?.id)+'|'+params.prompt.trim()).digest('hex');
       if(t.assistantInstructionKey===instructionKey)return {taskId:t.id,status:'already_sent'};
-      if(session){await chat.steer({id:session.id,taskId:t.id,content:params.prompt.trim()});await storage.patchTask(t.id,{assistantInstructionKey:instructionKey});return {taskId:t.id,status:'instruction_sent'};}
-      const updated=await storage.patchTask(t.id,{assistantPaused:false,assistantInstructionKey:instructionKey,lastError:undefined},[{id:randomUUID(),role:'user',content:params.prompt.trim()}]);
+      const attached=input?.materials||[];
+      if(session){await chat.steer({id:session.id,taskId:t.id,content:params.prompt.trim(),...(attached.length?{materials:attached}:{})});await storage.patchTask(t.id,{assistantInstructionKey:instructionKey});return {taskId:t.id,status:'instruction_sent'};}
+      const updated=await storage.patchTask(t.id,{assistantPaused:false,assistantInstructionKey:instructionKey,lastError:undefined,...(attached.length?{materials:[...(t.materials||[]),...attached]}:{})},[{id:randomUUID(),role:'user',content:params.prompt.trim(),...(attached.length?{materials:attached}:{})}]);
       if(context.signal.aborted)throw Error('已停止执行');
       launch(updated,updated.modelId||context.modelId);return {taskId:t.id,status:'started'};
     }

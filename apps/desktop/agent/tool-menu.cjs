@@ -9,10 +9,10 @@ function select(state,allowed,extra=[],full=false){
  let names;
  if(state.phase==='chat')names=['reply','read_material','search_materials','read_source','read_file','batch_read','clarify'];
  else if(pendingAdoption(state))return [...new Set(['plan','read_material','read_source','inspect_source','search_materials','read_file','batch_read','list_files','read_execution','read_history','view_image','clarify','checkpoint','load_skill',...extra])].filter(name=>authorized.includes(name));
- else if(!state.steps?.length)names=['plan','read_material','search_materials','read_source','inspect_source','batch_read','clarify','blocked'];
+ else if(!state.steps?.length)names=['plan','subagent','read_material','search_materials','read_source','inspect_source','batch_read','clarify','blocked'];
  else if(state.requiredAction==='finish_review')names=['verify','artifact','finish','plan','read_execution','view_image','clarify','blocked'];
  else if(state.repairContext||state.repairTargets?.length||state.executionState?.blocker)names=['edit_file','read_file','batch_read','run_command','build_android','verify','blocked'];
- else names=['edit_file','write_file','run_command','read_file','batch_read','verify','artifact'];
+ else names=['edit_file','write_file','run_command','read_file','batch_read','subagent','verify','artifact'];
  if(authorized.includes('load_skill'))names.push('load_skill');
  if(state.deliveryValidation?.mode==='document'&&!state.pendingVisualReview&&!state.acceptanceCriteria?.some(c=>c.type==='visual'))names=names.filter(n=>n!=='view_image');
  if(state.requiredAction==='checkpoint')names.push('checkpoint');

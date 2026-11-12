@@ -13,6 +13,7 @@ function previewRank(file){
  if(/\.(?:png|jpe?g|webp|svg)$/i.test(p)&&/预览|效果|运行截图|最终|成品|preview|screenshot/i.test((file.label||'')+' '+p))return 1;
  if(/\.pdf$/i.test(p))return 2;
  if(/\.(?:png|jpe?g|webp|svg)$/i.test(p))return 3;
+ if(/\.(?:md|markdown)$/i.test(p))return 4;
  return 99;
 }
 function groupArtifacts(files,options={}){

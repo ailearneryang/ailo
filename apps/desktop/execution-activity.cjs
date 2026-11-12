@@ -23,7 +23,7 @@ function createExecutionActivity(startedAt,{limit=200}={}) {
    const detail=searchReceipt(event);
    if(event.type==='run_command')detail.feedback=Array.isArray(event.detail?.feedback)?event.detail.feedback.filter(v=>typeof v==='string'&&/^(?:操作超时，结果待确认|输出提示需要认证或认证失败|输出提示访问被拒绝|输出提示地址不存在或不可见|输出提示网络连接失败|当前目录不是 Git 仓库|HTTP \d{3}(?: \/ \d{3}){0,3}|命令已结束（退出码 0）|命令失败（退出码 -?\d+）)$/.test(v)).slice(0,4):require('./operation-feedback.cjs').operationFeedback(event.detail);
    for(const key of ['reason','field','issue'])if(typeof event.detail?.[key]==='string')detail[key]=event.detail[key].slice(0,80);
-   for(const field of ['actionId','operation','purpose','message','path','name','entry','command','output','startedAt','durationMs','exitCode','timedOut','outputTruncated']){
+   for(const field of ['actionId','operation','purpose','message','path','name','agentId','agentType','state','action','entry','command','output','startedAt','durationMs','exitCode','timedOut','outputTruncated']){
     const v=event.detail?.[field];if(typeof v==='string')detail[field]=field==='output'?v.slice(-4000):v.slice(0,field==='command'?10000:600);else if(typeof v==='number'||typeof v==='boolean')detail[field]=v;
    }
    if(typeof event.detail?.output==='string'){detail.outputLimit=4000;if(event.detail.output.length>4000)detail.outputTruncated=true;}

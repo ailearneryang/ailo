@@ -12,7 +12,7 @@ let ui;
 async function components(){
  if(ui)return ui;const Module=require('node:module'),app=path.resolve(__dirname,'../apps/desktop'),deps=Module.createRequire(path.join(app,'package.json')),{build}=await import(require('node:url').pathToFileURL(deps.resolve('rolldown')).href),entry=path.join(app,'src/task-progress.tsx');
  async function compile(name){const bundle=await build({input:path.join(app,'src',name+'.tsx'),platform:'node',plugins:[{name:'style-free-render',load(id){if(id.endsWith('.css'))return {code:'',moduleType:'js'};if(id.endsWith('/pet.tsx'))return {code:'export function Pet(){return null}',moduleType:'js'};}}],external:['react','react/jsx-runtime'],write:false,output:{format:'cjs'}});const mod=new Module(entry,module);mod.paths=Module._nodeModulePaths(path.dirname(entry));mod._compile(bundle.output.find(o=>o.type==='chunk').code,entry);return mod.exports;}
- ui={React:deps('react'),render:deps('react-dom/server').renderToStaticMarkup,...await compile('delivery-result'),...await compile('artifact-preview-dialog'),...await compile('delivery-reply-text'),...await compile('task-progress'),...await compile('task-problems'),...await compile('artifact-panel')};return ui;
+ ui={React:deps('react'),render:deps('react-dom/server').renderToStaticMarkup,...await compile('delivery-result'),...await compile('artifact-preview-dialog'),...await compile('delivery-reply-text'),...await compile('task-progress'),...await compile('task-problems'),...await compile('artifact-panel'),...await compile('artifact-viewer')};return ui;
 }
 function run(){return {status:'partial',mode:'task',goal:'修复天气',steps:[{id:'one',title:'不应反复展开的全部旧进度',status:'running'}],decisions:[],acceptance:[],artifacts:files,events:[],delivery:{status:'settled',outcome:'partial',coverage:{passed:0,total:2},unverified:['layout'],changes:{changedArtifacts:['report.html']}},acceptanceCriteria:[{id:'layout',text:'还原设计',type:'visual',status:'pending'}]};}
 test('conversation result displays final files and folds development files rather than enumerating code',async()=>{
@@ -98,3 +98,25 @@ test('ordinary chat, active task and completed text analysis do not gain empty f
 test('source-only partial files remain available in details without claiming a usable delivered app',async()=>{const {React,render,DeliveryResult}=await components(),r={...run(),artifacts:code,delivery:{outcome:'partial',status:'settled',coverage:{passed:0,total:2}}};const html=render(React.createElement(DeliveryResult,{task:{id:'t',messages:[],agentRun:r},run:r,onOpen(){}}));assert.match(html,/本轮尚未形成可展示的成果/);assert.match(html,/已有源码和配置已保留/);assert.match(html,/开发文件（35）/);assert.doesNotMatch(html,/已交付部分成果|完整完成/);});
 test('a blocked reply owns the single actionable explanation and suppresses redundant empty result cards',async()=>{const {React,render,DeliveryResult,DeliveryReplyText,showStandaloneResult}=await components();const r={...run(),currentInputId:'u',currentIntent:'task',status:'blocked',artifacts:[],delivery:undefined,taskContinuation:{state:'waiting_result_check'},recoverySummary:{unknown:1},events:[{id:'timeout',type:'run_command',at:new Date().toISOString(),detail:{timedOut:true}}]};const content='此前操作的结果尚未核对，禁止自动重放；先通过只读检查核对文件、日志或远端状态，再处理本次补充输入。';const task={id:'t',agentRun:r,messages:[{id:'u',role:'user',content:'查询 Jira'},{id:'a',role:'assistant',content,replyDetails:{status:'blocked'}}]};assert.equal(render(React.createElement(DeliveryResult,{task,run:r,onOpen(){}})),'');assert.equal(showStandaloneResult(task,false),false);const html=render(React.createElement(DeliveryReplyText,{content,currentRun:r}));assert.match(html,/尚未确认这次任务是否完成/);assert.match(html,/Ailo 尚未完成结果核查/);assert.doesNotMatch(html,/请核对|完成回执/);assert.doesNotMatch(html,/禁止自动重放|本轮尚未形成可展示的成果/);const normal=render(React.createElement(DeliveryReplyText,{content:'已查到 3 个问题，结果如下。',currentRun:r}));assert.match(normal,/已查到 3 个问题/);});
 test('a useful completed Markdown result remains inline instead of hiding all but its first sentence',async()=>{const {React,render,DeliveryReplyText}=await components();const content='查到以下待办事项：\n\n| Issue | 标题 | 状态 |\n|---|---|---|\n'+Array.from({length:30},(_,i)=>`| TEST-${i} | 实际问题 ${i} 的处理结论及下一步建议 | To Do |`).join('\n');const r={...run(),status:'completed',delivery:{outcome:'complete'}};const html=render(React.createElement(DeliveryReplyText,{content,delivery:r,currentRun:r}));assert.match(html,/TEST-29/);assert.doesNotMatch(html,/查看完整交付说明/);assert.match(html,/<table/);});
+
+test('generated Markdown is selected for inline preview, renders GFM, and retains version and delivery boundaries',async t=>{
+ const {React,render,ArtifactViewer,deliveryPreviewTarget,loadDeliveryPreview}=await components();
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-markdown-preview-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ const content='# 今日 AI 热点\n\n| 来源 | 摘要 |\n| --- | --- |\n| 测试来源 | 热点内容 |\n\n- [x] 已整理\n\n~~旧内容~~\n\n<script>alert(1)</script>\n\n![remote](https://example.org/tracker.png)';
+ for(const name of ['ai-hotspot-2026-11-11.md','REPORT.MARKDOWN']){
+  const file=path.join(directory,name);await fs.writeFile(file,content);
+  const preview=await require('../apps/desktop/artifact-edit.cjs').previewFile(file);
+  const r=run();r.artifacts=[{path:name,label:'今日 AI 热点',sha256:preview.version,size:Buffer.byteLength(content)}];r.delivery.changes.changedArtifacts=[name];
+  const before=JSON.stringify(r),target=deliveryPreviewTarget(r);assert.equal(target.path,name);
+  const previous=global.window;global.window={ailo:{preview:async(id,p)=>{assert.equal(id,'t');assert.equal(p,name);return preview;}}};
+  try{const loaded=await loadDeliveryPreview('t',target);assert.equal(loaded.kind,'markdown');
+   const html=render(React.createElement(ArtifactViewer,{preview:loaded,path:name,taskId:'t',readOnly:true,onChanged(){},onRequest(){}}));
+   assert.match(html,/<h1>今日 AI 热点<\/h1>/);assert.match(html,/<table>/);assert.match(html,/type="checkbox"/);assert.match(html,/<del>旧内容<\/del>/);assert.doesNotMatch(html,/<script|<img|编辑文字|保存修改/);
+   global.window.ailo.preview=async()=>({...preview,version:'changed'});await assert.rejects(loadDeliveryPreview('t',target),/版本与预览记录不一致/);
+  }finally{global.window=previous;}
+  assert.equal(JSON.stringify(r),before);
+ }
+ assert.equal(groupArtifacts([{path:'README.md'}]).featured,undefined);
+ assert.equal(groupArtifacts([{path:'report.md'},{path:'view.html'}]).featured.path,'view.html');
+ assert.equal(groupArtifacts([{path:'report.md'},{path:'view.html'}],{changedPaths:['report.md']}).featured.path,'report.md');
+});

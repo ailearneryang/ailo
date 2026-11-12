@@ -120,7 +120,7 @@ function createStorage(directory, safeStorage) {
             apiKey=safeStorage.decryptString(Buffer.from(model.encryptedKey,'base64'));
             modelSecrets.set(model.id,{encryptedKey:model.encryptedKey,apiKey});
           } catch {
-            throw Error('无法解密模型密钥，请在模型设置中重新填写。');
+            throw Object.assign(Error('无法解密模型密钥：系统凭据暂时不可访问或解密失败。请解锁登录钥匙串并检查 Ailo 的访问授权后重试；尚不能判定密钥已失效。'),{code:'MODEL_CREDENTIALS_UNAVAILABLE'});
           }
         }
       }
@@ -186,7 +186,7 @@ function createStorage(directory, safeStorage) {
         const previous=state.tasks.find(t=>t.id===id);
         const {agentRun,messages,pinned,pinnedAt,titleGenerated,...fields}=patch;
         if(previous?.titleGenerated)delete fields.title;
-        for(const key of ['archived','archivedAt','manualTitle','resourceOrigins','branchOf','responseOnly','temporary','runRecordId'])delete fields[key];
+        for(const key of ['archived','archivedAt','manualTitle','resourceOrigins','branchOf','responseOnly','temporary','runRecordId','conversationSections'])delete fields[key];
         if(fields.permissionMode!==undefined&&!['standard','scoped'].includes(fields.permissionMode))throw Error('权限模式无效');
         if(fields.memoryEnabled!==undefined&&typeof fields.memoryEnabled!=='boolean')throw Error('对话记忆设置无效');
         if(previous?.memoryOwner&&fields.memoryOwner!==undefined&&fields.memoryOwner!==previous.memoryOwner)throw Error('不能变更对话记忆所属账号');

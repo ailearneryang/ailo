@@ -29,3 +29,20 @@ test('schedule writes use selected model and remain idempotent across a retry',a
  assert.equal(first.schedule.id,second.schedule.id);assert.equal(f.schedules.length,1);assert.equal(f.schedules[0].modelId,'model');
  const controller=new AbortController();controller.abort();await assert.rejects(f.execute(action,{...f.context,signal:controller.signal}),/已停止/);
 });
+test('delegation forwards current attachments to the model and exposes earlier materials in the child catalog',async()=>{
+ const f=fixture(),older={name:'earlier.md',text:'之前上传的文档'},current={name:'reference.png',sourceId:require('node:crypto').randomUUID(),text:null};
+ f.context.task.materials=[older,current];f.context.task.messages[0].materials=[current];
+ const {taskId}=await f.execute({operation:'delegate',data:{prompt:'根据先前文档和本次图片整理'}},f.context);
+ assert.deepEqual(f.launches[0].messages[0].materials,[current]);
+ assert.deepEqual(f.state.tasks.find(t=>t.id===taskId).materials,[older,current]);
+});
+test('a later attachment reaches both active steering and an idle child restart',async()=>{
+ const f=fixture();const {taskId}=await f.execute({operation:'delegate',data:{prompt:'整理文档'}},f.context);
+ const first={name:'new-reference.png',sourceId:require('node:crypto').randomUUID(),text:null};
+ f.context.task.messages.push({id:'u2',role:'user',content:'参考这张图片',materials:[first]});
+ await f.execute({operation:'update',id:taskId,data:{prompt:'按新图片调整'}},f.context);assert.deepEqual(f.steering[0].materials,[first]);
+ await f.execute({operation:'pause',id:taskId},f.context);
+ const second={name:'revised.md',text:'更新后的正文'};f.context.task.messages.push({id:'u3',role:'user',content:'继续参考文档',materials:[second]});
+ await f.execute({operation:'continue',id:taskId,data:{prompt:'依据新文档继续'}},f.context);
+ const restarted=f.launches[0];assert.deepEqual(restarted.messages.at(-1).materials,[second]);assert.ok(f.state.tasks.find(t=>t.id===taskId).materials.some(m=>m.name===second.name));
+});

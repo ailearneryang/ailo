@@ -1,6 +1,22 @@
 // Fixed incident coverage. Adding a repair means extending this matrix rather
 // than replacing an old case with the newest symptom.
 const cases=[
+ {id:'daily-brief-refresh-recovery',incident:'11月12日天气首次失败后全天锁住旧预报，新闻凌晨抓取后全天不更新；失败15分钟重试、新闻每小时检查、手动刷新1分钟限流，跨重启持久化与旧缓存迁移，抓取时间不冒充发布日期',files:['daily-brief']},
+ {id:'generated-markdown-inline-preview',incident:'生成 md 成果只有文件链接，没有自动内容预览；Markdown 进入成果预览选择并渲染表格和任务列表，保持版本校验、历史成果与验收状态，不自动加载远端图片或执行 HTML',files:['delivery-presentation']},
+ {id:'personal-assistant-message-actions',incident:'我的 Ailo 显示分支、重新生成和反馈改进入口，但 experience:action 全面拒绝；允许消息历史操作，保留原消息与旧执行证据、只读搜索重答和忙碌保护，继续拒绝会话生命周期修改',files:['experience','regeneration-search']},
+ {id:'beatra-durable-approval-polling',incident:'Beatra collect_later授权脚本等待900秒却被宿主120秒杀死，已保存同一审批仍被未知副作用保护阻断；仅精确匹配挂载授权helper分段优雅退出并核对同一device审批续查，拒绝过期变更及普通副作用重放，旧超时有持久审批证据才分类为待授权，不冒充授权成功',files:['beatra-authorization','action-idempotency','recovery-episodes','task-output-experience']},
+ {id:'inline-clarification-answer',incident:'问答卡片提交后又打印大段格式化答案，重复占据对话；完整结构化答案只在原卡片显示已回答，原始模型输入与材料保留；缺来源或不完整答案不隐藏，阅读定位仍回到对应问题',files:['clarification-presentation.test.mjs','chat-scroll.test.mjs','clarification.test.mjs']},
+ {id:'explicit-answer-style-feedback',incident:'点赞点踩一键保存，不弹窗；点踩原因行内可选，无原因也可仅回复改进；自动风格须至少三个不同对话且75%一致认可，单次点击或同一对话重复点赞不建立全局偏好；显式枚举风格偏好进入已计预算的模型请求，当前要求优先，临时与关闭记忆对话不消费不贡献，取消删除撤回偏好，复制分支不复活旧评价；点踩附原因在仅回复分支重答，不重放命令或外部操作',files:['answer-style','experience','chat-service']},
+ {id:'inline-conversation-branches',incident:'重新生成和分支反复新增侧栏会话并叠加标题；原会话内保存历史与上下文隔断，重生成仅回复、不重放工具，忙碌时拒绝改写',files:['experience','image-attachments','answer-style']},
+ {id:'network-wait-resume',incident:'断网后快速耗尽重试，恢复网络仍不能自动接续；原请求有限等待联网，休眠不耗等待时间，取消及时释放，已展示正文不重放，重试预算不重置',files:['execution-connectivity','runtime-continuity','execution-awake','action-idempotency']},
+ {id:'library-material-preview',incident:'成果库混入聊天附件且图片仅显示空文本；独立成果与附件页签，按登记来源ID预览原件，同名不同图片不串图，兼容移动与分支来源，缺失不猜测替代，拒绝链接逃逸',files:['experience','image-attachments','artifact-edit']},
+ {id:'scheduled-keychain-wake',incident:'2026-11-08 17:05飞书整理在DarkWake触发，未缓存模型凭据解密失败被误报密钥失效并终止；后台使用缓存，缺缓存等解锁，暂时解密失败等待下一次正常唤醒后有限续试，原运行与证据保留且不重放工具',files:['execution-credentials','credential-access','execution-awake','scheduled-tasks','action-idempotency','recovery-episodes']},
+ {id:'scheduled-sleep-resume',incident:'11月7日飞书定时任务在DarkWake启动后反复睡眠，3分钟模型超时被拖成12–16分钟并耗尽43分钟预算；睡眠暂停模型计时与任务预算，唤醒保留当前执行与证据，不重放在途副作用',files:['execution-awake','execution-segments-state','action-idempotency']},
+ {id:'reply-context-and-live-presence',incident:'提醒缺少问题与结果，上翻看不到仍在执行，我的Ailo缺少执行标识；通知绑定真实提问、摘要、模型和用时，后台不泄露正文；离开最新回复显示三点波浪，静止时仅向下箭头，点击定位最新问题开头并停止追尾，便于从头阅读回复；执行停止或待授权不虚假动画',files:['task-notifications','task-notification-delivery','chat-scroll.test.mjs','task-presentation.test.mjs']},
+ {id:'menu-bar-and-reply-alerts',incident:'macOS缺少常驻菜单栏入口，回复提醒缺少Ailo品牌图标；按用户最新要求，菜单栏使用原版柴犬轮廓的黑色模板及Retina资源，深色菜单栏自动适配，不显示数字徽标；验证运行与排队状态、未读回复、显示主窗口和退出、通知开关与测试入口，后台系统横幅带图标且点击安全导航，前台不重复系统提醒',files:['menu-bar','task-notification-delivery']},
+ {id:'image-original-lineage',incident:'重新生成的委派对话只继承附件记录，旧图已移入父对话originals且原件解析忽略resourceOrigins和parentAssistantId，导致旧图缺失阻断新图；委派启动丢弃消息附件、材料索引漏掉父对话较早文档、追加输入遗漏图片；按已记录来源链恢复原图，完整传递当前与追加附件并索引历史材料，保留原对话来源及首次导入单项目归属，不跨无关任务或绕过链接检查',files:['image-attachments','personal-assistant']},
+ {id:'answer-link-sharing',incident:'回答分享必须由用户点击后才发布；只发布选中回答正文，不能携带其他对话、附件或凭据；首次连接加密保存授权，重启后免填Token，状态查询不解锁钥匙串，账号及平台隔离且可断开；Gitee 购车清单中四字节 emoji 实测触发 HTTP 500，须兼容编码并保留 Markdown 图标与代码含义；失败不记录链接，重复分享复用公开且正文一致的链接，链接可复制到微信等平台',files:['share-gist']},
+ {id:'parallel-subagent-coordination',incident:'普通复杂任务需要独立子 Agent 并行调查且在实时及最终过程可见；子 Agent 仅能读取，不能绕过权限写入、运行命令或把摘要当验收证据，取消与错误不得重放副作用或虚报成功',files:['subagent','agent-protocol','execution-activity']},
  {id:'unknown-operation-result-summary',incident:'超时最终回复只说流程结束并要求用户提供回执；保持已完成用时标题，正文绑定实际未知操作及其超时原因，自动检查已明确的工作区文件目标，存在不代表完整或成功，不重放未知副作用，不从旧超时推定新操作失败',files:['task-output-experience','reliability','followup-adoption','recovery-episodes','action-idempotency']},
  {id:'followup-failure-result-summary',incident:'克隆任务的补充输入卡在计划校验，最终正文直接抛内部requirements错误且固定携带旧APK文案；改为清楚说明内部计划衔接失败及未完成结果，原始诊断和验收保留，不推定LDAP或索要凭据，不把旧文件当本轮交付',files:['input-adoption-contract','result-settlement']},
  {id:'repository-command-feedback-and-efficiency',incident:'真实克隆任务在route的progress格式纠正后生成计划并额外发现request_network，认证失败与HTTP结果未直接显示；离线固定错误参数、授权菜单、回执摘要、重复上下文引用及协议错误计数，不调用内网或放宽验收',files:['operation-feedback','decision-request','activity-log','execution-activity','working-context','request-metrics','json-contract-menu']},
@@ -22,7 +38,7 @@ const cases=[
  {id:'continuous-results-and-prerequisite-recheck',incident:'2026-11-01天气卡片任务中途停止仅列历史问题：运行截图未登记、旧APK和配置变更冒充本轮交付、缺最终消息时无成果卡，刚补齐设计来源即触发停滞退出；持续展示有版本回执的最新效果并保留验收与有界恢复；网络授权或主动暂停前无产物也须显示结果说明，源码配置不冒充可用应用',files:['latest-results','delivery-presentation','repair-value-loop','task-presentation.test.mjs']},
  {id:'source-bitmap-background-adoption',incident:'2026-10-31天气实景天空未接入：阴天灰蓝渐变与矢量云纹代替原稿位图，七态切换和构建成功被当作背景实现、未引用图片及无关历史修复挤占当前背景要求',files:['background-assets','android-design','repair-value-loop']},
  {id:'manual-message-queue',incident:'保留历史队列的执行中手动补充、主动停止、编辑与附件保护；2026-11-01用户明确改为结束后自动接续，不再将逐条手动发送作为验收要求',files:['input-dispatch']},
- {id:'automatic-message-queue',incident:'任务结束后已提交队列仍需逐条手动发送；按用户2026-11-01新要求自动依次处理，保留旧故障中的执行中误抢占、主动停止、附件、未知结果防重放与稳定消息ID保护；收尾落盘前不得启动下一条；消息已保存进对话后输入框上方不再重复显示，内部恢复记录仍保留',files:['input-dispatch']},
+ {id:'automatic-message-queue',incident:'用户2026-11-06确认执行中新增命令必须逐行保留，可分别点击运行、编辑和删除，不能自动steer后瞬间消失；当前任务结束后仍自动依次接续，手动运行才允许发送选中行到正在执行的任务；保留暂停、附件、未知结果防重放与稳定消息ID保护，收尾落盘前不得启动下一条，已发送消息不重复展示',files:['input-dispatch']},
  {id:'incremental-input-contract',incident:'0.1.93新天气要求无修改：根据天气并参考稿被跨句误判新设计，补充真实sourceQuote被当作改质量标准，整份重写旧计划触发无关约束，13次耗尽后继续0请求沿用旧APK；真实单场景又把明确仅JSON文件读写误判为交互功能，保留失败证据而非计通过',files:['input-adoption-contract','incremental-plan','quality-source-contract','adoption-contract-resume','request-data-contract']},
  {id:'followup-adoption-before-execution',incident:'2026-10-31连续三条天气新输入仍沿旧步骤：旧截图抢占采用窗口、materialUse混入历史ID却误报遗漏、被拒计划已写进度、纯文本未采用仍允许旧副作用；每条新输入先采用再执行、原必须要求与证据保留',files:['followup-adoption','input-adoption-visual-priority','adoption-tool-contract']},
  {id:'native-operation-evidence',incident:'真实counter一次native写入已核对恢复且有read0/read1/凭证，却因历史读取和原native操作无合适验收basis反复纠正180秒未收尾；显式来源约束的完整read→一次write→后读链，历史与当前after状态分离，不放宽visual、scope或未知保护',files:['native-operation']},
@@ -88,5 +104,9 @@ const cases=[
  {id:'versioned-desktop-start',incident:'Forge 按版本输出新包但 npm start 仍启动旧无版本目录，以及旧实例使新版启动看似成功',files:['desktop-start']},
  {id:'auto-model-routing',incident:'按需视觉分析、服务故障备用切换、流式输出与未知副作用防重放及跨模型原任务连续性',files:['model-routing','runtime-continuity','recovery-episodes','action-idempotency']},
  {id:'task-output-and-desktop-notifications',incident:'阶段成果与任务结束无屏幕提醒、未完成误报完成、重复输出刷屏、通知失败中断任务及切换账号后打开旧任务',files:['task-notifications','task-notification-delivery']},
+ {id:'reply-html-delivery',incident:'每日AI学习只输出HTML代码，无预览下载且文件成果为空；完整网页回复可隔离预览下载并从历史消息恢复文件入口，不改变验收状态',files:['reply-html','experience']},
+ {id:'scheduled-news-search-retention',incident:'2026-11-09今日AI热点三次搜索成功后反复读取截断分页与旧文件耗尽恢复，收尾又因只识别text而遗漏sources并错误报告未搜索；保留搜索导航与原始分页定位，收尾纳入真实来源，不重置预算或伪造验收',files:['search-context','working-context','result-settlement','action-idempotency','recovery-episodes']},
+ {id:'regeneration-search-capability',incident:'搜索已开启时点击重新生成被responseOnly转入无工具纯文本路径，模型错误声称无联网能力；重新生成使用同一执行器的只读搜索与资料核对，关闭能力不绕过，写入发送命令与历史副作用不重放',files:['regeneration-search','experience','reply-stream','agent-protocol','action-idempotency']},
+ {id:'daily-weather-news-brief',incident:'新增小型天气科技资讯栏：每天一次持久缓存、城市切换不重复抓取新闻、失败保留旧日期、账户隔离及RSS安全解析；不调用模型或任务',files:['daily-brief']},
 ].map(c=>({...c,files:c.files.map(f=>'scripts/'+f+(/\.test\.[cm]js$/.test(f)?'':'.test.cjs'))}));
 module.exports={cases};

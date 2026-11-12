@@ -1,6 +1,6 @@
 {
   "name": "ailo-desktop",
-  "version": "0.1.113",
+  "version": "0.1.131",
   "description": "Ailo personal agent assistant — desktop development preview",
   "main": "main.cjs",
   "scripts": {

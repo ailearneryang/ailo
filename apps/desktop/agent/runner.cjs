@@ -36,16 +36,18 @@ const exitPolicy=require('./exit-policy.cjs');
 const recoveryControl=require('./recovery-control.cjs');
 function publicRun(run) {
   require('./recovery-state.cjs').bind(run);
-  return {resultChanges:require('./input-turn.cjs').changes(run,run.artifacts||[]),resultPreview:require('./result-preview.cjs').publicPreview(run),qualityCoverage:acceptanceChecks.qualitySummary(run),inputCoverage:require('./input-coverage.cjs').rows(run),candidateProtection:require('./candidate-versions.cjs').summary(run),requestScope:run.requestScope,materialInput:require('./material-input.cjs').context(run),problemLedger:require('./problem-state.cjs').rows(run),resultRecovery:run.resultRecovery,visualAnalysisFailures:run.visualAnalysisFailures,waitingError:run.waitingError,taskContinuation:run.taskContinuation,runtimeRepairs:run.runtimeRepairs,runtimeContinuation:run.runtimeContinuation,interventionTracking:run.interventionTracking,runtimeIdentity:run.runtimeIdentity,segmentState:run.segmentState,failureEpisodes:failureEpisodes.context(run),designRegionIssues:[...require('./design-regions.cjs').issues(run).map(({regionId,region,reason})=>({regionId,region,reason})),...(run.visualQuality?.constraints||[]).filter(c=>c.status==='open'&&!c.assetOnly).map(c=>({regionId:c.id,region:'视觉质量',reason:c.description}))],currentOutcome:run.currentOutcome,currentInputId:run.inputKey,currentIntent:run.currentIntent,memoryUsed:run.memoryUsed,loadedExtensions:run.loadedExtensions,conversationTitle:run.conversationTitle,progressInputId:run.progressInputId,executionId:run.executionId,history:run.history||[],inFlight:run.inFlight?{...run.inFlight}:undefined,contextUsage:run.contextUsage,delivery:run.delivery,issues:run.issues||[],executionState:run.executionState,acceptanceCriteria:acceptanceChecks.criteria(run).map(({id,text,type,scope,scopes,quality,check})=>({id,text,type,scope,scopes,quality,level:quality?.level||'must',basis:check?.basis,status:check?.status==='passed'&&(run.freshAcceptanceIds||[]).includes(id)?'passed':'pending'})),recoverySummary:{retried:(run.actionJournal||[]).filter(e=>e.retries>0).length,recovered:(run.actionJournal||[]).filter(e=>e.recovered).length,unknown:(run.actionJournal||[]).filter(e=>e.status==='unknown').length},performance:run.performance,status:run.status,mode:run.mode,goal:run.goal,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,completionReview:run.completionReview,artifacts:run.artifacts,updatedAt:run.updatedAt,events:run.events.slice(-12).map(e=>({id:e.id,type:e.type,at:e.at,detail:{...require('../execution-activity.cjs').searchReceipt(e),...(e.type==='run_command'?{feedback:require('../operation-feedback.cjs').operationFeedback(e.detail)}:{}),actionId:e.detail.actionId,operation:e.detail.operation,action:e.detail.action,command:e.detail.command||e.detail.result?.command,startedAt:e.detail.startedAt,durationMs:e.detail.durationMs,timedOut:e.detail.result?.timedOut,outputTruncated:e.detail.result?.truncated||e.detail.result?.output?.length>24000,purpose:e.detail.purpose,exitCode:e.detail.result?.exitCode,path:e.detail.path,name:e.detail.name,offset:e.detail.offset,entry:e.detail.entry,pointer:e.detail.pointer,message:e.detail.message,output:['run_command','build_android','android_device','feishu','tool_error','command_interrupted'].includes(e.type)?e.detail.result?.output?.slice(-24000):undefined}}))};
+  return {resultChanges:require('./input-turn.cjs').changes(run,run.artifacts||[]),resultPreview:require('./result-preview.cjs').publicPreview(run),qualityCoverage:acceptanceChecks.qualitySummary(run),inputCoverage:require('./input-coverage.cjs').rows(run),candidateProtection:require('./candidate-versions.cjs').summary(run),requestScope:run.requestScope,materialInput:require('./material-input.cjs').context(run),problemLedger:require('./problem-state.cjs').rows(run),resultRecovery:run.resultRecovery,visualAnalysisFailures:run.visualAnalysisFailures,waitingError:run.waitingError,taskContinuation:run.taskContinuation,runtimeRepairs:run.runtimeRepairs,runtimeContinuation:run.runtimeContinuation,interventionTracking:run.interventionTracking,runtimeIdentity:run.runtimeIdentity,segmentState:run.segmentState,failureEpisodes:failureEpisodes.context(run),designRegionIssues:[...require('./design-regions.cjs').issues(run).map(({regionId,region,reason})=>({regionId,region,reason})),...(run.visualQuality?.constraints||[]).filter(c=>c.status==='open'&&!c.assetOnly).map(c=>({regionId:c.id,region:'视觉质量',reason:c.description}))],currentOutcome:run.currentOutcome,currentInputId:run.inputKey,currentIntent:run.currentIntent,memoryUsed:run.memoryUsed,loadedExtensions:run.loadedExtensions,conversationTitle:run.conversationTitle,progressInputId:run.progressInputId,executionId:run.executionId,history:run.history||[],inFlight:run.inFlight?{...run.inFlight}:undefined,contextUsage:run.contextUsage,delivery:run.delivery,issues:run.issues||[],executionState:run.executionState,acceptanceCriteria:acceptanceChecks.criteria(run).map(({id,text,type,scope,scopes,quality,check})=>({id,text,type,scope,scopes,quality,level:quality?.level||'must',basis:check?.basis,status:check?.status==='passed'&&(run.freshAcceptanceIds||[]).includes(id)?'passed':'pending'})),recoverySummary:{retried:(run.actionJournal||[]).filter(e=>e.retries>0).length,recovered:(run.actionJournal||[]).filter(e=>e.recovered).length,unknown:(run.actionJournal||[]).filter(e=>e.status==='unknown').length},performance:run.performance,status:run.status,mode:run.mode,goal:run.goal,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,completionReview:run.completionReview,artifacts:run.artifacts,updatedAt:run.updatedAt,events:run.events.slice(-12).map(e=>({id:e.id,type:e.type,at:e.at,detail:{...require('../execution-activity.cjs').searchReceipt(e),...(e.type==='run_command'?{feedback:require('../operation-feedback.cjs').operationFeedback(e.detail)}:{}),actionId:e.detail.actionId,operation:e.detail.operation,action:e.detail.action,agentId:e.detail.agentId,agentType:e.detail.agentType,state:e.detail.state,message:e.detail.message,command:e.detail.command||e.detail.result?.command,startedAt:e.detail.startedAt,durationMs:e.detail.durationMs,timedOut:e.detail.result?.timedOut,outputTruncated:e.detail.result?.truncated||e.detail.result?.output?.length>24000,purpose:e.detail.purpose,exitCode:e.detail.result?.exitCode,path:e.detail.path,name:e.detail.name,offset:e.detail.offset,entry:e.detail.entry,pointer:e.detail.pointer,output:['run_command','build_android','android_device','feishu','tool_error','command_interrupted'].includes(e.type)?e.detail.result?.output?.slice(-24000):undefined}}))};
 }
-async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,model,signal,onStatus,onRun,extensions=[],availableSkills=[],skillPackages,images,browser,android,authorizeBuild,directoryAccess,feishuCli,webSearch,amap,mcp,knowledge,personalAssistant,projectContext,projectMemoryContext,scheduledContext,runtimeContinuation,reasoningConfig,memory,permissions,maxSteps=240,batchSize=48,maxDurationMs=2*60*60*1000,continuationReason='user',requestOrigin='unknown',segmentIndex=0,retainBrowser=false,finalizeOnBudget=false,autonomous=false,onWorkspace,now=Date.now,executeTool=execute,getSteering=async()=>[],onSteeringAccepted}) {
+async function runAgentImpl({base,task,ask,subagentAsk,prepareModelMessages,summarizeResult,model,signal,onStatus,onRun,extensions=[],availableSkills=[],skillPackages,images,browser,android,authorizeBuild,directoryAccess,feishuCli,webSearch,amap,mcp,knowledge,personalAssistant,projectContext,projectMemoryContext,scheduledContext,runtimeContinuation,reasoningConfig,memory,permissions,maxSteps=240,batchSize=48,maxDurationMs=2*60*60*1000,continuationReason='user',requestOrigin='unknown',segmentIndex=0,retainBrowser=false,finalizeOnBudget=false,autonomous=false,onWorkspace,now=Date.now,budgetNow=now,waitUntilAwake=async()=>{},executeTool=execute,getSteering=async()=>[],onSteeringAccepted}) {
   // Status is presentation only. A broken observer must never cancel a tool.
   const statusObserver=onStatus;
   onStatus=message=>{if(typeof message!=='string'||!message.trim())return;try{statusObserver?.(message);}catch{}};
   const runObserver=onRun;
   onRun=async value=>{try{await runObserver?.(value);}catch(error){if(error.code==='ERR_ASSERTION')throw error;}};
   for(const value of [maxSteps,batchSize,maxDurationMs])if(!Number.isSafeInteger(value)||value<=0)throw Error('执行预算必须为正整数');
-  const startedAt=now();
+  const rawExecuteTool=executeTool;
+  executeTool=async(...args)=>{await waitUntilAwake(args[2]);return rawExecuteTool(...args);};
+  const startedAt=budgetNow();
   const performance=require('./performance.cjs');
   const recovery=require('./decision-recovery.cjs');
   const workspace=await createWorkspace(base,task),run=workspace.run,priorRuntime=run.runtimeIdentity&&structuredClone(run.runtimeIdentity);
@@ -118,7 +120,7 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
   // The provider adapter budgets the actual selected wire schema after every
   // fallback. Do not subtract a different, fixed copy of the old tool here.
   const protocolTokens=0;
-  const notify=async()=>{await require('./result-preview.cjs').refresh(workspace);await require('./problem-state.cjs').refresh(workspace);run.freshAcceptanceIds=[];for(const c of acceptanceChecks.criteria(run))if(c.check){try{await require('./evidence.cjs').assertFresh(workspace,c.check);run.freshAcceptanceIds.push(c.id);}catch{}}require('./input-coverage.cjs').refresh(run);require('./task-continuation.cjs').update(run);run.performance.wallMs=performanceBaseWall+Math.max(0,now()-startedAt);await workspace.save();await onRun?.(publicRun(run));};
+  const notify=async()=>{await require('./result-preview.cjs').refresh(workspace);await require('./problem-state.cjs').refresh(workspace);run.freshAcceptanceIds=[];for(const c of acceptanceChecks.criteria(run))if(c.check){try{await require('./evidence.cjs').assertFresh(workspace,c.check);run.freshAcceptanceIds.push(c.id);}catch{}}require('./input-coverage.cjs').refresh(run);require('./task-continuation.cjs').update(run);run.performance.wallMs=performanceBaseWall+Math.max(0,budgetNow()-startedAt);await workspace.save();await onRun?.(publicRun(run));};
   const restoreCandidate=async({resume=false}={})=>{
     const result=await require('./candidate-runtime.cjs').restore(workspace,{resume,signal});
     if(result.actualChanges?.length){displayRevision=-1;androidDesign=undefined;latestBuild=undefined;await notify();return true;}
@@ -219,6 +221,7 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
     readResults.set(JSON.stringify(stable(identity)),{sourceObservationId:observation.observationId,next:result?.next,total:result?.total,result});
     readReceipts.remember(run,JSON.stringify(stable(identity)),{...result,sourceObservationId:observation.observationId});
   }
+  const searchContext=require('./search-context.cjs').createContext(workspace);
   const sourceRevisits=new Map();
   async function repeatedSource(action,identity,presented){
     // A committed restoration needs one actual read in its own generation;
@@ -239,7 +242,7 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
     if(!progressSeen.has(key)){progressSeen.add(key);batchProgress=true;}
   };
   const budgetPause=async(reason)=>{
-    const elapsedMinutes=Math.floor((now()-startedAt)/60000);
+    const elapsedMinutes=Math.floor((budgetNow()-startedAt)/60000);
     const message=reason==='time'?`本次连续执行已达到时长预算（${elapsedMinutes} 分钟），已暂停。`:`本次连续执行已达到决策轮数预算（${turns} 轮），已暂停。`;
     run.status='paused';
     await workspace.event('execution_budget',{message,reason,turns,elapsedMinutes,maxSteps,maxDurationMs});await notify();
@@ -297,7 +300,7 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
   let latestBuild=await workspace.findEvent(e=>e.type==='build_android');
   if(run.runtimeContinuation?.kind==='assisted_resume'&&latestBuild)await require('./delivery-milestones.cjs').registerBuild(workspace,latestBuild);
   let displayRevision=-1,androidDisplay,androidDesign;
-  let invalid=0, protocolInvalid=0, intent=scheduledMessage?'chat':continuationReason==='segment'&&run.mode==='task'?'task':undefined, protocolRecovery;
+  let invalid=0, protocolInvalid=0, intent=task.responseOnly?'chat':scheduledMessage?'chat':continuationReason==='segment'&&run.mode==='task'?'task':undefined, protocolRecovery;
   if(scheduledMessage){run.mode='chat';await workspace.event('delivery_route',{kind:'message',basis:'explicit_scheduled_reminder'});}
   if(intent){run.currentIntent=intent;run.status='running';}
   function synchronizeExecution(){
@@ -328,7 +331,7 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
     run.requestScope={...run.requestScope,inputId:run.inputKey,previousInputId:oldInputId};
     // Re-route the latest user intent before further side effects.
     scheduledMessage=require('../scheduled-message.cjs').reminderDelivery(task);
-    intent=scheduledMessage?'chat':undefined;
+    intent=task.responseOnly?'chat':scheduledMessage?'chat':undefined;
     if(next.materials?.length||!require('./input-turn.cjs').continuationOnly(next.content))readRecovery=undefined;
     await workspace.event('steering',{origin:requestOrigin,inputIds:messages.map(m=>m.id),materialCount:messages.reduce((n,m)=>n+(m.materials?.length||0),0),message:`已接收 ${messages.length} 条补充指令，将据此调整下一步`});
     try{await onSteeringAccepted?.(messages.map(m=>m.id),run.inputKey);}catch(error){if(error.code==='ERR_ASSERTION')throw error;await workspace.event('steering_ack_pending',{inputIds:messages.map(m=>m.id),message:'补充内容已进入执行器，界面接收状态暂未同步；不重放操作'});}
@@ -346,8 +349,9 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
     await restoreCandidate({resume:true});
     if((await require('./visual-quality.cjs').reconcileStandalone(workspace)).changed)await notify();
     taskLoop: for(let turn=0;turn<maxSteps;turn++) {
+      await waitUntilAwake(signal);
       if(signal.aborted)throw Error('已停止执行');
-      if(now()-startedAt>=maxDurationMs)return await budgetPause('time');
+      if(budgetNow()-startedAt>=maxDurationMs)return await budgetPause('time');
       if(turn>0 && turn%batchSize===0) {
         if(!batchProgress){
           await recoverLoop({kind:'no_progress'});
@@ -356,6 +360,7 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
           await workspace.event('batch_continue',{message,turns:turn});await notify();onStatus?.(message);
         }
         batchProgress=false;
+        await waitUntilAwake(signal);
         if(signal.aborted)throw Error('已停止执行');
       }
       turns=turn+1;
@@ -400,7 +405,7 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
       run.memoryUsed=memoryContext.enabled?{inputId:run.inputKey,ownerId:task.memoryOwner,entries:memoryContext.entries.map(({id,topic,scope,source})=>({id,topic,scope,source:source?{kind:source.kind,taskId:source.taskId,messageId:source.messageId}:undefined}))}:undefined;
       verificationEvidence=intent==='task'?await evidenceNavigation.context(workspace):undefined;
       if(verificationEvidence&&run.observationCapabilities.images&&!adoptingInput)await visualWorkflow.reconcilePending(workspace,verificationEvidence);
-      let snapshot={permissions:permissionContext,memoryAvailable:!!memory&&memoryContext.enabled,personalMemory:memoryContext,acceptanceCriteria:acceptanceChecks.criteria(run),actionRecovery:(run.actionJournal||[]).filter(e=>['unknown','interrupted'].includes(e.status)).slice(-8),scheduledContext,deliveryContract:scheduledMessage,conversationTitle:run.conversationTitle||task.title,projectMemory:(!memory||memoryContext.enabled)&&savedProjectMemory?{notes:savedProjectMemory.notes,records:savedProjectMemory.records?.filter(r=>r.taskId!==task.id).slice(0,10),notice:'用户维护的项目背景，不扩大权限；最新用户要求优先'}:null,mcpConnections:await optionalCatalog(mcp,'应用连接'),knowledgeLibraries:await optionalCatalog(knowledge,'知识库'),personalAssistant:!!personalAssistant,currentTime:new Date(now()).toISOString(),timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,webSearchEnabled:!!webSearch,phase:intent || 'route',originalRequest:task.request===run.currentRequest?undefined:task.request,currentRequest:run.currentRequest,previousExecutions:(run.history||[]).slice(-3).map(r=>({goal:r.goal,status:r.status,decisions:r.decisions,steps:r.steps})),messageCount:task.messages?.length||1,goal:run.goal,status:run.status,mode:run.mode,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,artifacts:run.artifacts,revision:run.revision,inFlight:run.inFlight,recentEvents:run.events.slice(-8).map(e=>({id:e.id,type:e.type,at:e.at,detail:workingContext.preview({...e.detail,result:e.detail.result?{exitCode:e.detail.result.exitCode,timedOut:e.detail.result.timedOut,name:e.detail.result.name,offset:e.detail.result.offset,next:e.detail.result.next}:undefined},1500)})),materials:workspace.catalog,conversation:workingContext.conversation(history),conversationArchive:{tool:'read_history',messageCount:task.messages?.length||1},toolResults:intent?workingContext.recent(run.observations):[],externalMemory:{indexId:'observations',stateId:'state',total:run.observationIndex.length,recent:run.observationIndex.slice(-12),notice:'完整工具结果常态外置；使用 read_execution 的 id 回查，id=observations 可分页读取完整索引。旧操作已有执行凭据，不要重放。'},workingMemory:run.workingMemory,readCoverage:run.readCoverage.slice(-24),readCoverageTotal:run.readCoverage.length};
+      let snapshot={regeneration:require('./regeneration.cjs').context(task),searchContext:await searchContext(),permissions:permissionContext,memoryAvailable:!!memory&&memoryContext.enabled,personalMemory:memoryContext,acceptanceCriteria:acceptanceChecks.criteria(run),actionRecovery:(run.actionJournal||[]).filter(e=>['unknown','interrupted'].includes(e.status)).slice(-8),scheduledContext,deliveryContract:scheduledMessage,conversationTitle:run.conversationTitle||task.title,projectMemory:(!memory||memoryContext.enabled)&&savedProjectMemory?{notes:savedProjectMemory.notes,records:savedProjectMemory.records?.filter(r=>r.taskId!==task.id).slice(0,10),notice:'用户维护的项目背景，不扩大权限；最新用户要求优先'}:null,mcpConnections:await optionalCatalog(mcp,'应用连接'),knowledgeLibraries:await optionalCatalog(knowledge,'知识库'),personalAssistant:!!personalAssistant,subagentAvailable:typeof subagentAsk==='function'&&!personalAssistant,currentTime:new Date(now()).toISOString(),timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,webSearchEnabled:!!webSearch,phase:intent || 'route',originalRequest:task.request===run.currentRequest?undefined:task.request,currentRequest:run.currentRequest,previousExecutions:(run.history||[]).slice(-3).map(r=>({goal:r.goal,status:r.status,decisions:r.decisions,steps:r.steps})),messageCount:task.messages?.length||1,goal:run.goal,status:run.status,mode:run.mode,steps:run.steps,decisions:run.decisions,acceptance:run.acceptance,artifacts:run.artifacts,revision:run.revision,inFlight:run.inFlight,recentEvents:run.events.slice(-8).map(e=>({id:e.id,type:e.type,at:e.at,detail:workingContext.preview({...e.detail,result:e.detail.result?{exitCode:e.detail.result.exitCode,timedOut:e.detail.result.timedOut,name:e.detail.result.name,offset:e.detail.result.offset,next:e.detail.result.next}:undefined},1500)})),materials:workspace.catalog,conversation:workingContext.conversation(history),conversationArchive:{tool:'read_history',messageCount:task.messages?.length||1},toolResults:intent?workingContext.recent(run.observations):[],externalMemory:{indexId:'observations',stateId:'state',total:run.observationIndex.length,recent:run.observationIndex.slice(-12),notice:'完整工具结果常态外置；使用 read_execution 的 id 回查，id=observations 可分页读取完整索引。旧操作已有执行凭据，不要重放。'},workingMemory:run.workingMemory,readCoverage:run.readCoverage.slice(-24),readCoverageTotal:run.readCoverage.length};
       snapshot.observationCapabilities={...run.observationCapabilities,notice:'模型能力以精确模型与端点的公开说明或明确配置为依据；auto、请求成功及图片送达都不证明看懂图片。images=false 时不要重复送图或做视觉 verify；先用原始设计参数、真实控件树和可执行检查完成实现并修复已知差异。结构测量不是视觉验收，无法确认的要求保留，不能声称完整通过。'};
       snapshot.verificationEvidence=verificationEvidence;
       snapshot.commandEnvironment=commandRuntime.context(commandDiscovery);
@@ -477,7 +482,7 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
       const observations=adoptingInput?run.visualObservations.filter(o=>!inputEvents.has(o.eventId)&&run.events.some(e=>e.id===o.eventId&&e.type==='view_image')&&!o.sources?.some(s=>/\.apk$/i.test(s.path))):run.visualObservations;
       const observedImages=intent&&run.observationCapabilities.images?await visual.messages(workspace,observations,images):[];
       const pendingImageIds=new Set(require('./input-coverage.cjs').pending(run).map(e=>e.inputId));
-      const imageMaterials=task.messages?(adoptingInput?task.messages.filter(m=>pendingImageIds.has(require('./execution-rounds.cjs').inputKey(m))):task.messages.slice(-10)).flatMap(m=>m.materials||[]):task.materials||[];
+      const imageMaterials=task.messages?(adoptingInput&&!task.responseOnly?task.messages.filter(m=>pendingImageIds.has(require('./execution-rounds.cjs').inputKey(m))):task.messages.slice(-10)).flatMap(m=>m.materials||[]):task.materials||[];
       const nextImageMaterialsKey=JSON.stringify(imageMaterials.map(m=>[m.name,m.sourceId]));
       if(intent&&attachmentImagesEnabled&&imageMaterialsKey!==nextImageMaterialsKey){imageMessages=await workspace.images(imageMaterials);imageMaterialsKey=nextImageMaterialsKey;}
       if(adoptingInput)snapshot.visualAdoptionPriority={instruction:'先读取并采用本批用户输入与附件，历史运行截图的自动送审暂缓；原缺陷、证据与视觉验收要求仍保留，采用后按当前版本继续核验。'};
@@ -555,7 +560,7 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
       // Separate failure classes: earlier timeouts must not exhaust truncation recovery.
       for(let outputAttempt=0;!action&&outputAttempt<8;outputAttempt++) {
         signal.throwIfAborted();
-        if(now()-startedAt>=maxDurationMs)return await budgetPause('time');
+        if(budgetNow()-startedAt>=maxDurationMs)return await budgetPause('time');
         const decisionSnapshot=recovery.active(run)?recovery.compact({...snapshot,decisionRecovery:run.decisionRecovery},workingContext.preview):snapshot;
         const retryMessages=outputAttempt?[...messages.slice(0,-1),{role:'user',content:JSON.stringify({...decisionSnapshot,recovery:emptyResponse?'上一轮在思考阶段或空响应中未产出动作，未执行任何工具。请只选择一个最小的下一步，优先复用已有观察，不重新分析整个任务。请按 responseContract 返回当前阶段允许的一个完整动作；不要只返回思考数据。':oversizedArguments?'上一轮工具参数超过250000字符，整条动作未执行。请返回一个完整的小动作，每次只写一个小文件；write_file.content最多200000字符、run_command.command最多8000字符，不要在命令中嵌入整个工程，不要续接残缺 JSON。':outputReason==='reasoning'?'上一轮在思考阶段耗尽输出额度，未产生正文或工具动作。请收敛分析，仅决定当前下一步，并按 responseContract 返回一个完整动作；不要尝试一次解决整个任务。':'上一轮动作因输出额度耗尽被截断，未执行任何动作。请重新返回一个完整且更小的动作，不要续接残缺 JSON。一次只处理一个小文件或一个步骤；若单文件过大，先拆分模块。摘要与计划应简洁。'})}]:[...messages];
         if(recovery.active(run))retryMessages[0]={role:'system',content:recovery.prompt+systemContext};
@@ -656,15 +661,18 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
       }
       if(await acceptSteering())continue;
       if(!action)continue;
+      await waitUntilAwake(signal);
       if(signal.aborted)throw Error('已停止执行');
       if(['route','plan','reply','clarify','finish'].includes(action.action)&&typeof action.conversationTitle==='string'){
         const title=action.conversationTitle.trim();
         if(title&&title.length<=40&&!/[\r\n\x00-\x1f]/.test(title))run.conversationTitle=title;
       }
-      if(now()-startedAt>=maxDurationMs)return await budgetPause('time');
+      if(budgetNow()-startedAt>=maxDurationMs)return await budgetPause('time');
       protocolInvalid=0;protocolRecovery=undefined;
+      await waitUntilAwake(signal);
       if(signal.aborted)throw Error('已停止执行');
       try {
+        require('./regeneration.cjs').assert(action,snapshot);
         if(action.action==='load_skill'){
           if(!allowedActions(snapshot).includes('load_skill'))throw Error('当前阶段不能加载技能');
           if(!skillRuntime.catalog().some(e=>e.id===action.id))throw Error('请只加载当前技能目录中的尚未加载项，不能重复加载或调用停用技能');
@@ -931,14 +939,14 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
         };
         if(action.action==='verify'){await verifyAcceptance(action);continue;}
         if(action.action==='artifact'){await registerArtifact(action);continue;}
-        if(!['request_network','memory','assistant','knowledge','web_search','mcp','amap','feishu','list_files','read_file','batch_read','view_image','browser','write_file','edit_file','edit_spreadsheet','request_directory','run_command','build_android','android_device','read_material','read_source','inspect_source','search_materials','read_history','read_execution'].includes(action.action))throw Error('未知动作');
+        if(!['request_network','memory','assistant','subagent','knowledge','web_search','mcp','amap','feishu','list_files','read_file','batch_read','view_image','browser','write_file','edit_file','edit_spreadsheet','request_directory','run_command','build_android','android_device','read_material','read_source','inspect_source','search_materials','read_history','read_execution'].includes(action.action))throw Error('未知动作');
         if(action.action==='view_image'&&!run.observationCapabilities.images)throw Error('当前模型已配置为不接受图像；请选择支持图像的模型后继续视觉检查');
         if(['browser','write_file','edit_file','edit_spreadsheet','request_directory','request_network','run_command','build_android','android_device'].includes(action.action)&&(intent!=='task'||!run.steps.length))throw Error('执行前必须识别交付目标并制定计划');
         if(action.action==='web_search'&&++searchCalls>3)throw Object.assign(Error('本轮已达到 3 次搜索上限，请根据已有结果回答或缩小问题范围。'),{code:'SEARCH_UNAVAILABLE'});
         // Attached artifact/checks are validated before the write so a bad
         // attachment rejects the whole action without side effects.
         const attachedDelivery=require('./attached-delivery.cjs').validate(workspace,action);
-        onStatus?.(({batch_read:'正在批量读取项目资料…',view_image:'正在回看图片…',browser:'正在运行并观察网页…',mcp:'正在使用应用工具：'+String(action.purpose||action.query||'查看工具').slice(0,120),web_search:'正在搜索：'+String(action.query||'').slice(0,100),feishu:'正在处理飞书：'+String(action.purpose||action.query||action.path||'操作').slice(0,120),read_material:'正在读取项目材料…',read_source:'正在读取材料原文…',inspect_source:'正在检查材料结构…',read_execution:'正在回查执行记录…',read_history:'正在回查对话记录…',search_materials:'正在检索项目材料…',write_file:'正在写入工程文件…',edit_file:'正在修改文件片段…',build_android:'正在执行标准 Android 构建…',android_device:'正在执行项目模拟器操作…',run_command:'正在执行：'+String(action.purpose||'项目命令').slice(0,120),list_files:'正在检查项目文件…',read_file:'正在读取项目文件…'})[action.action]||'正在处理项目任务…');
+        onStatus?.(({subagent:'正在协调子 Agent…',batch_read:'正在批量读取项目资料…',view_image:'正在回看图片…',browser:'正在运行并观察网页…',mcp:'正在使用应用工具：'+String(action.purpose||action.query||'查看工具').slice(0,120),web_search:'正在搜索：'+String(action.query||'').slice(0,100),feishu:'正在处理飞书：'+String(action.purpose||action.query||action.path||'操作').slice(0,120),read_material:'正在读取项目材料…',read_source:'正在读取材料原文…',inspect_source:'正在检查材料结构…',read_execution:'正在回查执行记录…',read_history:'正在回查对话记录…',search_materials:'正在检索项目材料…',write_file:'正在写入工程文件…',edit_file:'正在修改文件片段…',build_android:'正在执行标准 Android 构建…',android_device:'正在执行项目模拟器操作…',run_command:'正在执行：'+String(action.purpose||'项目命令').slice(0,120),list_files:'正在检查项目文件…',read_file:'正在读取项目文件…'})[action.action]||'正在处理项目任务…');
         if(action.action==='run_command'&&action.scope&&!['file','document'].includes(require('./evidence.cjs').scope(action.scope).kind))throw Error('命令证据 scope 仅可关联文件或文档');
         if(permissions)await permissions.before(action,signal);
         // Save intent before side effects. Interrupted commands are never
@@ -970,6 +978,19 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
           performance.batch(run,completed);
           for(const item of completed){const index=items.findIndex(i=>i.itemId===item.itemId),child={...items[index]};delete child.itemId;item.observationId=await record(child,{action:child.action,...(item.error?{error:item.error,errorCode:item.errorCode}:{result:item.result})},keys[index]);if(!item.error&&!item.result?.notExecuted){const key=keys[index];readAttempts.set(key,(readAttempts.get(key)||0)+1);readResults.set(key,{sourceObservationId:item.observationId,next:item.result?.next,total:item.result?.total,result:item.result});}if(item.result!==undefined)item.result=workingContext.preview(batch.preview(item.result,Math.floor(2400/items.length)),Math.floor(3600/items.length));}
           result={results:completed,notice:'每项独立返回，错误项未成功；成功项已归档，不重放整批。更长原文通过 observationId 回查。'};
+        } else if(action.action==='subagent') {
+          if(!subagentAsk||intent!=='task')throw Error('当前任务不能启动子 Agent');
+          if(run.subagentUsage?.inputKey!==run.inputKey)run.subagentUsage={inputKey:run.inputKey,batches:0};
+          if(run.subagentUsage.batches>=2)throw Error('本次输入已达到 2 批子 Agent 调查上限，请根据已有结果继续执行');
+          run.subagentUsage.batches++;await workspace.save();
+          let updates=Promise.resolve(),searches=0;
+          const onUpdate=event=>{updates=updates.then(async()=>{await workspace.event('subagent_status',{agentId:event.id,name:event.name,agentType:event.type,state:event.state,message:event.message,action:event.action});await notify();onStatus?.(`子 Agent · ${event.name}：${event.message}`);});return updates;};
+          result={agents:await require('./subagent-runtime.cjs').run({agents:action.agents,batchId:journalEntry.id,ask:subagentAsk,signal,webSearch:!!webSearch,onUpdate,read:async child=>{
+            if(child.action==='web_search'&&++searches>2)throw Error('本次子 Agent 联网搜索已达到 2 次上限');
+            if(permissions)await permissions.before(child,signal);
+            return executeTool(workspace,child,signal,{directoryAccess,permissions,webSearch});
+          }}),notice:'子 Agent 结果是调查资料；主 Agent 仍须核对来源、执行结果与原任务验收。'};
+          await updates;
         } else if(action.action==='assistant') {
           if(!personalAssistant)throw Error('当前会话不是个人助手');
           result=await personalAssistant(action,{task,signal,modelId:model.id});
@@ -987,7 +1008,7 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
         }finally{outputStream.close();run.performance.toolMs+=Math.max(0,now()-toolStarted);}
         if(['write_file','edit_file','edit_spreadsheet'].includes(action.action)&&result?.changed===false){run.revision=effectRevision;run.performance.noOpWrites=(run.performance.noOpWrites||0)+1;}
         if(result?.reused)run.performance.reusedTools=(run.performance.reusedTools||0)+1;
-        if(!result?.timedOut&&(result?.exitCode===undefined||result.exitCode===0)&&!result?.results?.some(r=>r.error||r.result?.notExecuted))run.performance.successfulTools++;
+        if(!result?.timedOut&&(result?.exitCode===undefined||result.exitCode===0)&&!result?.results?.some(r=>r.error||r.result?.notExecuted)&&!result?.agents?.some(agent=>agent.status!=='completed'))run.performance.successfulTools++;
         if(commandBefore){
           const after=await fileState.inventory(workspace.files),changes=fileState.changes(commandBefore,after);
           result.fileChanges=changes;result.changeCoverage=commandBefore.complete&&after.complete?'complete':'bounded';
@@ -1004,8 +1025,9 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
         if(action.action==='write_file'&&previousContent!==action.content)advanceReads({path:action.path,content:action.content});
         // A new successful tool action is evidence of progress, not proof of task completion.
         // Exclude bookkeeping/log scans; repeated requests do not extend execution forever.
-        if(result?.changed!==false&&!result?.reused&&!['list_files','read_history','read_execution'].includes(action.action) && (action.action!=='batch_read'||result.results.some(item=>!item.error&&!item.result?.notExecuted)) && !result?.timedOut && (result?.exitCode===undefined||result.exitCode===0))markProgress(actionIdentity.normalize(action));
+        if(result?.changed!==false&&!result?.reused&&!['list_files','read_history','read_execution','subagent'].includes(action.action) && (action.action!=='batch_read'||result.results.some(item=>!item.error&&!item.result?.notExecuted)) && !result?.timedOut && (result?.exitCode===undefined||result.exitCode===0))markProgress(actionIdentity.normalize(action));
         await workspace.event(action.action,{id:action.id,actionId:journalEntry.id,startedAt:run.inFlight?.at,durationMs:Math.max(0,now()-toolStarted),operation:action.operation,...(action.action==='web_search'?{query:action.query}:{}),entry:action.entry,pointer:action.pointer,offset:action.offset,name:result?.name,path:action.path,command:action.command,purpose:action.purpose,revision:run.revision,result:action.action==='memory'?{ok:true,id:result?.id,operation:action.operation}:result});
+        if(result?.authorization&&result.timedOut)await require('./beatra-authorization.cjs').reconcile(workspace,journalEntry);
         if(action.action==='android_device'||action.action==='browser')await require('./result-preview.cjs').register(workspace,run.events.at(-1),{current:true});
         if(action.action==='build_android'){latestBuild=run.events.at(-1);await require('./delivery-milestones.cjs').registerBuild(workspace,latestBuild);}
         if(action.action==='android_device'&&run.observationCapabilities.images)await visualWorkflow.enqueueOperation(workspace,action,result,run.events.at(-1));
@@ -1106,13 +1128,13 @@ async function runAgentImpl({base,task,ask,prepareModelMessages,summarizeResult,
       }
     }
     if(signal.aborted)throw Error('已停止执行');
-    return await budgetPause(now()-startedAt>=maxDurationMs?'time':'steps');
+    return await budgetPause(budgetNow()-startedAt>=maxDurationMs?'time':'steps');
   }catch(error){if(error.code==='ERR_ASSERTION')throw error;if(!signal.aborted&&exitPolicy.classify(error,run,{signal})==='internal'){const result=await settleResult(error);if(result){if(error.code==='AGENT_PROTOCOL'){Object.assign(error,{taskContinues:true,taskMessage:result.content,agentRun:result.agentRun});throw error;}return result;}}if(['MODEL_NO_ACTION_BUDGET','AGENT_NO_PROGRESS','AGENT_REPAIR_EXHAUSTED'].includes(error.code)){run.status='blocked';run.executionState={...run.executionState,goal:run.executionState?.goal||run.goal,blocker:{code:error.code,stepId:recovery.stepId(run),focus:run.decisionRecovery?.focus,message:error.message},updatedAt:new Date().toISOString()};await workspace.event(error.code==='MODEL_NO_ACTION_BUDGET'?'no_action_budget':'recovery_exhausted',{message:error.message,code:error.code,episodeId:error.episodeId});run.delivery={outcome:run.artifacts.length?'partial':'blocked',status:'blocked',at:new Date().toISOString()};await notify();return {content:error.message,agentRun:publicRun(run)};}if(error.code==='MODEL_IMAGE_UNSUPPORTED'){run.status='blocked';await workspace.event('capability_missing',{message:error.message,capability:'image_input'});await notify();return {content:error.message+' 当前成果与进度已保存，尚未完成视觉验收。',agentRun:publicRun(run)};}if(run.inFlight&&['run_command','build_android'].includes(run.inFlight.action)){const live=run.inFlight;await workspace.event('command_interrupted',{actionId:live.actionId,action:live.action,command:live.command,purpose:live.purpose,startedAt:live.at,message:'执行已中断，操作结果待核对',result:{output:live.output,truncated:live.outputTruncated}});delete run.inFlight;}await actionJournal.reconcile(workspace);if(signal.aborted){run.status='paused';await workspace.event('interrupted',{message:error.message});await notify();throw error;}
     run.status='blocked';run.currentOutcome='pending';
     run.waitingError={code:error.code||'EXECUTION_DIAGNOSIS_REQUIRED',message:error.message,...(error.requestAttempted===false?{requestAttempted:false,lastErrorCode:error.lastErrorCode,retryAt:error.retryAt,recoveryExhausted:error.recoveryExhausted}:{}),...(error.providerCategory?{providerCategory:error.providerCategory}:{}),...(error.networkCode?{networkCode:error.networkCode}:{})};
     run.executionState={...run.executionState,goal:run.executionState?.goal||run.goal,blocker:run.executionState?.blocker||run.waitingError,updatedAt:new Date().toISOString()};
     await workspace.event('task_waiting',{code:error.code||'EXECUTION_DIAGNOSIS_REQUIRED',message:error.message,taskOpen:true});
-    await notify();error.taskContinues=true;error.taskMessage=require('./task-continuation.cjs').message(run);error.agentRun=publicRun(run);throw error;}finally{run.performance.wallMs=performanceBaseWall+Math.max(0,now()-startedAt);try{await workspace.save();await onRun?.(publicRun(run));}finally{if(!retainBrowser)browser?.close(workspace);}}
+    await notify();error.taskContinues=true;error.taskMessage=require('./task-continuation.cjs').message(run);error.agentRun=publicRun(run);throw error;}finally{run.performance.wallMs=performanceBaseWall+Math.max(0,budgetNow()-startedAt);try{await workspace.save();await onRun?.(publicRun(run));}finally{if(!retainBrowser)browser?.close(workspace);}}
 }
 // Initialization (skills, context hydration, archives) must use the same
 // result boundary as the execution loop. Storage failure still propagates:

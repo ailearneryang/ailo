@@ -1,5 +1,13 @@
 const fs=require('node:fs/promises'),path=require('node:path'),{createHash,randomUUID}=require('node:crypto');
 const defaults={enabled:true,native:true,completed:true,attention:true,output:true};
+function excerpt(value,limit){return String(value||'').replace(/```[\s\S]*?```/g,'[代码片段]').replace(/!\[([^\]]*)\]\([^)]*\)/g,'$1').replace(/\[([^\]]+)\]\([^)]*\)/g,'$1').replace(/[#>*`_~]+/g,'').replace(/\s+/g,' ').trim().slice(0,limit);}
+function notificationContext(task,result,requestText){
+ const inputId=result.agentRun?.currentInputId,matched=inputId?task.messages?.find(m=>m.role==='user'&&m.id===inputId):undefined;
+ const subject=excerpt(matched?.content||matched?.materials?.map(m=>m.name).join('、')||requestText||task.request,120),preview=excerpt(result.content,200);
+ const used=result.replyDetails?.usage?.models?.findLast(m=>m.lane==='primary')||result.replyDetails?.usage?.models?.at(-1);
+ const modelName=excerpt(used?.name||used?.model||result.modelName,60),durationMs=result.replyDetails?.durationMs;
+ return {...(subject?{subject}:{}),...(preview?{preview}:{}),...(modelName?{modelName}:{}),...(Number.isFinite(durationMs)&&durationMs>=0?{durationMs}:{} )};
+}
 function hasOutput(task,run){
  if(!run)return false;
  if(run.resultPreview?.available&&run.resultPreview.changedSinceInput)return true;
@@ -34,7 +42,7 @@ function createTaskNotifications({directory,account,changed=()=>{},native=()=>{}
  return {
   read:()=>run(()=>{}),
   update:input=>run(state=>{if(input.action==='settings'){for(const [key,v]of Object.entries(input.value||{}))if(Object.hasOwn(defaults,key)&&typeof v==='boolean')state.settings[key]=v;}else if(input.action==='read'){for(const item of state.items)if(!input.id||item.id===input.id)item.read=true;}else if(input.action==='clear'){if(input.id!==undefined&&(typeof input.id!=='string'||!input.id))throw Error('通知标识无效');state.items=input.id?state.items.filter(item=>item.id!==input.id):[];}else throw Error('通知操作无效');return {write:true};}),
-  publish:(task,result,requestId,{stage='final',ownerId}={})=>{
+  publish:(task,result,requestId,{stage='final',ownerId,requestText}={})=>{
    const intent=notificationIntent(task,result,stage);if(!intent)return Promise.resolve();
    return run((state,owner)=>{
     if(ownerId&&ownerId!==owner)return;
@@ -42,7 +50,7 @@ function createTaskNotifications({directory,account,changed=()=>{},native=()=>{}
     const inputId=result?.agentRun?.currentInputId||requestId;
     const token=task.id+':'+requestId+':'+(stage==='progress'?'output:'+inputId:'final');
     state.seen||=state.items.map(x=>x.token);if(state.seen.includes(token))return;
-    const item={id:randomUUID(),token,taskId:task.id,title:String(task.title||'Ailo 任务').slice(0,160),kind:intent.kind,status:intent.status,message:intent.message,read:false,at:new Date().toISOString()};
+    const item={id:randomUUID(),token,taskId:task.id,title:String(task.title||'Ailo 任务').slice(0,160),kind:intent.kind,status:intent.status,message:intent.message,...notificationContext(task,result,requestText),read:false,at:new Date().toISOString()};
     state.items.unshift(item);state.items=state.items.slice(0,150);state.seen.push(token);state.seen=state.seen.slice(-600);
     return {write:true,alert:item,system:settings.native};
    });

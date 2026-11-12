@@ -32,3 +32,18 @@ test('notification-created window waits for load, then rechecks owner',async()=>
  const p=createNotificationPresenter({getWin:()=>win,createWindow:()=>{win={isDestroyed:()=>false,isMinimized:()=>false,show(){},focus(){},webContents:contents};},Notification:Notice,account:async()=>({id:owner})});
  await p.native({id:'n',taskId:'t',kind:'output',title:'天气'},'a');notice.emit('click');await new Promise(setImmediate);assert.equal(sent.length,0);owner='b';contents.emit('did-finish-load');await new Promise(setImmediate);assert.equal(sent.length,0);
 });
+test('branded background replies carry Ailo icon and stable grouping; explicit test works while foreground',async()=>{
+ const notices=[];class Notice extends EventEmitter{static isSupported(){return true;}constructor(options){super();notices.push(this);this.options=options;}show(){this.shown=true;}}
+ const win={isDestroyed:()=>false,isFocused:()=>true},p=createNotificationPresenter({getWin:()=>win,createWindow(){},Notification:Notice,account:async()=>null,icon:'/app/assets/ailo.png'});
+ const item={id:'notice',taskId:'task',title:'测试回复',message:'回复已生成。',kind:'completed',subject:'private question',preview:'private answer'};
+ assert.equal((await p.native(item,'local')).requested,false);assert.equal(notices.length,0);
+ assert.equal((await p.native(item,'local',{force:true})).requested,true);
+ assert.equal(notices[0].options.icon,'/app/assets/ailo.png');assert.equal(notices[0].options.id,item.id);assert.equal(notices[0].options.groupId,'ailo-task');assert.match(notices[0].options.title,/回复已完成/);assert.equal(notices[0].shown,true);
+ assert.equal((await p.native(item,'someone-else',{force:true})).requested,false);assert.equal(notices.length,1);
+ assert.doesNotMatch(JSON.stringify(notices[0].options),/private question|private answer/);
+});
+test('completion reminder keeps its original request text even if another input is saved while waiting',async()=>{
+ const f=fixture();f.task.messages=[{role:'user',content:'第一条提问'}];const input={taskId:'t',id:'r',messages:[...f.task.messages]};
+ await notifyingCompletion({...f,complete:async()=>{f.task.messages.push({role:'user',content:'后续输入'});return {content:'第一条回答'};}})(input);
+ assert.equal(f.notices[0][3].requestText,'第一条提问');
+});

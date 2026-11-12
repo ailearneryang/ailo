@@ -16,8 +16,14 @@ export function storyTimeline(events:AgentRun['events'],inFlight?:AgentRun['inFl
 }
 export const ExecutionStory=React.memo(function ExecutionStory({events,inFlight,live=false}:{events:AgentRun['events'];inFlight?:AgentRun['inFlight'];live?:boolean}){
  const timeline=storyTimeline(events,inFlight);
- if(!timeline.length)return null;
- return <div className="execution-story" aria-label="执行过程">{timeline.map(entry=>{
+ const agents=[...new Map(events.filter(e=>e.type==='subagent_status'&&e.detail.agentId).map(e=>[e.detail.agentId!,e])).values()];
+ if(!timeline.length&&!agents.length)return null;
+ return <div className="execution-story" aria-label="执行过程">{!!agents.length&&<div className="subagent-list" aria-label="参与任务的子 Agent">{agents.map(agent=>{
+  const d=agent.detail,active=['running','reading'].includes(d.state||'')&&live;
+  const kind=({explore:'探索',research:'调研',plan:'方案'} as Record<string,string>)[d.agentType||'']||'分析';
+  const state=active?'执行中':d.state==='completed'?'已完成':d.state==='failed'?'未成功':d.state==='incomplete'?'未得出结论':'已停止';
+  return <div className="subagent-row" key={d.agentId}><ExecutionIcon action="subagent" state={active?'running':d.state}/><span className="subagent-name">{d.name||'子 Agent'}</span><span className="subagent-kind">{kind}</span><span className="subagent-state">{active&&<ActivityIndicator/>}{state}</span>{d.message&&<span className="subagent-message">{d.message}</span>}</div>;
+ })}</div>}{timeline.map(entry=>{
   if(entry.kind==='recovery'){
    const last=entry.events.at(-1)!,index=events.findIndex(e=>e.id===last.id);
    const protocol=entry.events.some(e=>e.type==='protocol_error');

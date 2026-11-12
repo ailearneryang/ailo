@@ -87,7 +87,7 @@ async function execute(workspace,action,signal,options={}) {
     }
     case 'run_command': {
       const commandOptions=options.permissions?await options.permissions.commandOptions():{readDirectories:options.directoryAccess?.directories(workspace.run.taskId)};
-      const result=await runCommand(files,action.command,signal,120000,{...commandOptions,onOutput:options.onOutput});
+      const result=await require('./beatra-authorization.cjs').execute(files,action.command,signal,{...commandOptions,onOutput:options.onOutput,onStatus:options.onStatus,run:runCommand});
       if(commandOptions.networkOutbound===false)result.networkNotice='本次命令未获得联网权限。若任务需要下载依赖或请求网络，请先 request_network，不要通过其他工具绕过。';
       if(/Operation not permitted|Permission denied/i.test(result.output))result.notice='访问被拒绝，尚不能判断是否为系统隐私限制。若需要工作区外目录，请使用 request_directory 获取只读授权；已授权仍失败时说明具体路径，并引导用户检查系统文件与文件夹权限或管理员策略，不要重复探测或直接断言 TCC。';
       return result;

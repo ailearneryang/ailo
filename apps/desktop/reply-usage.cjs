@@ -1,6 +1,6 @@
 function createReplyUsage(){
  const requests=new Map();
- return {record(id,usage,model){requests.set(id,{usage,model:{id:model.id,name:model.name,model:model.model,lane:model.lane}});},capture(){
+ return {record(id,usage,model){requests.set(id,{usage,model:Object.fromEntries(Object.entries({id:model.id,name:model.name,model:model.model,lane:model.lane}).filter(([,value])=>value!==undefined))});},capture(){
   let inputTokens=0,outputTokens=0,reasoningTokens=0,reportedRequests=0;const models=[];
   const valid=n=>Number.isSafeInteger(n)&&n>=0;
   for(const {usage:u,model} of requests.values()){

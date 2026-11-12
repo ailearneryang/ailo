@@ -10,14 +10,16 @@ function abortable(promise,signal,onLate){
  });
 }
 const retryable=error=>['MODEL_CONNECT_TIMEOUT','MODEL_FIRST_CONTENT_TIMEOUT','MODEL_DECISION_IDLE_TIMEOUT','MODEL_STREAM_INTERRUPTED','MODEL_PROVIDER_ERROR','MODEL_RATE_LIMIT'].includes(error.code)||error.code==='MODEL_HTTP_TRANSIENT'||error.code==='MODEL_NETWORK'&&require('./network-error.cjs').transientNetworkCode(error.networkCode);
-async function recoverRequest(run,{signal,retries=2,retryDelay=500,onRetry}={}){
+async function recoverRequest(run,{signal,retries=2,retryDelay=500,onRetry,waitForNetwork}={}){
  for(let attempt=0;;attempt++){
   signal.throwIfAborted();
   try{return await run(attempt);}catch(error){
    if(signal.aborted)throw error;
    error=require('./network-error.cjs').networkError(error);
-   if(!retryable(error)||error.hasVisibleOutput)throw error;
+   const offline=waitForNetwork&&error.code==='MODEL_NETWORK'&&['ERR_INTERNET_DISCONNECTED','ERR_NETWORK_IO_SUSPENDED','ERR_NETWORK_CHANGED','ENOTFOUND','ERR_NAME_NOT_RESOLVED'].includes(error.networkCode);
+   if((!retryable(error)&&!offline)||error.hasVisibleOutput)throw error;
    if(attempt>=retries){error.retryCount=attempt;error.message+=` 已自动重试 ${attempt} 次仍未恢复，任务进度和材料已保留。`;throw error;}
+   if(waitForNetwork&&error.code==='MODEL_NETWORK'&&!await waitForNetwork(signal)){error.retryCount=attempt;error.message+=' 网络等待已结束，请恢复网络后重试当前步骤。';throw error;}
    onRetry?.(attempt+1,retries,error);
    await delay(Math.min(4000,retryDelay*2**attempt),undefined,{signal});
   }

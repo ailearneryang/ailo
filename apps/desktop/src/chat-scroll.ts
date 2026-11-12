@@ -10,11 +10,19 @@ export function attachChatScroll(viewport:HTMLDivElement|null){
  const onDetailsToggle=(event:Event)=>{const details=event.target as HTMLDetailsElement,interacted=inspectingDetails;inspectingDetails=false;if(!interacted||!details.open||!details.matches?.('.reply-details,.task-activity-details'))return;following=false;const summary=details.querySelector('summary');if(summary){const top=summary.getBoundingClientRect().top-viewport.getBoundingClientRect().top;viewport.scrollTop+=top-20;} };
  const onWheel=(event:WheelEvent)=>{if(event.deltaY<0)following=false;};
  const onLatest=()=>{following=true;inspectingDetails=false;follow();};
+ const onLatestQuestion=()=>{
+  const question=Array.from(viewport.querySelectorAll<HTMLElement>('.user-turn[data-conversation-turn]')).at(-1);
+  if(!question)return;
+  following=false;inspectingDetails=false;
+  viewport.scrollTop=Math.max(0,viewport.scrollTop+question.getBoundingClientRect().top-viewport.getBoundingClientRect().top-20);
+  lastScrollTop=viewport.scrollTop;
+ };
  const onKey=(event:KeyboardEvent)=>{if(['ArrowUp','PageUp','Home'].includes(event.key))following=false;};
  let touchY:number|undefined;
  const onTouchStart=(event:TouchEvent)=>{touchY=event.touches[0]?.clientY;};
  const onTouchMove=(event:TouchEvent)=>{const y=event.touches[0]?.clientY;if(y!==undefined&&touchY!==undefined&&y>touchY)following=false;touchY=y;};
  viewport.addEventListener('ailo-follow-latest',onLatest);
+ viewport.addEventListener('ailo-latest-question',onLatestQuestion);
  viewport.addEventListener('keydown',onKey);
  viewport.addEventListener('touchstart',onTouchStart,{passive:true});
  viewport.addEventListener('touchmove',onTouchMove,{passive:true});
@@ -31,6 +39,7 @@ export function attachChatScroll(viewport:HTMLDivElement|null){
  return ()=>{
   observer.disconnect();
   viewport.removeEventListener('ailo-follow-latest',onLatest);
+  viewport.removeEventListener('ailo-latest-question',onLatestQuestion);
   viewport.removeEventListener('keydown',onKey);
   viewport.removeEventListener('touchstart',onTouchStart);
   viewport.removeEventListener('touchmove',onTouchMove);

@@ -1,16 +1,17 @@
 import React from 'react';
 // A single stroke weight and viewbox keep navigation icons optically consistent.
-export function Icon({ name }: { name: 'tool' | 'image' | 'device' | 'terminal' | 'thumbs-up' | 'thumbs-down' | 'bell' | 'archive' | 'branch' | 'mic' | 'stop' | 'memory' | 'gauge' | 'pet' | 'sliders' | 'palette' | 'help' | 'logout' | 'lock' | 'globe' | 'settings' | 'book' | 'sparkles' | 'plug' | 'chevron-right' | 'plus' | 'arrow-up' | 'compose' | 'chat' | 'grid' | 'folder' | 'folder-open' | 'info' | 'user' | 'chevron' | 'paperclip' | 'panel' | 'expand' | 'file' | 'queue' | 'play' | 'edit' | 'trash' | 'check' | 'close' | 'clock' | 'refresh' | 'copy' | 'search' | 'more' | 'pin' }) {
+export function Icon({ name }: { name: 'tool' | 'image' | 'device' | 'terminal' | 'thumbs-up' | 'thumbs-down' | 'bell' | 'archive' | 'branch' | 'share' | 'mic' | 'stop' | 'memory' | 'gauge' | 'pet' | 'sliders' | 'palette' | 'help' | 'logout' | 'lock' | 'globe' | 'settings' | 'book' | 'sparkles' | 'plug' | 'chevron-right' | 'plus' | 'arrow-up' | 'arrow-down' | 'compose' | 'chat' | 'grid' | 'folder' | 'folder-open' | 'info' | 'user' | 'chevron' | 'paperclip' | 'panel' | 'expand' | 'file' | 'queue' | 'play' | 'edit' | 'trash' | 'check' | 'close' | 'clock' | 'refresh' | 'copy' | 'search' | 'more' | 'pin' }) {
   const shapes = {
     tool: <><path d="M14.5 5.5a5 5 0 0 0-6 6L3 17a2.8 2.8 0 0 0 4 4l5.5-5.5a5 5 0 0 0 6-6l-3 3-4-4 3-3Z"/></>,
     image: <><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/></>,
     device: <><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 5h4M11 19h2"/></>,
     terminal: <><rect x="3" y="4" width="18" height="16" rx="4"/><path d="m7 9 3 3-3 3m6 0h4"/></>,
-    'thumbs-up': <><path d="M7 10l5-8c3 0 2 5 2 7h5a2 2 0 0 1 2 2l-2 9H7Z"/><path d="M3 10h4v11H3Z"/></>,
-    'thumbs-down': <><g transform="rotate(180 12 12)"><path d="M7 10l5-8c3 0 2 5 2 7h5a2 2 0 0 1 2 2l-2 9H7Z"/><path d="M3 10h4v11H3Z"/></g></>,
+    'thumbs-up': <><path d="M7 10 11.7 3.5a2 2 0 0 1 3.6 1.5L14.5 9H19a2 2 0 0 1 1.95 2.45l-1.9 8A2 2 0 0 1 17.1 21H7Z"/><path d="M3 10h4v11H3Z"/></>,
+    'thumbs-down': <><g transform="rotate(180 12 12)"><path d="M7 10 11.7 3.5a2 2 0 0 1 3.6 1.5L14.5 9H19a2 2 0 0 1 1.95 2.45l-1.9 8A2 2 0 0 1 17.1 21H7Z"/><path d="M3 10h4v11H3Z"/></g></>,
     bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></>,
     archive: <><path d="M3 4h18v4H3zM5 8v13h14V8M10 12h4"/></>,
     branch: <><circle cx="6" cy="5" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="19" r="3"/><path d="M6 8v8m0-3c8 0 12-1 12-4"/></>,
+    share: <path d="M14 4v4C7.5 8 4 12.5 3 20c2.5-4 5.7-6 11-6v4l7-7-7-7Z"/>,
     mic: <><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></>,
     stop: <rect x="6" y="6" width="12" height="12" rx="2"/>,
     memory: <><path d="M12 5a3 3 0 0 0-5.8-1 4 4 0 0 0-3.1 5.7 4 4 0 0 0 .5 7.2A4 4 0 0 0 12 19V5Zm0 0a3 3 0 0 1 5.8-1 4 4 0 0 1 3.1 5.7 4 4 0 0 1-.5 7.2A4 4 0 0 1 12 19"/><path d="M7 8a3 3 0 0 0 5 2m5-2a3 3 0 0 1-5 2M6 14a3 3 0 0 1 3 3m9-3a3 3 0 0 0-3 3"/></>,
@@ -29,6 +30,7 @@ export function Icon({ name }: { name: 'tool' | 'image' | 'device' | 'terminal' 
     'chevron-right': <path d="m9 6 6 6-6 6"/>,
     plus: <path d="M12 5v14M5 12h14"/>,
     'arrow-up': <path d="M12 20V4m-7 7 7-7 7 7"/>,
+    'arrow-down': <path d="M12 4v16m-7-7 7 7 7-7"/>,
     queue: <><path d="M8 6h12M8 12h12M8 18h8"/><circle cx="3" cy="6" r=".7"/><circle cx="3" cy="12" r=".7"/><circle cx="3" cy="18" r=".7"/></>,
     play: <><rect x="3" y="3" width="18" height="18" rx="5"/><path d="m10 8 5 4-5 4Z"/></>,
     edit: <><path d="m15 4 5 5M4 20l5-1L21 7a2 2 0 0 0-4-4L5 15Z"/><path d="M13 21h8"/></>,
@@ -40,7 +42,7 @@ export function Icon({ name }: { name: 'tool' | 'image' | 'device' | 'terminal' 
     pin: <><path d="M16 3H8l1 6-4 4v3h14v-3l-4-4Z"/><path d="M12 16v6"/></>,
     close: <path d="m6 6 12 12M6 18 18 6"/>,
     clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
-    refresh: <><path d="M20 7v5h-5M4 17v-5h5M19 7a8 8 0 0 0-14 1M5 17a8 8 0 0 0 14-1"/></>,
+    refresh: <><path d="M20 6v5h-5"/><path d="M20 11a8.5 8.5 0 1 0 .8 4"/></>,
     panel: <><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/></>,
     expand: <><path d="M14 3h7v7M21 3l-7 7M10 21H3v-7M3 21l7-7"/></>,
     file: <><path d="M14 3H5v18h14V8Z"/><path d="M14 3v5h5M8 12h8M8 16h6"/></>,

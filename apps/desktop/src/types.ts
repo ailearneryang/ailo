@@ -46,7 +46,9 @@ export type ReplyUsage = {inputTokens:number;outputTokens:number;reasoningTokens
 export type ExecutionActivity = {usage?:ReplyUsage;events:AgentRun['events'];loadedExtensions?:AgentRun['loadedExtensions'];inFlight?:AgentRun['inFlight'];statuses?:{id:string;at:string;updatedAt?:string;message:string}[]};
 export type ReplyDetails = {performance?:{metricsVersion:1;modelRequests:number;coverageComplete:boolean;firstReplyMs:number|null;firstStreamTextMs:number|null;firstReplySource:'stream'|'final'|null;timingScope:string;processRequestRatio:number|null;processTimeRatio:number|null;protocolErrorRequests:number|null};statuses?:ExecutionActivity['statuses'];usage?:ReplyUsage;loadedExtensions?:AgentRun['loadedExtensions'];eventCount?:number;eventsTruncated?:boolean;startedAt:string;completedAt:string;durationMs:number;status?:string;goal?:string;events?:AgentRun['events'];modelRoutes?:{lane:string;from:string;to:string;reason:string;message:string;at:string}[];visualReviews?:{inputHash:string;modelId:string;modelName:string;at:string;summary:string;observations:string[];uncertainties:string[]}[]};
 export type Message = {
-  feedback?:{rating:'up'|'down';at:string};
+  shares?:Partial<Record<'gitee'|'github',{url:string;hash:string;at:string}>>;
+  share?:{url:string;hash:string;at:string};
+  feedback?:{rating:'up'|'down';at:string;sourceTaskId?:string;styleShape?:{length:'concise'|'detailed'|'neutral';structured:boolean};reason?:string;detail?:string;remember?:boolean};
   replyDetails?: ReplyDetails;
   createdAt?: string;
   clarification?: Clarification;
@@ -59,6 +61,7 @@ export type Message = {
   modelName?: string;
 };
 export type Task = {
+  conversationSections?:{id:string;kind:'branch'|'regenerate';afterMessageId:string;sourceMessageId:string;createdAt:string;messages:Message[];tailStart:number;agentRun?:AgentRun}[];
   pendingInputIds?:string[];
   archived?:boolean;archivedAt?:string;temporary?:boolean;manualTitle?:boolean;updatedAt?:string;responseOnly?:boolean;
   branchOf?:{id:string;messageId:string;title:string};
@@ -157,7 +160,7 @@ export type AgentRun = {
   steps: {id:string;title:string;status:string;detail?:string;summary?:string;requiresConfirmation?:boolean;requirementIds?:string[]}[];
   decisions: string[]; acceptance: string[];
   artifacts: {path:string;label:string;size:number;sha256:string}[];
-  events: {id:string;type:string;at:string;detail:{feedback?:string[];reason?:string;field?:string;issue?:string;query?:string;sourceCount?:number;sources?:{title:string;domain:string}[];actionId?:string;action?:string;command?:string;startedAt?:string;durationMs?:number;timedOut?:boolean;outputLimit?:number;outputTruncated?:boolean;operation?:string;purpose?:string;exitCode?:number;path?:string;name?:string;entry?:string;offset?:number;message?:string;output?:string}}[];
+  events: {id:string;type:string;at:string;detail:{feedback?:string[];reason?:string;field?:string;issue?:string;query?:string;sourceCount?:number;sources?:{title:string;domain:string}[];actionId?:string;action?:string;agentId?:string;agentType?:string;state?:string;command?:string;startedAt?:string;durationMs?:number;timedOut?:boolean;outputLimit?:number;outputTruncated?:boolean;operation?:string;purpose?:string;exitCode?:number;path?:string;name?:string;entry?:string;offset?:number;message?:string;output?:string}}[];
   updatedAt?: string;
 };
 export type Workspace = {
@@ -200,11 +203,12 @@ declare global {
       memoryRead:(owner?:string)=>Promise<import('./memory-types').PersonalMemoryData>;
       memoryUpdate:(input:import('./memory-types').MemoryUpdate)=>Promise<import('./memory-types').PersonalMemoryData>;
       resumeTask:(input:{id:string;messageId?:string;answers?:ClarificationAnswer[];materials?:Material[]})=>Promise<Workspace>;
-      conversationAction:(input:{id:string;action:import('./experience-types').ConversationOperation;value?:string;messageId?:string})=>Promise<Task|{deleted:true;id:string}>;
+      conversationAction:(input:{id:string;action:import('./experience-types').ConversationOperation;value?:string;messageId?:string;useFeedback?:boolean})=>Promise<Task|{deleted:true;id:string}>;
       temporaryConversation:(input?:{id:string})=>Promise<Task|void>;
       exportConversation:(id:string)=>Promise<boolean>;
       saveProjectSettings:(input:{id:string;revision:number;instructions:string;sources:import('./experience-types').ProjectSource[];defaultTools:import('./experience-types').DefaultTools})=>Promise<Project>;
       pickProjectSources:()=>Promise<import('./experience-types').ProjectSource[]>;
+      dailyBrief:(input?:{city?:string;refresh?:boolean})=>Promise<import('./daily-brief').DailyBriefData>;
       libraryFiles:()=>Promise<import('./experience-types').LibraryFile[]>;
       libraryPreview:(input:{id:string})=>Promise<ArtifactPreview & {registeredVersionChanged?:boolean}>;
       libraryReveal:(input:{id:string})=>Promise<void>;
@@ -289,7 +293,11 @@ declare global {
       cancel: (id: string) => Promise<void>;
       sessions: () => Promise<(import('./task-presentation').LiveSession & {taskId:string;updatedAt?:string})[]>;
       editLastMessage: (id:string,messageId:string,content:string) => Promise<Task>;
-      messageFeedback:(input:{taskId:string;messageId:string;rating:'up'|'down'|null})=>Promise<{messageId:string;feedback?:Message['feedback']}>;
+      messageFeedback:(input:{taskId:string;messageId:string;rating:'up'|'down'|null;reason?:string;detail?:string;remember?:boolean})=>Promise<{messageId:string;feedback?:Message['feedback']}>;
+      shareStatus:(input:{taskId:string;messageId:string;provider:'gitee'|'github'})=>Promise<{connected:boolean;url:string}>;
+      sharePublish:(input:{taskId:string;messageId:string;provider:'gitee'|'github';token?:string})=>Promise<{url:string;reused:boolean;recorded?:boolean;authorizationSaved?:boolean}>;
+      shareDisconnect:(input:{provider:'gitee'|'github'})=>Promise<{connected:boolean}>;
+      shareConnect:(input:{provider:'gitee'|'github';token:string})=>Promise<{connected:boolean}>;
       patchTask: (id:string,patch:Partial<Task>,append?:Message[]) => Promise<Task>;
       setTaskPinned: (id:string,pinned:boolean) => Promise<Task>;
       steer: (input:{id:string;taskId:string;content:string;materials?:Material[];messageId?:string}) => Promise<Message>;

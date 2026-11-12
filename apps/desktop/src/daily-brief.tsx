@@ -1,0 +1,37 @@
+import React,{useEffect,useState} from 'react';
+export type DailyBriefData={city:string;cities:string[];weatherAttemptAt?:string;weatherUpdatedAt?:string;newsAttemptAt?:string;newsUpdatedAt?:string;weather?:{date:string;min:number;max:number;text:string;url:string};weatherError:boolean;weatherStale:boolean;news:{title:string;url:string;source:string;at:string;kind:string}[];newsDate?:string;newsError:boolean;newsStale:boolean};
+const checkedTime=(value:string)=>new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false});
+function WeatherIcon({text}:{text?:string}){
+ const snow=!!text?.includes('雪'),rain=!!text?.includes('雨'),fog=!!text?.includes('雾'),cloud=text==='多云'||rain||snow||fog;
+ return <svg className="daily-weather-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  {!text?<circle cx="12" cy="12" r="7" stroke="#94a3b8" strokeWidth="1.8"/>:<>
+   {(!rain&&!snow&&!fog)&&<g stroke="#f6ae2d" strokeWidth="1.8" strokeLinecap="round"><circle cx={cloud?8:12} cy={cloud?8:12} r={cloud?3.5:4.5} fill="#ffce54"/>{!cloud&&<path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4 19 5"/>}</g>}
+   {cloud&&<path d="M6.5 17h11a4 4 0 0 0 .3-8 5.7 5.7 0 0 0-10.9-1.3A4.7 4.7 0 0 0 6.5 17Z" fill="#dcebf8" stroke="#86aacc" strokeWidth="1.5"/>}
+   {rain&&<path d="m8 19-1 2m6-2-1 2m6-2-1 2" stroke="#42a5ed" strokeWidth="2" strokeLinecap="round"/>}
+   {snow&&<g fill="#58b6e5"><circle cx="7" cy="20.5" r="1.2"/><circle cx="12" cy="21" r="1.2"/><circle cx="17" cy="20.5" r="1.2"/></g>}
+   {fog&&<path d="M5 19h14M7 22h10" stroke="#9cacc0" strokeWidth="1.5" strokeLinecap="round"/>}
+   {text==='雷雨'&&<path d="m13 12-3 5h3l-2 5 6-7h-4l2-3Z" fill="#f6bd39"/>}
+  </>}
+ </svg>;
+}
+function NewsIcon({ai}:{ai:boolean}){return <svg className="daily-news-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">{ai?<><path d="m8 1.5 1.7 4.8 4.8 1.7-4.8 1.7L8 14.5 6.3 9.7 1.5 8l4.8-1.7Z" fill="#9274e8"/><path d="m12.5 1 .7 1.8L15 3.5l-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7Z" fill="#48b9da"/></>:<><rect x="2.5" y="2" width="11" height="12" rx="2" fill="#e1efff" stroke="#679bd6"/><path d="M5 5h6M5 8h6M5 11h4" stroke="#679bd6" strokeWidth="1.2" strokeLinecap="round"/></>}</svg>;}
+export function DailyBrief(){
+ const [data,setData]=useState<DailyBriefData>(),[error,setError]=useState(''),[index,setIndex]=useState(0),[hover,setHover]=useState(false),[focus,setFocus]=useState(false),[paused,setPaused]=useState(false),[reduce,setReduce]=useState(false),[changing,setChanging]=useState(false),[refreshing,setRefreshing]=useState(false);
+ useEffect(()=>{let active=true;const read=()=>{void window.ailo.dailyBrief().then(v=>{if(active){setData(v);setError('');}}).catch(()=>{if(active)setError('每日信息暂不可用');});};read();const timer=setInterval(read,60000);const wake=()=>{if(!document.hidden)read();};document.addEventListener('visibilitychange',wake);return()=>{active=false;clearInterval(timer);document.removeEventListener('visibilitychange',wake);};},[]);
+ useEffect(()=>{const m=matchMedia('(prefers-reduced-motion: reduce)'),update=()=>setReduce(m.matches);update();m.addEventListener('change',update);return()=>m.removeEventListener('change',update);},[]);
+ const count=data?.news.length||0,signature=data?.news.map(n=>n.url).join('|');
+ useEffect(()=>setIndex(0),[signature]);
+ useEffect(()=>{if(paused||hover||focus||reduce||count<2)return;const timer=setInterval(()=>setIndex(i=>(i+1)%count),7000);return()=>clearInterval(timer);},[paused,hover,focus,reduce,count]);
+ const current=data?.news[index%Math.max(1,count)];
+ async function open(url:string){try{await window.ailo.openWeb(url);}catch{setError('无法打开链接，请稍后重试');}}
+ async function refresh(){setRefreshing(true);try{setData(await window.ailo.dailyBrief({refresh:true}));setError('');}catch{setError('刷新暂不可用，请稍后重试');}finally{setRefreshing(false);}}
+ async function city(value:string){setChanging(true);try{setData(await window.ailo.dailyBrief({city:value}));setError('');}catch{setError('城市天气暂不可用');}finally{setChanging(false);}}
+ return <aside className="daily-brief" aria-label="天气与每日科技资讯" onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)} onFocusCapture={()=>setFocus(true)} onBlurCapture={e=>{if(!e.currentTarget.contains(e.relatedTarget as Node))setFocus(false);}}>
+  <details className="daily-weather"><summary title="天气与城市设置"><WeatherIcon text={data?.weather?.text}/> <span>{data?.city||'北京'}</span> <span>{data?.weather?`${data.weather.text} ${data.weather.min}～${data.weather.max}°`:changing?'加载天气…':data?.weatherError?'天气暂不可用':'加载天气…'}</span>{data?.weatherStale&&data.weather&&<small>旧</small>}</summary><div className="daily-brief-popover"><label>天气城市 <select aria-label="天气城市" disabled={changing} value={data?.city||'北京'} onChange={e=>void city(e.target.value)}>{(data?.cities||['北京']).map(c=><option key={c}>{c}</option>)}</select></label>{data?.weather&&<p>{data.weather.date} 预报 · {data.weather.text} · {data.weather.min}～{data.weather.max}°C</p>}{data?.weatherStale&&<p>今日天气尚未更新，以上为旧预报；获取失败后每 15 分钟重试。</p>}{data?.weatherAttemptAt&&<p>最近检查：{checkedTime(data.weatherAttemptAt)}（北京时间）{data.weatherError?' · 获取失败':''}</p>}<button disabled={refreshing} onClick={()=>void refresh()}>{refreshing?'正在刷新…':'刷新天气与新闻'}</button><p>天气来源：<a href="https://open-meteo.com/" onClick={e=>{e.preventDefault();void open('https://open-meteo.com/');}}>Open-Meteo</a> · 每日更新</p></div></details>
+  <span className="daily-brief-divider"/>
+  <div className="daily-news-window">{current?<a key={current.url} className="daily-news-item" href={current.url} title={`${current.title} · ${current.source} · ${new Date(current.at).toLocaleDateString('zh-CN')}`} onClick={e=>{e.preventDefault();void open(current.url);}}><span className={'daily-news-kind'+(current.kind==='AI热点'?' ai':'')}><NewsIcon ai={current.kind==='AI热点'}/>{current.kind}</span><span className="daily-news-title">{current.title}</span><small>{current.source}</small></a>:<span className="daily-news-empty">{data?'新闻暂不可用，将自动重试':'正在准备每日资讯…'}</span>}</div>
+  {count>1&&<div className="daily-news-controls"><button aria-label="上一条新闻" onClick={()=>setIndex(i=>(i-1+count)%count)}>‹</button><button aria-label={paused?'播放新闻':'暂停新闻'} aria-pressed={paused} onClick={()=>setPaused(v=>!v)}>{paused?'▷':'Ⅱ'}</button><button aria-label="下一条新闻" onClick={()=>setIndex(i=>(i+1)%count)}>›</button></div>}
+  <details className="daily-news-more"><summary title="查看全部每日资讯与更新时间">{data?.newsStale&&count?'旧资讯':data?.newsError?'部分更新':'每日'}⌄</summary><div className="daily-brief-popover"><strong>每日科技资讯 · AI 热点</strong><p>{data?.newsUpdatedAt?`最近获取 ${checkedTime(data.newsUpdatedAt)}（北京时间）`:data?.newsDate?`上次获取日期 ${data.newsDate}`:'尚未取得新闻'} · 每小时检查</p>{data?.newsStale&&<p>尚未取得今日订阅，保留上次内容。</p>}{data?.newsError&&<p>部分信息源暂不可用，15 分钟后自动重试。</p>}{data?.newsAttemptAt&&<p>最近检查：{checkedTime(data.newsAttemptAt)}（北京时间）</p>}<button disabled={refreshing} onClick={()=>void refresh()}>{refreshing?'正在刷新…':'刷新天气与新闻'}</button><p>手动刷新间隔至少 1 分钟；新闻发布日期以各条目为准。</p><ul>{data?.news.map(n=><li key={n.url}><a href={n.url} onClick={e=>{e.preventDefault();void open(n.url);}}>{n.title}</a><small>{n.kind} · {n.source} · {checkedTime(n.at)}</small></li>)}</ul>{!data?.news.some(n=>n.kind==='AI热点')&&<p>当前订阅中暂无新的 AI 热点。</p>}<p>标题来自公开订阅，点击阅读原文。</p></div></details>
+  {error&&<span role="status" className="daily-brief-error" title={error}>暂不可用</span>}
+ </aside>;
+}

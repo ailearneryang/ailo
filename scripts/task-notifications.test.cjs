@@ -1,5 +1,12 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
 const {createTaskNotifications}=require('../apps/desktop/task-notifications.cjs');
+test('reply reminders identify the actual input and include a bounded answer preview, model and elapsed time',async t=>{
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-notice-context-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ const store=createTaskNotifications({directory,account:async()=>null}),task={id:'assistant',title:'我的 Ailo',request:'旧任务',messages:[{id:'first',role:'user',content:'帮我整理新能源车购车关注点'},{id:'queued',role:'user',content:'尚未处理的下一条要求'}]};
+ const result={content:'## 重点\n优先检查**电池质保**、续航和购车优惠。',agentRun:{status:'completed',currentIntent:'chat',currentInputId:'first'},replyDetails:{durationMs:72500,usage:{models:[{lane:'primary',name:'当前模型'}]}}};
+ await store.publish(task,result,'r');const item=(await store.read()).items[0];assert.equal(item.subject,'帮我整理新能源车购车关注点');assert.equal(item.preview,'重点 优先检查电池质保、续航和购车优惠。');assert.equal(item.durationMs,72500);assert.equal(item.modelName,'当前模型');assert.ok(!JSON.stringify(item).includes('尚未处理'));
+ await store.publish(task,{content:'回答'.repeat(300)},'r2',{requestText:'发送请求时的提问'});const second=(await store.read()).items[0];assert.equal(second.subject,'发送请求时的提问');assert.ok(second.preview.length<=200);assert.equal(second.durationMs,undefined);
+});
 test('deleted-source notifications can be removed individually and stay removed after restart',async t=>{
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'ailo-notices-clear-'));
  t.after(()=>fs.rm(directory,{recursive:true,force:true}));

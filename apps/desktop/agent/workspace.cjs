@@ -46,15 +46,27 @@ function searchSelection(text,material,entry,pointer,offset,query) {
   while(hits.length<8){const index=text.indexOf(query,cursor);if(index<0)break;hits.push({offset:Math.max(0,index-200),matchOffset:index,text:text.slice(Math.max(0,index-200),index+600)});cursor=index+query.length;}
   return {id:material.id,name:material.name,entry,pointer,kind:'json_search',query,hits,next:hits.length===8&&text.indexOf(query,cursor)>=0?cursor:null,total:text.length,notice:'大小写敏感的关键词定位；用同一 pointer 和命中 offset 读取上下文。next 用于继续搜索。没有命中不代表材料不存在，请核对关键词和所选节点。'};
 }
-async function receiveMaterials(base,project,files,catalog,materials){
+async function receiveMaterials(base,project,files,catalog,materials,task){
   for(const material of materials) {
     const id=key(JSON.stringify([material.name,material.sourceId || material.text]));
     let sourceId;
     if(typeof material.sourceId==='string' && /^[a-f0-9-]{36}$/.test(material.sourceId)) {
       const destination=path.join(project,'originals',material.sourceId);
       await fs.mkdir(path.dirname(destination),{recursive:true,mode:0o700});
-      try {await fs.rename(path.join(base,'imports',material.sourceId),destination);sourceId=material.sourceId;}
-      catch(e){if(e.code!=='ENOENT')throw e;try{await fs.access(destination);sourceId=material.sourceId;}catch{}}
+      const original=await require('../material-originals.cjs').findMaterialOriginal(base,task,material.sourceId);
+      if(original){
+        await resolveFile(path.join(project,'originals'),material.sourceId);
+        if(original===path.join(base,'imports',material.sourceId)){
+          // Atomically claim a new import for its first workspace. Related
+          // branches copy from recorded origins; unrelated projects cannot
+          // claim an already consumed source ID.
+          try{await fs.rename(original,destination);sourceId=material.sourceId;}
+          catch(e){if(e.code!=='ENOENT')throw e;try{await fs.access(destination);sourceId=material.sourceId;}catch{}}
+        }else{
+          if(original!==destination){try{await fs.copyFile(original,destination,fs.constants.COPYFILE_EXCL);await fs.chmod(destination,0o600);}catch(e){if(e.code!=='EEXIST')throw e;}}
+          sourceId=material.sourceId;
+        }
+      }
     }
     const existing=catalog.find(m=>m.id===id);
     if(existing){if(sourceId)existing.sourceId=sourceId;continue;}
@@ -101,7 +113,7 @@ async function createWorkspace(base, task) {
   await fs.mkdir(files,{recursive:true,mode:0o700});
   const catalogFile=path.join(project,'materials.json');
   let catalog=await json(catalogFile,[]);
-  catalog=await receiveMaterials(base,project,files,catalog,task.messages?.flatMap(m=>m.materials||[]) || task.materials || []);
+  catalog=await receiveMaterials(base,project,files,catalog,[...(task.materials||[]),...(task.messages||[]).flatMap(m=>m.materials||[])],task);
   let run=await json(runFile,{version:1,taskId:task.id,projectId:task.projectId,status:'understanding',mode:'chat',goal:'',steps:[],decisions:[],acceptance:[],artifacts:[],events:[],revision:0});
   require('./recovery-state.cjs').bind(run);
   if(run.taskId!==task.id||run.projectId!==task.projectId)throw Error('任务所属项目不匹配');
@@ -144,7 +156,7 @@ async function createWorkspace(base, task) {
     throw Object.assign(Error('未找到当前任务的执行记录：'+reference+'。这不表示原操作失败，不能据此重复执行写入、安装或发送。'),{code:'EXECUTION_RECORD_NOT_FOUND'});
   }
   return {files,project,get catalog(){return catalog;},run,save,lookup,
-    async receiveMaterials(materials){if(!materials.length)return catalog;catalog=await receiveMaterials(base,project,files,catalog,materials);return catalog;},
+    async receiveMaterials(materials){if(!materials.length)return catalog;catalog=await receiveMaterials(base,project,files,catalog,materials,task);return catalog;},
     async archivedEvent(id){
       const current=run.events.find(e=>e.id===id);if(current)return current;
       if(typeof id!=='string'||! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id))return;
@@ -169,7 +181,7 @@ async function createWorkspace(base, task) {
       if(!Number.isInteger(offset)||offset<0)throw Error('记录读取位置无效');
       if(!Number.isSafeInteger(limit)||limit<1||limit>12000)throw Error('记录读取长度必须为 1–12000 的整数');
       if(!['record','result'].includes(view))throw Error('记录视图须为 record 或 result');
-      let text,source;
+      let text,source,original;
       if(view==='result'&&['state','observations'].includes(id))throw Error('状态和索引仅支持 record 视图');
       if(id==='observations'){
         try{text=await fs.readFile(runFile+'.memory.jsonl','utf8');}catch(e){if(e.code!=='ENOENT')throw e;text=JSON.stringify(run.observationIndex||[]);}
@@ -180,10 +192,14 @@ async function createWorkspace(base, task) {
         if(view==='result'){
           const record=stored.record,result=record.response?.result??record.response;
           text=typeof result?.text==='string'?result.text:typeof result?.output==='string'?result.output:JSON.stringify(result??null);
+          if(record.action?.action==='read_execution'&&record.action.id&&!['state','observations'].includes(record.action.id)&&record.action.view==='result'){
+            original=result?.original||{id:record.action.id,view:'result',offset:result?.offset??record.action.offset??0,total:result?.total};
+            original={...original,offset:(original.offset||0)+offset};
+          }
           if(record.action?.action==='read_file'&&result?.sha256)source={path:record.action.path,sha256:result.sha256,offset:(result.offset||0)+offset,total:result.total};
         }
       }
-      return {id,...(view==='result'?{view,source}:{}),offset,total:text.length,text:text.slice(offset,offset+limit),next:offset+limit<text.length?offset+limit:null};
+      return {id,...(view==='result'?{view,source,...(original?{original}: {})}:{}),offset,total:text.length,text:text.slice(offset,offset+limit),next:offset+limit<text.length?offset+limit:null};
     },
     async images(materials) {
       const {isImageMaterial} = await import('../attachments.mjs');

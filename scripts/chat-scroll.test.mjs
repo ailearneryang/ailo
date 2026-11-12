@@ -4,6 +4,13 @@ import fs from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 const source=stripTypeScriptTypes(fs.readFileSync(new URL('../apps/desktop/src/chat-scroll.ts',import.meta.url),'utf8'));
 const {attachChatScroll}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+test('the downward arrow returns to the newest question start and keeps incoming reply text from moving the reader',()=>{
+ let resize;globalThis.ResizeObserver=class{constructor(cb){resize=cb;}observe(){}disconnect(){}};
+ const handlers={};let top=0;
+ const viewport={scrollHeight:2400,clientHeight:400,get scrollTop(){return top;},set scrollTop(v){top=Math.min(v,this.scrollHeight-this.clientHeight);},getBoundingClientRect(){return {top:100}},querySelector(){return null;},querySelectorAll(){return [{getBoundingClientRect:()=>({top:100+400-top})},{getBoundingClientRect:()=>({top:100+1200-top})}];},addEventListener(n,h){handlers[n]=h;},removeEventListener(n){delete handlers[n];}};
+ const cleanup=attachChatScroll(viewport);handlers.wheel({deltaY:-200});viewport.scrollTop=500;handlers.scroll();handlers['ailo-latest-question']();assert.equal(top,1180);assert.notEqual(top,viewport.scrollHeight-viewport.clientHeight);
+ viewport.scrollHeight=3000;resize();assert.equal(top,1180);handlers.scroll();viewport.scrollHeight=3200;resize();assert.equal(top,1180);cleanup();assert.equal(handlers['ailo-latest-question'],undefined);
+});
 
 test('reading history survives content updates; returning to bottom resumes following',()=>{
  let resize,disconnected=false;
