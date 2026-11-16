@@ -81,3 +81,11 @@ test('personal assistant permits message history operations while protecting its
  assert.equal(improved.id,id);assert.equal(improved.responseOnly,true);assert.equal(improved.messages.at(-1).role,'user');assert.equal(improved.conversationSections.length,2);
  assert.equal(improved.agentRun,undefined);assert.equal((await f.storage.readWorkspace()).tasks.length,1);
 });
+test('search defaults on for normal tasks and project settings, preserves explicit off and temporary isolation',async t=>{
+ const f=await fixture(t);
+ const created=await f.storage.patchTask('search-default',{request:'fixture',materials:[]});assert.equal(created.searchEnabled,true);
+ await f.storage.patchTask(created.id,{searchEnabled:false});assert.equal((await f.storage.patchTask(created.id,{title:'unchanged choice'})).searchEnabled,false);
+ const project=await f.experience.projectSave({id:'p',revision:0,instructions:'',sources:[]});assert.equal(project.defaultTools.searchEnabled,true);
+ assert.equal((await f.experience.projectSave({id:'p',revision:1,instructions:'',sources:[],defaultTools:{searchEnabled:false}})).defaultTools.searchEnabled,false);
+ const temporary=await f.experience.temporaryCreate();assert.equal((await f.storage.patchTask(temporary.id,{searchEnabled:true})).searchEnabled,false);
+});

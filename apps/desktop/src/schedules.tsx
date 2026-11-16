@@ -15,7 +15,7 @@ export function Schedules({initialId,focusHistory=false,projects,tasks,models,de
 
  const historyRef=useRef<HTMLElement>(null),historyOpened=useRef(false);
  const current=items.find(i=>i.id===selected);
- function create(example?:typeof examples[number]){setError('');setDraft({contextMode:'continuity',title:example?.title||'',prompt:example?.prompt||'',frequency:example?.frequency||'daily',modelId:models.find(m=>m.id===defaultModelId)?.id||models[0]?.id||'',time:'09:00',weekday:1,at:localDate(Date.now()+3600000)});}
+ function create(example?:typeof examples[number]){setError('');setDraft({searchEnabled:true,contextMode:'continuity',title:example?.title||'',prompt:example?.prompt||'',frequency:example?.frequency||'daily',modelId:models.find(m=>m.id===defaultModelId)?.id||models[0]?.id||'',time:'09:00',weekday:1,at:localDate(Date.now()+3600000)});}
  async function action(fn:()=>Promise<unknown>){setBusy(true);setError('');try{await fn();await refresh();await onChanged();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
  const records = current ? [...current.runs, ...recordsFor.filter(t=>t.scheduledTaskId===current.id&&!current.runs.some(r=>r.taskId===t.id)).map(t=>({id:t.scheduledRunId||t.id,taskId:t.id,at:t.scheduledAt||t.created,status:(t.lastError?'failed':t.messages?.at(-1)?.role==='assistant'?'completed':'failed') as 'failed'|'completed',error:t.lastError}))].sort((a,b)=>Date.parse(b.at)-Date.parse(a.at)) : [];
  const latest=records[0];

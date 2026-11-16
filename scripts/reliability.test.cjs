@@ -48,3 +48,13 @@ test('project memory selects newest tasks when more than 100 exist',async t=>{
  for(const item of [tasks[0],tasks.at(-1)]){const w=await createWorkspace(base,item);w.run.goal=item.title;await w.save();}
  const memory=await require('../apps/desktop/project-memory.cjs').readMemory(base,{id:'p'},tasks);assert.ok(memory.records.some(r=>r.taskId===tasks[0].id));assert.ok(!memory.records.some(r=>r.taskId===tasks.at(-1).id));
 });
+
+test('duplicate batch validation closes read journal and permits a corrected read',async t=>{
+ const {base,w}=await setup(t);await fs.writeFile(path.join(w.files,'local.txt'),'evidence');let calls=0;
+ await runAgent({base,task,model:{contextWindow:32768},signal:new AbortController().signal,ask:async()=>{
+ const actions=[{action:'route',kind:'task'},{action:'batch_read',items:[{action:'read_file',path:'local.txt'},{action:'read_file',path:'local.txt'}]},{action:'batch_read',items:[{action:'read_file',path:'local.txt'}]},{action:'blocked',text:'保留原任务等待核验'}];
+ if(calls===3)throw Error('END_FIXTURE');assert.ok(calls<3);return {content:JSON.stringify(actions[calls++])};
+ }});
+ const saved=await createWorkspace(base,task),entries=saved.run.actionJournal.filter(e=>e.action==='batch_read');
+ assert.equal(entries.length,2);assert.equal(entries[0].status,'failed');assert.equal(entries[1].status,'succeeded');assert.equal(journal.unknown(saved.run),false);assert.equal(require('../apps/desktop/task-outcome.cjs').pendingOutcomeMessage(saved.run),undefined);
+});

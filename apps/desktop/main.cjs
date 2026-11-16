@@ -432,12 +432,13 @@ function create() {
   win.webContents.on('did-start-navigation',(_event,_url,inPlace,mainFrame)=>{if(mainFrame&&!inPlace){dictation.cancel();void experience.dispose();}});
   win.loadURL(page);
 }
+let mobileBridge;
 app.whenReady().then(async () => {
   if(!primaryInstance)return;
   app.setAboutPanelOptions({applicationName:"Ailo",applicationVersion:app.getVersion(),iconPath:path.join(__dirname,"assets/ailo.png")});
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(process.platform === "darwin" ? [{label:"Ailo",submenu:[
-      {role:"about",label:"关于 Ailo"},{type:"separator"},
+      {role:"about",label:"关于 Ailo"},{label:'手机扫码配对 / 配对码',click:async()=>{try{if(!mobileBridge)throw Error('尚未配置手机连接服务，请按独立手机工程的连接指南配置。');const p=await mobileBridge.pair();await require('./mobile-pairing-window.cjs').show({BrowserWindow,parent:win,pair:p});}catch(e){await dialog.showMessageBox({message:e.message});}}},{label:'撤销手机连接',click:async()=>{if(mobileBridge)await mobileBridge.revoke();}},{type:"separator"},
       {role:"services",label:"服务"},{type:"separator"},
       {role:"hide",label:"隐藏 Ailo"},{role:"hideOthers",label:"隐藏其他"},{role:"unhide",label:"显示全部"},
       {type:"separator"},{role:"quit",label:"退出 Ailo"}
@@ -462,6 +463,7 @@ app.whenReady().then(async () => {
   storage.menuBar=require('./menu-bar.cjs').createMenuBar({Tray,Menu,nativeImage,iconPath:path.join(__dirname,'assets/ailo-trayTemplate.png'),notifications:taskNotifications,sessions:()=>chat.sessions(),account:()=>storage.account(),
    openWindow:()=>{if(!win||win.isDestroyed())create();else{if(win.isMinimized())win.restore();win.show();win.focus();}},
    openTask:async(taskId,owner,id)=>{if(((await storage.account())?.id||'local')!==owner)return;await notificationPresenter.openTask(taskId,owner);if(id)await taskNotifications.update({action:'read',id});},testNotification,quit:()=>app.quit()});
+  try{mobileBridge=await require('./mobile-bridge.cjs').startFromEnvironment({storage,chat,directory:path.join(app.getPath('userData'),'mobile-bridge')});}catch(e){console.error('手机连接未启动：'+e.message);}
   await schedules.start();
   void memoryWorker.start().catch(error=>console.error("记忆后台启动失败",error.message));
   const checkSchedules=()=>schedules.tick().catch(error=>console.error('Scheduled task check failed:',error.message));
@@ -473,7 +475,7 @@ app.whenReady().then(async () => {
 });
 let quitting=false;
 app.on("before-quit", e => {
-  if(quitting)return;
+  if(quitting)return;mobileBridge?.stop();
   e.preventDefault();storage.menuBar?.dispose();storage.executionPower.dispose();storage.browserObserver.dispose();memoryWorker.stop();storage.permissions.cancelAll();schedules.stop();chat.cancelAll();
   Promise.allSettled([experience.dispose(),dictation.cancel(),storage.androidManager.dispose(),feishuCli.dispose(),storage.amap.dispose(),storage.mcpConnections.dispose()]).finally(()=>{quitting=true;app.quit();});
 });

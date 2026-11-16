@@ -129,7 +129,7 @@ function App() {
     setProjectId(id);
     const project=data.projects.find(p=>p.id===id);
     setExtensionIds(project?.extensionIds || []);
-    setSearchChoices(v=>({...v,new:project?.defaultTools?.searchEnabled===true}));setConnectionChoices(v=>({...v,new:project?.defaultTools?.feishuEnabled===true}));setAMapChoices(v=>({...v,new:project?.defaultTools?.amapEnabled===true}));setMCPChoices(v=>({...v,new:project?.defaultTools?.mcpConnectionIds||[]}));
+    setSearchChoices(v=>({...v,new:project?.defaultTools?.searchEnabled!==false}));setConnectionChoices(v=>({...v,new:project?.defaultTools?.feishuEnabled===true}));setAMapChoices(v=>({...v,new:project?.defaultTools?.amapEnabled===true}));setMCPChoices(v=>({...v,new:project?.defaultTools?.mcpConnectionIds||[]}));
     setNotice("");
   }
   const models = selectableModels(data);
@@ -303,7 +303,7 @@ function App() {
   }
   const reasoningSupported=supportsReasoning(currentModel);
   const reasoningEffort=reasoningChoices[connectionKey] ?? task?.reasoningEffort ?? 'medium';
-  const useSearch=searchChoices[connectionKey] ?? task?.searchEnabled ?? false;
+  const useSearch=task?.temporary?false:(searchChoices[connectionKey] ?? task?.searchEnabled ?? true);
   const mcpConnectionIds=mcpChoices[connectionKey] ?? task?.mcpConnectionIds ?? [];
   function changeMCPConnections(ids:string[]) {
     setMCPChoices(v=>({...v,[connectionKey]:ids}));
@@ -369,7 +369,7 @@ function App() {
     const responseFeishu=fromQueue?nextTask.feishuEnabled:useFeishu;
     const responseAMap=fromQueue?nextTask.amapEnabled:useAMap;
     const responseMCP=fromQueue?nextTask.mcpConnectionIds||[]:mcpConnectionIds;
-    const responseSearch=fromQueue?nextTask.searchEnabled:useSearch;
+    const responseSearch=fromQueue?nextTask.searchEnabled!==false:useSearch;
     const requestId = crypto.randomUUID();
     respondingTasks.current.add(nextTask.id);
     requests.current[nextTask.id]={id:requestId,taskId:nextTask.id,inputId:[...(nextTask.messages||[])].reverse().find(m=>m.role==='user')?.id,startedAt:new Date().toISOString(),phase:'preparing',content:'',status:'正在检查上下文…'};syncSessions();

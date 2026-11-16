@@ -21,6 +21,7 @@
     "@xmldom/xmldom": "0.9.12",
     "exceljs": "^4.4.0",
     "pdfjs-dist": "^6.4.299",
+    "qrcode": "^1.5.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-markdown": "^10.1.0",

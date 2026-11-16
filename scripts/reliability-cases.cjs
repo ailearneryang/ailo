@@ -1,6 +1,17 @@
 // Fixed incident coverage. Adding a repair means extending this matrix rather
 // than replacing an old case with the newest symptom.
 const cases=[
+ {id:'mobile-plus-materials-and-tools',incident:'手机加号仅有基础菜单，不能把主动选择的附件和技能传给真实电脑任务；新增有界附件协议与材料原件导入，落盘校验后才确认云端删除，重启复用已收原件、未知执行不重放、缺原件不执行，工具选择按已安装能力校验，权限仍在电脑端确认，目录和凭据不进能力列表',files:['mobile-payload','mobile-bridge','image-attachments','skill-runtime-reuse']},
+ {id:'disk-scan-read-timeout',incident:'11月15日获只读授权后批量du扫描超时，已有目录与缓存输出却被一律视为未知副作用阻断；严格识别有界只读shell语法，部分读取保留为interrupted且未完成，写入及不明脚本仍未知，失败预算不重置，旧回执可核对恢复分类',files:['read-only-command','action-idempotency','recovery-episodes','task-output-experience']},
+ {id:'storage-report-empty-chapters',incident:'11月15日storage-cleanup报告依赖JS注入正文，静态预览仅剩章节，多项扫描空数组仍标满分；离线固定同类输入，报告正文须静态可读，空扫描不得冒充完整覆盖，保留脚本隔离与原任务证据',files:['report-content','html-delivery','html-preview','html-document-validation']},
+ {id:'search-default-enabled',incident:'联网搜索默认未选中；新对话默认开启，项目与会话明确关闭保持关闭，临时对话仍禁用外部工具，手机创建与继续会话使用相同开关',files:['experience','mobile-bridge']},
+ {id:'mobile-qr-pairing',incident:'手机手输配对码困难；电脑生成本地二维码，仅携带短时一次性配对码和服务地址，长期凭据不进入二维码，保留手输入口',files:['mobile-pairing-window','mobile-bridge']},
+ {id:'mobile-launch-parent-environment',incident:'云端启动脚本携带AILO_MOBILE_CONFIG时回归隐式继承父环境，普通启动命令断言失败；命令生成显式接收环境，真实入口仍传配置，带父环境的回归不泄漏令牌或改变验收',files:['desktop-start','mobile-bridge']},
+ {id:'mobile-launch-config-retention',incident:'macOS Launch Services未传递手机配置路径，打开应用提示未配置；只传显式路径而不传令牌，配置安全保留供后续Finder启动，原任务证据不变',files:['mobile-bridge','desktop-start']},
+ {id:'mobile-relay-state-isolation',incident:'本地切云端共用jobs.json，旧回执上传新中转反复404并阻塞新任务；按中转和凭据隔离，保留旧证据，未知副作用不重放，缺失远端回执隔离后继续同步',files:['mobile-bridge']},
+ {id:'mobile-desktop-bridge',incident:'连接后同步既有电脑会话和任务进度，不把无执行记录会话当作完成；手机跨端任务的配对、投递与恢复：保存执行标识后运行，重连不重复执行，未知副作用不重放；原任务与历史保留，未完成不冒充完成，远程连接要求HTTPS',files:['mobile-bridge','reliability','recovery-episodes']},
+ {id:'regeneration-feishu-read-access',incident:'定时任务重新生成将飞书整体排除而误报无权限；保留已开启的飞书查询读取，拒绝发送创建和非GET接口',files:['regeneration-search']},
+ {id:'batch-validation-journal',incident:'11月12日重复批量读取校验失败残留running，被误判未知副作用；只读分支失败结清日志并允许有限修正，真实未知命令仍禁止重放',files:['reliability']},
  {id:'daily-brief-refresh-recovery',incident:'11月12日天气首次失败后全天锁住旧预报，新闻凌晨抓取后全天不更新；失败15分钟重试、新闻每小时检查、手动刷新1分钟限流，跨重启持久化与旧缓存迁移，抓取时间不冒充发布日期',files:['daily-brief']},
  {id:'generated-markdown-inline-preview',incident:'生成 md 成果只有文件链接，没有自动内容预览；Markdown 进入成果预览选择并渲染表格和任务列表，保持版本校验、历史成果与验收状态，不自动加载远端图片或执行 HTML',files:['delivery-presentation']},
  {id:'personal-assistant-message-actions',incident:'我的 Ailo 显示分支、重新生成和反馈改进入口，但 experience:action 全面拒绝；允许消息历史操作，保留原消息与旧执行证据、只读搜索重答和忙碌保护，继续拒绝会话生命周期修改',files:['experience','regeneration-search']},

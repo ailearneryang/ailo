@@ -196,7 +196,7 @@ function createStorage(directory, safeStorage) {
         const merged=[...(previous?.messages || (previous?.request?[{id:id+'-original',role:'user',content:previous.request,createdAt:previous.created}]:[]))];
         const receivedAt=new Date().toISOString();
         for(const m of [...(messages||[]),...append])if(!merged.some(old=>old.id===m.id))merged.push({...m,createdAt:typeof m.createdAt==='string'&&Number.isFinite(Date.parse(m.createdAt))?m.createdAt:receivedAt});
-        const task={...previous,...fields,id,messages:merged};
+        const task={searchEnabled:true,...previous,...fields,id,messages:merged};
         if(typeof task.request!=='string'||(!task.request.trim()&&!task.materials?.length)||!Array.isArray(task.materials)||(!!task.projectId&&!state.projects.some(p=>p.id===task.projectId))||merged.some(m=>!m||!['user','assistant'].includes(m.role)||typeof m.content!=='string'))throw Error('任务数据无效');
         state.tasks=previous?state.tasks.map(t=>t.id===id?task:t):[task,...state.tasks];
 

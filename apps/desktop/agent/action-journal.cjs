@@ -9,7 +9,7 @@ function begin(run,action){
  run.actionJournal ||= [];
  const hash=fingerprint(action);
  if(run.actionJournal.some(e=>e.fingerprint===hash&&e.status==='unknown'))throw Object.assign(Error('此前相同操作的结果尚未核对，禁止自动重放。请先检查文件、日志或远端状态；无法确认时说明阻塞。'),{code:'ACTION_RESULT_UNKNOWN'});
- const readOnly=reads.has(action.action)||action.action==='android_device'&&['status','logs','screenshot','check'].includes(action.operation);
+ const readOnly=action.action==='run_command'&&require('./read-only-command.cjs').isReadOnly(action.command)||reads.has(action.action)||action.action==='android_device'&&['status','logs','screenshot','check'].includes(action.operation);
  const entry={id:randomUUID(),fingerprint:hash,action:action.action,path:action.path,stepId:action.stepId||run.steps.find(s=>s.status==='running')?.id,status:'running',readOnly,startedAt:new Date().toISOString(),revision:run.revision,retries:0};
  entry.purpose=typeof action.purpose==='string'?action.purpose.slice(0,200):undefined;
  entry.resultPaths=require('./outcome-inspection.cjs').targets(action);
@@ -20,6 +20,10 @@ async function reconcile(workspace){
  for(const entry of workspace.run.actionJournal||[]){
   if(entry.status!=='running'&&entry.status!=='unknown')continue;
   if(await require('./beatra-authorization.cjs').reconcile(workspace,entry))continue;
+  if(entry.action==='run_command'&&!entry.readOnly){
+   const event=workspace.run.events?.find(e=>e.type==='run_command'&&e.detail?.actionId===entry.id&&e.detail.result?.timedOut===true);
+   if(event&&require('./read-only-command.cjs').isReadOnly(event.detail.command)){entry.readOnly=true;entry.recovery='partial_read';}
+  }
   if(entry.action==='write_file'&&entry.expectedHash){
    try{const data=await fs.readFile(await resolveFile(workspace.files,entry.path));if(createHash('sha256').update(data).digest('hex')===entry.expectedHash){entry.status='succeeded';entry.recovered=true;entry.finishedAt=new Date().toISOString();await workspace.event('action_recovered',{actionId:entry.id,path:entry.path,message:'已核对中断写入的文件内容，无需重做。'});continue;}}catch{}
   }
@@ -42,7 +46,7 @@ async function executeWithRecovery(workspace,entry,action,signal,execute){
   signal.throwIfAborted();
   try{
    const result=await execute();
-   entry.status=result?.timedOut?'unknown':result?.exitCode!==undefined&&result.exitCode!==0?'failed':'succeeded';
+   entry.status=result?.timedOut?(entry.readOnly?'interrupted':'unknown'):result?.exitCode!==undefined&&result.exitCode!==0?'failed':'succeeded';
    entry.timedOut=!!result?.timedOut;
    await require('./outcome-inspection.cjs').inspect(workspace,entry);
    entry.finishedAt=new Date().toISOString();entry.exitCode=result?.exitCode;await workspace.save();return result;

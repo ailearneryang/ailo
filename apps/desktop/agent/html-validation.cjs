@@ -33,6 +33,7 @@ async function checkDocument(workspace,artifact){
  if(!/<html\b/i.test(source)||!/<head\b/i.test(source)||!/<body\b/i.test(source)||!/<\/body\s*>/i.test(source)||!/<\/html\s*>\s*$/i.test(source))throw Error('HTML文档缺少完整html/head/body结构或结束标签');
  const text=source.replace(/<!--[\s\S]*?-->|<(?:script|style)\b[^>]*>[\s\S]*?<\/(?:script|style)>/gi,'').replace(/<[^>]*>/g,'').trim();
  if(!text)throw Error('HTML文档没有可读取正文');
+ require('./report-content.cjs').assertReadable(source);
  const {DOMParser}=require('@xmldom/xmldom');
  const validateSvg=svg=>{let bad=false;try{new DOMParser({onError:()=>{bad=true;}}).parseFromString(svg,'image/svg+xml');}catch{bad=true;}if(bad)throw Error('SVG结构无效，请修复图示定义');};
  let depth=0,start=0;

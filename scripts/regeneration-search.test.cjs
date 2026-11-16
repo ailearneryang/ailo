@@ -30,3 +30,16 @@ test('regeneration rejects model-proposed writes and route changes before tools 
  const w=await require('../apps/desktop/agent/workspace.cjs').createWorkspace(f.storage.agentDirectory,task);await assert.rejects(fs.stat(path.join(w.files,'must-not-exist.txt')),/ENOENT/);assert.equal(w.run.events.filter(e=>e.type==='write_file').length,0);assert.equal(w.run.artifacts.length,0);
  const names=allowedActions({phase:'chat',regeneration:{readOnly:true},webSearchEnabled:true,subagentAvailable:true,mcpConnections:[{id:'x'}]});for(const name of ['feishu','mcp','memory','assistant','subagent','run_command','browser','artifact','verify','finish','write_file'])assert.ok(!names.includes(name),name);
 });
+
+test('regeneration retains enabled Feishu reads and rejects all Feishu effects',()=>{
+ const guard=require('../apps/desktop/agent/regeneration.cjs'),state={phase:'chat',regeneration:{readOnly:true},feishuEnabled:true};
+ assert.ok(allowedActions(state).includes('feishu'));
+ for(const a of [{operation:'shortcut',query:'docs +search'},{operation:'shortcut',query:'docs +fetch'},{operation:'api',method:'GET',path:'/open-apis/drive/v1/files'}])assert.doesNotThrow(()=>guard.assert({action:'feishu',...a},state));
+ for(const a of [{operation:'shortcut',query:'docs +create'},{operation:'shortcut',query:'im +messages-send'},{operation:'shortcut',query:'unknown'},{operation:'api',method:'POST'}])assert.throws(()=>guard.assert({action:'feishu',...a},state),{code:'REGENERATION_READ_ONLY'});
+ assert.ok(!allowedActions({...state,feishuEnabled:false}).includes('feishu'));
+});
+test('regenerated enabled Feishu task reaches read executor',async t=>{
+ const f=await fixture(t);await f.storage.mutateWorkspace(s=>{s.tasks[0].feishuEnabled=true;});const task=await f.experience.action({id:f.task.id,action:'regenerate',messageId:'a'});let calls=0,reads=0;
+ const r=await runAgent({base:f.storage.agentDirectory,task,model:{contextWindow:131072},signal:new AbortController().signal,feishuCli:{execute:async a=>{reads++;assert.equal(a.query,'docs +search');return {output:'飞书资料已读取'};}},ask:async messages=>{const state=JSON.parse(messages.at(-1).content);assert.equal(state.feishuEnabled,true);return {content:JSON.stringify(calls++?{action:'reply',text:'已读取飞书资料'}:{action:'feishu',operation:'shortcut',query:'docs +search',params:{query:'每日资料'}})};}});
+ assert.equal(reads,1);assert.match(r.content,/已读取飞书/);
+});

@@ -8,7 +8,9 @@ const MAX_ASSET_BYTES = 10 * 1024 * 1024, MAX_TOTAL_BYTES = 40 * 1024 * 1024, MA
 
 async function htmlPreview(content, root, relative) {
   relative = normalizeProjectPath(relative);
-  const issues = new Set(), cache = new Map();
+  const report=require('./agent/report-content.cjs').inspect(content);
+  const issues = new Set(report.scanIssues), cache = new Map();
+  if(report.emptySections.length>=2)issues.add('多个章节只有标题，缺少可静态读取的正文：'+report.emptySections.slice(0,6).join('、')+'。请重新生成含完整静态正文的报告。');
   let totalBytes = 0, expandedBytes = 0, loaded = 0, scriptsBlocked = 0, parseWarnings = false;
   const issue = (ref, reason) => issues.add(`${String(ref).slice(0,160)}：${reason}`);
   // xmldom accepts HTML void elements, but fragments need a document wrapper.

@@ -88,6 +88,12 @@ function recordObservation(workspace,event){
 }
 async function assertHtmlDelivery(workspace){
  for(const artifact of workspace.run.artifacts.filter(a=>/\.html?$/i.test(a.path))){
+  if(!workspace.run.requestContract?.explicit?.runtime&&!workspace.run.requestContract?.explicit?.behavior){
+   const fs=require('node:fs/promises'),{resolveFile}=require('./workspace.cjs');
+   const bytes=await fs.readFile(await resolveFile(workspace.files,artifact.path));
+   if(proof.hash(bytes)!==artifact.sha256)throw failure(artifact,null,'HTML文件已变化，请重新登记');
+   try{require('./report-content.cjs').assertReadable(bytes.toString('utf8'));}catch(error){throw failure(artifact,null,error.message);}
+  }
   const validation=require('./html-validation.cjs');
   if(validation.documentMode(workspace.run,artifact)){
    // An observed defect stays actionable even in a content-only document.

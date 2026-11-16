@@ -26,10 +26,13 @@ async function resolveLaunch({desktop=defaultDesktop,platform=process.platform,a
  }
  return {desktop,version,directory,executable};
 }
-function launchCommand(launch,args=[],platform=process.platform,logFile){
+function launchCommand(launch,args=[],platform=process.platform,logFile,environment={}){
  if(platform==='darwin'){
   if(!logFile)throw Error('macOS 应用启动需要独立日志路径');
-  return {command:'/usr/bin/open',args:['-n','-W','--env','ELECTRON_RUN_AS_NODE','--stdout',logFile,'--stderr',logFile+'.stderr','-a',path.dirname(path.dirname(path.dirname(launch.executable))),'--args',...args]};
+  const mobile=environment.AILO_MOBILE_CONFIG;
+  if(mobile&&(!path.isAbsolute(mobile)||/[\r\n\0]/.test(mobile)))throw Error('手机连接配置需要绝对路径');
+  const mobileArgs=mobile?['--env','AILO_MOBILE_CONFIG='+mobile]:[];
+  return {command:'/usr/bin/open',args:['-n','-W',...mobileArgs,'--env','ELECTRON_RUN_AS_NODE','--stdout',logFile,'--stderr',logFile+'.stderr','-a',path.dirname(path.dirname(path.dirname(launch.executable))),'--args',...args]};
  }
  return {command:launch.executable,args};
 }
@@ -53,7 +56,7 @@ async function main(){
  if(process.platform==='darwin')launch=await require('./install-desktop.cjs').synchronizeDesktop(launch);
  let logFile,log;
  if(process.platform==='darwin'){log=createLaunchLogs();logFile=log.logFile;}
- const command=launchCommand(launch,process.argv.slice(2),process.platform,logFile);
+ const command=launchCommand(launch,process.argv.slice(2),process.platform,logFile,process.env);
  const child=spawn(command.command,command.args,{cwd:launch.desktop,stdio:'inherit',env:process.env});
  child.on('error',error=>{log?.close();console.error('无法启动 Ailo：',error.message);process.exitCode=1;});
  for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>child.kill(signal));

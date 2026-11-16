@@ -83,3 +83,14 @@ test('noindex Forge output is selected exactly and never falls back to visible l
  const target=path.join(options.desktop,'out/.packages.noindex/0.1.72');await fs.mkdir(path.dirname(target),{recursive:true});await fs.rename(path.join(options.desktop,'out/0.1.72'),target);
  const result=await resolveLaunch(options);assert.equal(result.executable,legacy.executable.replace('/out/','/out/.packages.noindex/'));
 });
+
+test('macOS launch passes only the explicit mobile config path, never tokens or unrelated secrets',()=>{
+ const {launchCommand}=require('./start-desktop.cjs'),launch={executable:'/tmp/Ailo.app/Contents/MacOS/Ailo'};
+ const cmd=launchCommand(launch,[],'darwin','/tmp/log',{AILO_MOBILE_CONFIG:'/tmp/private config.json',AILO_MOBILE_DESKTOP_TOKEN:'secret-token',UNRELATED_SECRET:'hidden'});
+ assert.ok(cmd.args.includes('AILO_MOBILE_CONFIG=/tmp/private config.json'));assert.ok(!JSON.stringify(cmd).includes('secret-token'));assert.ok(!JSON.stringify(cmd).includes('hidden'));
+});
+
+test('parent mobile environment cannot contaminate a launch command without explicit configuration',()=>{
+ const {launchCommand}=require('./start-desktop.cjs'),before=process.env.AILO_MOBILE_CONFIG,launch={executable:'/tmp/Ailo.app/Contents/MacOS/Ailo'};
+ try{process.env.AILO_MOBILE_CONFIG='/tmp/parent-config.json';const plain=launchCommand(launch,[],'darwin','/tmp/log');assert.ok(!plain.args.some(a=>a.startsWith('AILO_MOBILE_CONFIG=')));const explicit=launchCommand(launch,[],'darwin','/tmp/log',process.env);assert.ok(explicit.args.includes('AILO_MOBILE_CONFIG=/tmp/parent-config.json'));}finally{if(before===undefined)delete process.env.AILO_MOBILE_CONFIG;else process.env.AILO_MOBILE_CONFIG=before;}
+});
