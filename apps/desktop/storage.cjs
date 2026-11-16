@@ -27,9 +27,9 @@ function createStorage(directory, safeStorage) {
   }
   async function configuredModel(id) {
     const state = await read('workspace', {models:[]});
-    if(id==='auto')id=require('./model-routing.cjs').validateRouting(state.autoModel,state.models||[])?.primaryModelId;
+    if(id==='auto')try{id=require('./model-routing.cjs').validateRouting(state.autoModel,state.models||[])?.primaryModelId;}catch(error){throw Object.assign(error,{code:'MODEL_ROUTING_UNAVAILABLE'});}
     const model=(state.models||[]).find(m=>m.id===id);
-    if(!model)throw Error('请先选择或配置一个可用模型。');
+    if(!model)throw Object.assign(Error('请先选择或配置一个可用模型。'),{code:'MODEL_NOT_CONFIGURED'});
     const cached=modelSecrets.get(model.id);
     if(cached&&cached.encryptedKey!==model.encryptedKey)modelSecrets.delete(model.id);
     return model;
@@ -104,7 +104,7 @@ function createStorage(directory, safeStorage) {
     });},
     async modelCredentialsAvailable(id) {
       await writes.catch(()=>{});
-      const model=await configuredModel(id);
+      let model;try{model=await configuredModel(id);}catch(error){if(['MODEL_NOT_CONFIGURED','MODEL_ROUTING_UNAVAILABLE'].includes(error.code))return false;throw error;}
       return !model.encryptedKey||modelSecrets.get(model.id)?.encryptedKey===model.encryptedKey;
     },
     async modelCredentials(id, {background=false} = {}) {

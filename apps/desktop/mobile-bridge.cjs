@@ -1,22 +1,32 @@
 const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),{createHash}=require('node:crypto');
 function connectionDirectory(directory,url,key){return path.join(directory,'connections',createHash('sha256').update(endpoint(url)+'\0'+key).digest('hex'));}
 function endpoint(value){const u=new URL(value);if(u.username||u.password||u.search||u.hash||u.pathname!=='/')throw Error('连接地址必须是服务根地址');if(u.protocol!=='https:'&&!(u.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(u.hostname)))throw Error('远程连接必须使用HTTPS（本机调试可用HTTP）');return u.origin;}
-async function request(base,key,route,body){const r=await fetch(endpoint(base)+route,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(10000)});const data=await r.json();if(!r.ok)throw Object.assign(Error(data.error||'连接失败'),{status:r.status});return data;}
+async function request(base,key,route,body){const r=await fetch(endpoint(base)+route,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(route==='/v1/sync'?90000:10000)});const data=await r.json();if(!r.ok)throw Object.assign(Error(data.error||'连接失败'),{status:r.status});return data;}
 async function createBridge({directory,url,key,execute,history=async()=>[],capabilities=async()=>({}),device=os.hostname(),pollMs=3000,onError=()=>{}}){
  const legacyFile=path.join(directory,'jobs.json');let legacy={};try{legacy=JSON.parse(await fs.readFile(legacyFile,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}
  directory=connectionDirectory(directory,url,key);await fs.mkdir(directory,{recursive:true,mode:0o700});const file=path.join(directory,'jobs.json');let jobs;try{jobs=JSON.parse(await fs.readFile(file,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;jobs={};}
  const save=async()=>{await fs.writeFile(file+'.tmp',JSON.stringify(jobs),{mode:0o600});await fs.rename(file+'.tmp',file);};
  // A crash between dispatch and receipt is never permission to replay effects.
  for(const job of Object.values(jobs))if(job.status==='running'){job.status='unknown';job.detail='电脑执行被中断，结果尚未核查。请在桌面端检查原任务，不会自动重放。';}await save();
- let stopped=false,timer,heartbeat,busy=false;let writes=Promise.resolve();const persist=()=>{writes=writes.then(save);return writes;};
- const sync=async update=>{
+ let stopped=false,timer,heartbeat,busy=false,heartbeatPending=false,historyStamp;let writes=Promise.resolve();const persist=()=>{writes=writes.then(save);return writes;};
+ const receipt=job=>({id:job.id,status:job.status,detail:job.detail,taskId:job.taskId,result:job.result,artifacts:job.artifacts,attachmentsStored:job.attachmentsStored});
+ const receiptStamp=job=>createHash('sha256').update(JSON.stringify(receipt(job))).digest('hex');
+ const sync=async(update,{pull=false,includeHistory=false}={})=>{
  if(update?.deliveryMissing)return;
- try{return await request(url,key,'/v1/sync',{device,capabilities:await capabilities(),history:await history(),...(update?{update,...(update.attachmentsStored?{receivedAttachments:[update.id]}:{})}:{})});}
- catch(e){if(e.status===404&&update){update.deliveryMissing=true;await persist();onError(Error('中转缺少对应任务，原记录已保留且不会重放；继续同步其他任务。'));return;}throw e;}
+ const projected=update?receipt(update):undefined,stamp=update?receiptStamp(update):undefined;
+ let historyBody,latestHistoryStamp;
+ if(pull||includeHistory){const value=await history();latestHistoryStamp=createHash('sha256').update(JSON.stringify(value)).digest('hex');if(latestHistoryStamp!==historyStamp)historyBody=value;}
+ try{
+  const response=await request(url,key,'/v1/sync',{device,pullJobs:pull,capabilities:await capabilities(),...(historyBody?{history:historyBody}:{}),...(projected?{update:projected,...(update.attachmentsStored?{receivedAttachments:[update.id]}:{})}:{})});
+  if(latestHistoryStamp)historyStamp=response.historyRevision===latestHistoryStamp?latestHistoryStamp:undefined;
+  else if(historyStamp&&response.historyRevision&&response.historyRevision!==historyStamp)historyStamp=undefined;
+  if(update){update.relayFingerprint=stamp;await persist();}
+  return response;
+ }catch(e){if(e.status===404&&update){update.deliveryMissing=true;await persist();onError(Error('中转缺少对应任务，原记录已保留且不会重放；继续同步其他任务。'));return;}throw e;}
  };
  const tick=async()=>{if(busy||stopped)return;busy=true;try{
- for(const j of Object.values(jobs))await sync(j);
- const {jobs:queued}=await sync();
+ for(const j of Object.values(jobs))if(!j.deliveryMissing&&j.relayFingerprint!==receiptStamp(j))await sync(j);
+ const {jobs:queued}=await sync(undefined,{pull:true});
  for(const job of queued){if(stopped)break;
  if(!jobs[job.id]&&legacy[job.id]){jobs[job.id]={...legacy[job.id],id:job.id,status:'unknown',detail:'发现升级前未绑定中转的执行记录，结果需核查，未重放。'};await persist();await sync(jobs[job.id]);continue;}if(jobs[job.id]&&jobs[job.id].status!=='accepted')continue;
  let deliveryJob=job;const payloadPath=path.join(directory,'payload-'+createHash('sha256').update(job.id).digest('hex')+'.json');
@@ -37,10 +47,10 @@ async function createBridge({directory,url,key,execute,history=async()=>[],capab
  // Persist dispatch before invoking any potentially effectful operation.
  local.status='running';local.detail='正在接入电脑任务执行器';await persist();await sync(local);if(local.deliveryMissing)continue;
  try{const result=await execute(deliveryJob,async update=>{Object.assign(local,update);await persist();});Object.assign(local,result);}catch(e){local.status='failed';local.detail=String(e.message||e);}
- await persist();await sync(local);
+ await persist();await sync(local,{includeHistory:true});
  }
  }catch(e){onError(e);}finally{busy=false;if(!stopped){timer=setTimeout(tick,pollMs);timer.unref?.();}}};
- return {start(){void tick();heartbeat=setInterval(()=>{if(!stopped)void sync(Object.values(jobs).find(j=>j.status==='running')).catch(onError);},pollMs);heartbeat.unref?.();},stop(){stopped=true;clearTimeout(timer);clearInterval(heartbeat);},tick, pair:async()=>({...await request(url,key,'/v1/pair-code',{}),url:endpoint(url)}),revoke:()=>request(url,key,'/v1/revoke',{})};
+ return {start(){void tick();heartbeat=setInterval(()=>{if(!stopped&&!heartbeatPending){heartbeatPending=true;void sync(Object.values(jobs).find(j=>j.status==='running'),{includeHistory:true}).catch(onError).finally(()=>{heartbeatPending=false;});}},pollMs);heartbeat.unref?.();},stop(){stopped=true;clearTimeout(timer);clearInterval(heartbeat);},tick, pair:async()=>({...await request(url,key,'/v1/pair-code',{}),url:endpoint(url)}),revoke:()=>request(url,key,'/v1/revoke',{})};
 }
 function desktopAdapter(storage,chat,{shareHistory=false,connectionId}={}){const visible=t=>!t.temporary&&(t.mobileLinked===true&&(!connectionId||t.mobileConnectionId===connectionId)||shareHistory&&t.id!=='my-ailo-assistant');return {
  capabilities:async()=>{const s=await storage.readWorkspace();return {protocolVersion:2,attachmentReceiptVersion:1,extensions:(s.extensions||[]).filter(e=>e.enabled).map(({id,name,kind,description})=>({id,name,kind,description})),connections:(await storage.mcpConnections?.list?.()||[]).map(({id,name,connected})=>({id,name,connected}))};},

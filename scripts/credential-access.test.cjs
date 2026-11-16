@@ -22,3 +22,9 @@ test('OS decryption refusal has a typed non-corruption error and leaves encrypte
  await assert.rejects(f.storage.modelCredentials('m'),error=>error.code==='MODEL_CREDENTIALS_UNAVAILABLE'&&error.message.includes('尚不能判定密钥已失效')&&!error.message.includes('permission denied'));
  assert.equal(await fs.readFile(path.join(f.root,'workspace.json'),'utf8'),before);f.setDenied(false);assert.ok((await f.storage.modelCredentials('m')).apiKey);assert.equal(f.calls(),2);
 });
+test('missing or unconfigured models are unavailable to background probes without decrypting; foreground remains explicit',async t=>{
+ const f=await fixture(t);assert.equal(await f.storage.modelCredentialsAvailable('deleted'),false);assert.equal(await f.storage.modelCredentialsAvailable(undefined),false);assert.equal(await f.storage.modelCredentialsAvailable('auto'),false);
+ await assert.rejects(f.storage.modelCredentials('deleted'),{code:'MODEL_NOT_CONFIGURED'});assert.equal(f.calls(),0);
+ f.workspace.autoModel={primaryModelId:'removed'};await fs.writeFile(path.join(f.root,'workspace.json'),JSON.stringify(f.workspace));assert.equal(await f.storage.modelCredentialsAvailable('auto'),false);await assert.rejects(f.storage.modelCredentials('auto'),{code:'MODEL_ROUTING_UNAVAILABLE'});assert.equal(f.calls(),0);
+ await fs.writeFile(path.join(f.root,'workspace.json'),'{broken');await assert.rejects(f.storage.modelCredentialsAvailable('m'),SyntaxError);
+});

@@ -31,8 +31,17 @@ function createMemoryWorker({store,storage,fetchImpl=fetch,sessions=()=>[],now=D
    const owner=await store.owner(),status=await store.read(owner);
    const today=new Date(now()).toISOString().slice(0,10);
    if(status.worker.day===today&&status.worker.dailyRequests>=12)return;
-   const batch=await store.batch(owner,{activeIds:sessions().map(s=>s.taskId)});if(!batch)return;
-   const work=await storage.readWorkspace(),task=work.tasks.find(t=>t.id===batch.taskId),last=task?.messages?.at(-1);
+   const work=await storage.readWorkspace(),deferred=[],availability=new Map();
+   // Unavailable historical models must not starve eligible conversations. Keep
+   // their source messages/cursors intact and never substitute another model.
+   if(storage.modelCredentialsAvailable)for(const task of work.tasks){
+    if(task.memoryOwner!==owner||task.memoryEnabled===false||task.scheduledTaskId||task.parentAssistantId)continue;
+    const modelId=task.modelId||work.defaultModelId;
+    if(!availability.has(modelId))availability.set(modelId,await storage.modelCredentialsAvailable(modelId));
+    if(!availability.get(modelId))deferred.push(task.id);
+   }
+   const batch=await store.batch(owner,{activeIds:[...sessions().map(s=>s.taskId),...deferred]});if(!batch)return;
+   const task=work.tasks.find(t=>t.id===batch.taskId),last=task?.messages?.at(-1);
    if(!last||now()-Date.parse(last.createdAt)<idleMs)return;
    if(await store.owner()!==owner)return;
    // Reading old chats must not cause an OS credential prompt on startup.
@@ -45,6 +54,6 @@ function createMemoryWorker({store,storage,fetchImpl=fetch,sessions=()=>[],now=D
    finally{clearTimeout(timeout);controller=undefined;}
   }finally{running=false;}
  }
- return {tick,async start(){stopped=false;timer=setInterval(()=>void tick().catch(()=>{}),30000);timer.unref?.();await tick();},stop(){stopped=true;clearInterval(timer);controller?.abort();},cancel(){controller?.abort();}};
+ return {tick,async start(){stopped=false;clearInterval(timer);timer=setInterval(()=>void tick().catch(()=>{}),30000);timer.unref?.();await tick();},stop(){stopped=true;clearInterval(timer);controller?.abort();},cancel(){controller?.abort();}};
 }
 module.exports={createMemoryWorker,EXTRACTION_PROMPT};

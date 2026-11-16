@@ -1,6 +1,8 @@
 // Fixed incident coverage. Adding a repair means extending this matrix rather
 // than replacing an old case with the newest symptom.
 const cases=[
+ {id:'mobile-attachment-polling-amplification',incident:'手机照片已排队等待电脑接收时fetch取消；电脑每次旧回执同步重复下载待接收照片，历史重复传输放大流量。只同步变化回执、显式领取附件、历史摘要缓存，领取超时独立有界，未知任务不重放',files:['mobile-bridge','mobile-payload']},
+ {id:'memory-startup-missing-model',incident:'启动记忆后台遇到历史会话已移除模型即抛未配置错误，误报启动失败并阻塞其他会话；后台元数据检查返回不可用，保留原模型和来源，其他可用会话继续，不触发钥匙串、不消耗等待预算，前台仍显式报错',files:['memory-worker','credential-access','personal-memory','session-secrets']},
  {id:'mobile-plus-materials-and-tools',incident:'手机加号仅有基础菜单，不能把主动选择的附件和技能传给真实电脑任务；新增有界附件协议与材料原件导入，落盘校验后才确认云端删除，重启复用已收原件、未知执行不重放、缺原件不执行，工具选择按已安装能力校验，权限仍在电脑端确认，目录和凭据不进能力列表',files:['mobile-payload','mobile-bridge','image-attachments','skill-runtime-reuse']},
  {id:'disk-scan-read-timeout',incident:'11月15日获只读授权后批量du扫描超时，已有目录与缓存输出却被一律视为未知副作用阻断；严格识别有界只读shell语法，部分读取保留为interrupted且未完成，写入及不明脚本仍未知，失败预算不重置，旧回执可核对恢复分类',files:['read-only-command','action-idempotency','recovery-episodes','task-output-experience']},
  {id:'storage-report-empty-chapters',incident:'11月15日storage-cleanup报告依赖JS注入正文，静态预览仅剩章节，多项扫描空数组仍标满分；离线固定同类输入，报告正文须静态可读，空扫描不得冒充完整覆盖，保留脚本隔离与原任务证据',files:['report-content','html-delivery','html-preview','html-document-validation']},

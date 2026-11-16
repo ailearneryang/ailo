@@ -13,3 +13,15 @@ test('startup background memory waits without consuming attempts or cursor until
  const f=await fixture(t);let available=false;f.storage.modelCredentialsAvailable=async()=>available;const before=await f.store.read();for(let i=0;i<3;i++)await f.worker.tick();const waiting=await f.store.read();assert.equal(f.count(),0);assert.equal(waiting.worker.dailyRequests,before.worker.dailyRequests);assert.ok(await f.store.batch('local'));
  const original=f.storage.modelCredentials;f.storage.modelCredentials=async(id,options)=>{assert.equal(options.background,true);return original(id);};available=true;await f.worker.tick();assert.equal(f.count(),1);assert.equal((await f.store.read()).items[0].status,'pending');
 });
+test('startup defers deleted historical models without consuming their sources, while configured conversations continue',async t=>{
+ const f=await fixture(t);f.work.tasks.unshift({id:'old-chat',memoryOwner:'local',modelId:'deleted',messages:[{id:'old-message',role:'user',content:'我偏好每周整理工作笔记。',createdAt:f.work.tasks[0].messages[0].createdAt}]});
+ const checked=[];f.storage.modelCredentialsAvailable=async id=>{checked.push(id);return id==='m';};
+ const original=f.storage.modelCredentials;f.storage.modelCredentials=async(id,options)=>{assert.equal(id,'m');return original(id,options);};
+ await f.worker.start();assert.equal(f.count(),1);assert.ok(checked.includes('deleted'));const pending=await f.store.batch('local');assert.equal(pending.taskId,'old-chat');assert.equal(pending.modelId,'deleted');
+ assert.equal((await f.store.read()).worker.dailyRequests,1);
+});
+test('memory startup with no usable model waits, and recovers later without lost messages or budget',async t=>{
+ const f=await fixture(t);let ready=false;f.storage.modelCredentialsAvailable=async()=>ready;
+ await f.worker.start();await f.worker.tick();assert.equal(f.count(),0);assert.equal((await f.store.read()).worker.dailyRequests||0,0);assert.ok(await f.store.batch('local'));
+ ready=true;await f.worker.tick();assert.equal(f.count(),1);assert.equal((await f.store.read()).worker.dailyRequests,1);
+});
