@@ -1,3 +1,4 @@
+import {TaskOrigin} from './task-origin';
 import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useCompanion, usePetPreferences } from './pet-preferences';
@@ -43,7 +44,7 @@ export function MyAilo({ data, runningIds, onOpen, compact, onSchedules, onPets,
         {(['attention', 'running', 'results'] as Group[]).map(key => <button key={key} id={`ailo-tab-${key}`} role="tab" aria-selected={group === key} aria-controls="ailo-work-list" onClick={() => setGroup(key)} className={group === key ? 'selected' : ''}>{({attention: '待处理', running: '执行中', results: '已有结果'})[key]} <span>{groups[key].length}</span>{groups[key].some(unread)&&<span className="task-unread-dot" role="img" aria-label="有未查看的任务" title="有未查看的任务"/>}</button>)}
       </div>
       <div className="assistant-work-list" id="ailo-work-list" role="tabpanel" aria-labelledby={`ailo-tab-${group}`}>
-        {!groups[group].length ? <div className="my-ailo-empty"><Icon name="check" /><strong>{({attention:'没有待处理的任务',running:'没有正在执行的任务',results:'还没有完成的工作'})[group]}</strong></div> : groups[group].map(t => <button className="my-ailo-task" key={t.id} onClick={() => {dialog.current?.close();onOpen(t.id);}}><span><strong className="task-title-with-unread">{unread(t)&&<span className="task-unread-dot" role="img" aria-label="未查看" title="未查看"/>}<span className="task-title-text">{t.title}</span></strong><small>{description(t)}{t.projectId ? ` · ${data.projects.find(p => p.id === t.projectId)?.name || '项目'}` : ''}</small></span><span aria-hidden="true">↗</span></button>)}
+        {!groups[group].length ? <div className="my-ailo-empty"><Icon name="check" /><strong>{({attention:'没有待处理的任务',running:'没有正在执行的任务',results:'还没有完成的工作'})[group]}</strong></div> : groups[group].map(t => <button className="my-ailo-task" key={t.id} onClick={() => {dialog.current?.close();onOpen(t.id);}}><span><strong className="task-title-with-unread">{unread(t)&&<span className="task-unread-dot" role="img" aria-label="未查看" title="未查看"/>}<TaskOrigin task={t}/><span className="task-title-text">{t.title}</span></strong><small>{description(t)}{t.projectId ? ` · ${data.projects.find(p => p.id === t.projectId)?.name || '项目'}` : ''}</small></span><span aria-hidden="true">↗</span></button>)}
       </div>
       <div className="assistant-work-footer"><button onClick={()=>{dialog.current?.close();onSchedules();}}><Icon name="clock"/>定时任务 <span aria-hidden="true">↗</span></button></div>
     </dialog>,document.body)}

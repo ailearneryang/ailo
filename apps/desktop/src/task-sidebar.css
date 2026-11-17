@@ -66,3 +66,6 @@
 @media (max-width: 820px) {
   .resource-sidebar .artifact-preview-toolbar { flex-wrap: wrap; }
 }
+
+/* Quiet source marker: transparent background, fixed size, never steals title width. */
+.task-origin { width: 12px; height: 12px; flex: 0 0 12px; color: var(--muted, #8a9099); opacity: .6; background: transparent; align-self: center; margin-right: 4px; vertical-align: -1px; }

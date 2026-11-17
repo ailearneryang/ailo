@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import "./pet.css";
+import shibaLaptop from "./assets/shiba-laptop.png";
 import {face,palette} from "../pet-artwork.cjs";
 import { petStateLabels, type PetState } from "./pet-state";
 import { Icon } from "./icon";
@@ -13,6 +14,7 @@ export function Pet({
   preview = false,
   state,
   motion,
+  laptop = false,
 }: {
   size?: "hero" | "brand" | "mini";
   thinking?: boolean;
@@ -20,6 +22,7 @@ export function Pet({
   preview?: boolean;
   state?: PetState;
   motion?: "ambient" | "static";
+  laptop?: boolean;
 }) {
   const preferences = usePetPreferences();
   const surface=useRef<HTMLButtonElement & HTMLSpanElement>(null);
@@ -51,7 +54,7 @@ export function Pet({
   const compact = size !== "hero";
   const artwork = (
     <>
-      <svg className="pet-art" viewBox={compact ? "20 20 116 100" : "0 0 160 150"} fill="none" aria-hidden="true">
+      {laptop ? <img className="pet-art" src={shibaLaptop} alt="" style={{objectFit:"contain"}} draggable={false}/> : <svg className="pet-art" viewBox={compact ? "20 20 116 100" : "0 0 160 150"} fill="none" aria-hidden="true">
         {compact && <rect className="pet-avatar-backdrop" x="20" y="20" width="116" height="100" rx="28" fill={palette.mint} />}
         <ellipse className="pet-shadow" cx="78" cy="138" rx="43" ry="5" fill={palette.mintInk} opacity=".1" />
         <g className="pet-body">
@@ -96,7 +99,7 @@ export function Pet({
         </g>
         <g className="pet-state-badge" transform={compact ? "translate(-15 5)" : undefined}><circle cx="134" cy="33" r="15" fill={activity === "attention" ? palette.attention : palette.mintAccent} stroke={palette.cream} strokeWidth="2"/>{activity === "completed" ? <path d="m127 33 5 5 9-10" stroke={palette.ink} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/> : <path d="M134 25v10m0 6h.01" stroke={palette.attentionInk} strokeWidth="3" strokeLinecap="round"/>}</g>
         <path className="pet-heart" d="M128 27C119 20 112 30 117 35L128 44L139 35C144 30 137 20 128 27Z" fill={palette.furShade} />
-      </svg>
+      </svg>}
       {interactive && (
         <span className="sr-only" role="status">
           {happy ? "汪！我在呢。" : ""}

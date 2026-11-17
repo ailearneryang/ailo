@@ -773,7 +773,7 @@ function App() {
               </div>
             ) : !task ? (view === "assistant" ? null :
               <div className="welcome home-welcome">
-                <Pet interactive />
+                <Pet interactive laptop />
                 <h1>今天，有什么想交给我？</h1>
                 <p>开始一件独立的事；需要持续交流或安排任务，可以使用「{assistantName}」。</p>
               </div>
